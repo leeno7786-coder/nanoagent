@@ -731,7 +731,7 @@ export class AgentCore {
             }
             else {
                 this.consecutiveToolRounds++;
-                const checkinLimit = this.cfg.maxToolRoundsBeforeCheckin ?? 12;
+                const checkinLimit = this.cfg.maxToolRoundsBeforeCheckin ?? 0;
                 if (checkinLimit > 0 && this.consecutiveToolRounds >= checkinLimit) {
                     this.consecutiveToolRounds = 0;
                     const todoSummary = this.todos.length > 0
