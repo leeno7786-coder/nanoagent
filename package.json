@@ -26,10 +26,12 @@
     "access": "public"
   },
   "scripts": {
-    "start": "node dist/main.js",
-    "start:bun": "bun run src/main.ts",
-    "start:tui": "node dist/main.js tui",
-    "agent": "node dist/main.js run",
+    "nanoagent": "bun run src/main.ts",
+    "nanogent": "bun run src/main.ts",
+    "start": "bun run src/main.ts",
+    "start:tui": "bun run src/main.ts tui",
+    "start:node": "node dist/main.js",
+    "agent": "bun run src/main.ts run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
     "format": "prettier --write src",
