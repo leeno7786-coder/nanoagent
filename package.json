@@ -39,7 +39,7 @@
     "test:security": "node --test src/security/index.test.ts",
     "self-test": "node dist/main.js run --prompt \"run the built-in self-test\" --workspace .",
     "ci": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build",
-    "build": "tsc -p tsconfig.json && chmod +x dist/main.js",
+    "build": "tsc -p tsconfig.json && node -e \"try{require('fs').chmodSync('dist/main.js',0o755)}catch(e){}\"",
     "build:bun": "bun build src/main.ts src/opentui/index.tsx --outdir dist --minify --target node",
     "prepare": "npm run build",
     "prepack": "npm run build",
