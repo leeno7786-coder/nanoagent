@@ -17,6 +17,7 @@ import {
   exportToMarkdown,
   autoSaveSession,
   resumeSession,
+  buildConfigSnapshot,
 } from '../store.js';
 import type {
   Message,
@@ -394,7 +395,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       }
       // Auto-save session on exit
       if (agent && agent.messages.length > 0) {
-        autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace);
+        autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
       }
       // Clean up global skill refresh handler
       delete (globalThis as Record<string, unknown>)['__refreshSkills'];
@@ -464,12 +465,16 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     const agent = agentRef.current;
     if (!agent || agent.messages.length <= 2) return;
     const timer = setTimeout(() => {
-      const session = {
+      const session: Session = {
         id: 'autosave',
         messages: agent.messages,
         todos: agent.todos.filter((t) => !t.done),
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        model: agent.cfg.model,
+        baseURL: agent.cfg.baseURL,
+        provider: agent.cfg.provider,
+        config: buildConfigSnapshot(agent.cfg),
       };
       saveSession(session);
     }, 3000);
@@ -552,7 +557,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     } else if (keyEvent.name === 'f10' || keyEvent.name === 'F10') {
       const agent = agentRef.current;
       if (agent) {
-        autoSaveSession(agent.messages, agent.todos, cfg.workspace);
+        autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
       }
       process.exit(0);
     } else if (keyEvent.name === 'f12' || keyEvent.name === 'F12') {
@@ -631,6 +636,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       todos: agent.todos.filter((t) => !t.done),
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      model: agent.cfg.model,
+      baseURL: agent.cfg.baseURL,
+      provider: agent.cfg.provider,
+      config: buildConfigSnapshot(agent.cfg),
     };
     saveSession(session);
     setSessions(loadSessions());
@@ -638,7 +647,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     const msg: Message = {
       id: Math.random().toString(36).slice(2, 10),
       role: 'system',
-      content: `Session saved as ${id}.`,
+      content: `Session saved as ${id} (Model: \`${agent.cfg.model}\`).`,
       timestamp: Date.now(),
     };
     agent.messages.push(msg);
@@ -695,6 +704,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         todos: agent.todos.filter((t) => !t.done),
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        model: agent.cfg.model,
+        baseURL: agent.cfg.baseURL,
+        provider: agent.cfg.provider,
+        config: buildConfigSnapshot(agent.cfg),
       };
       saveSession(session);
       setSessions(loadSessions());
@@ -702,7 +715,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       agent.messages.push({
         id: Math.random().toString(36).slice(2, 10),
         role: 'system',
-        content: `Session saved as ${id}.`,
+        content: `Session saved as ${id} (Model: \`${agent.cfg.model}\`).`,
         timestamp: Date.now(),
       });
       setMessages([...agent.messages]);
@@ -710,15 +723,41 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     [currentSessionId]
   );
 
-  const handleLoad = useCallback((session: Session) => {
+  const handleLoad = useCallback(async (session: Session) => {
     const agent = agentRef.current;
     if (!agent) return;
+
     agent.messages = session.messages;
-    agent.todos = session.todos;
+    agent.todos = session.todos || [];
+
+    const savedConfig = session.config || {};
+    const newModel = session.model || savedConfig.model || agent.cfg.model;
+    const newBaseURL = session.baseURL || savedConfig.baseURL || agent.cfg.baseURL;
+
+    const nextConfig: Config = {
+      ...agent.cfg,
+      ...savedConfig,
+      model: newModel,
+      baseURL: newBaseURL,
+      provider: session.provider || savedConfig.provider || agent.cfg.provider,
+    };
+
+    await agent.reconfigure(nextConfig);
+
     setMessages([...agent.messages]);
     setTodos([...agent.todos]);
     setToolResults([]);
-    // Trigger update to sync todo message and refresh UI
+    setCurrentSessionId(session.id);
+
+    const restoredProvider = session.provider || savedConfig.provider || 'saved settings';
+    agent.messages.push({
+      id: Math.random().toString(36).slice(2, 10),
+      role: 'system',
+      content: `🔄 **Session restored**: Model \`${newModel}\` on \`${restoredProvider}\` (${session.messages.length} messages loaded).`,
+      timestamp: Date.now(),
+    });
+    setMessages([...agent.messages]);
+
     agent.onUpdate?.();
     setOverlay(null);
   }, []);
@@ -1079,19 +1118,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               // Resume latest or specific session
               const session = resumeSession(args?.trim());
               if (session) {
-                agent.messages = session.messages;
-                agent.todos = session.todos;
-                setMessages([...agent.messages]);
-                setTodos([...agent.todos]);
-                setCurrentSessionId(session.id);
-                agent.onUpdate?.();
-                agent.messages.push({
-                  id: Math.random().toString(36).slice(2, 10),
-                  role: 'assistant',
-                  content: `Resumed session: ${session.id} (${session.messages.length} messages)`,
-                  timestamp: Date.now(),
-                });
-                setMessages([...agent.messages]);
+                await handleLoad(session);
               } else {
                 agent.messages.push({
                   id: Math.random().toString(36).slice(2, 10),

@@ -51,6 +51,38 @@ describe('store.ts - Session Management', () => {
       // Cleanup
       deleteSession(id);
     });
+
+    it('should save and load session with exact settings, model, and provider', () => {
+      const session: Session = {
+        id: `test-settings-session-${Date.now()}`,
+        messages: [createTestMessage('Hello')],
+        todos: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        model: 'qwen3.5-coder',
+        baseURL: 'http://localhost:1234/v1',
+        provider: 'lmstudio',
+        config: {
+          model: 'qwen3.5-coder',
+          baseURL: 'http://localhost:1234/v1',
+          permissionMode: 'ask',
+          maxIterations: 45,
+          temperature: 0.2,
+        },
+      };
+
+      const id = saveSession(session);
+      const loaded = loadSession(id);
+
+      expect(loaded).not.toBeNull();
+      expect(loaded?.model).toBe('qwen3.5-coder');
+      expect(loaded?.baseURL).toBe('http://localhost:1234/v1');
+      expect(loaded?.provider).toBe('lmstudio');
+      expect(loaded?.config?.permissionMode).toBe('ask');
+      expect(loaded?.config?.maxIterations).toBe(45);
+
+      deleteSession(id);
+    });
   });
 
   describe('deleteSession', () => {

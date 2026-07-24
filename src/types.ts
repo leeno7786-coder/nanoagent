@@ -42,6 +42,8 @@ export interface Config {
   modelParamBillions?: number;
   /** How modelContextLength / modelParamBillions were obtained. */
   modelRuntimeSource?: 'lmstudio' | 'heuristic';
+  /** Provider ID (e.g. "lmstudio", "ollama", "openai", "openrouter"). */
+  provider?: string;
 
   rateLimitMs?: number;
   /** Enable tool execution caching (default: true). */
@@ -310,6 +312,14 @@ export interface Session {
   createdAt: number;
   /** Last update timestamp. */
   updatedAt: number;
+  /** Model ID used for the session. */
+  model?: string;
+  /** API base URL used for the session. */
+  baseURL?: string;
+  /** Provider ID (e.g. 'lmstudio', 'ollama', 'openai', 'openrouter'). */
+  provider?: string;
+  /** Config snapshot for restoring exact settings. */
+  config?: Partial<Config>;
 }
 
 /**
