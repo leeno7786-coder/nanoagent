@@ -2,6 +2,52 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { homedir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'module';
+export function buildConfigSnapshot(cfg) {
+    return {
+        model: cfg.model,
+        baseURL: cfg.baseURL,
+        apiKey: cfg.apiKey,
+        permissionMode: cfg.permissionMode,
+        permissionRules: cfg.permissionRules,
+        maxIterations: cfg.maxIterations,
+        maxToolRoundsBeforeCheckin: cfg.maxToolRoundsBeforeCheckin,
+        temperature: cfg.temperature,
+        smallModelMode: cfg.smallModelMode,
+        modelParamBillions: cfg.modelParamBillions,
+        modelContextLength: cfg.modelContextLength,
+        modelMaxContextLength: cfg.modelMaxContextLength,
+        workspace: cfg.workspace,
+        provider: cfg.provider,
+    };
+}
+/**
+ * Auto-save the current session on exit or interval.
+ * Creates a session with a generated ID if not already saved.
+ * Returns the session ID.
+ */
+export function autoSaveSession(messages, todos, workspace, cfg) {
+    ensureDir();
+    const hash = hashWorkspace(workspace);
+    const id = `autosave-${hash}`;
+    const session = {
+        id,
+        messages,
+        todos: todos.filter((t) => !t.done),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        model: cfg?.model,
+        baseURL: cfg?.baseURL,
+        provider: cfg?.provider,
+        config: cfg ? buildConfigSnapshot(cfg) : undefined,
+    };
+    try {
+        writeFileSync(join(SESSION_DIR, `${id}.json`), JSON.stringify(session, null, 2), 'utf-8');
+    }
+    catch (error) {
+        console.error('Failed to auto-save session:', error);
+    }
+    return id;
+}
 const requireOptional = createRequire(import.meta.url);
 const DATA_DIR = join(homedir(), '.qwen-agent-tui');
 const SESSION_DIR = join(DATA_DIR, 'sessions');
@@ -91,30 +137,6 @@ export function listSessions() {
     catch {
         return [];
     }
-}
-/**
- * Auto-save the current session on exit or interval.
- * Creates a session with a generated ID if not already saved.
- * Returns the session ID.
- */
-export function autoSaveSession(messages, todos, workspace) {
-    ensureDir();
-    const hash = hashWorkspace(workspace);
-    const id = `autosave-${hash}`;
-    const session = {
-        id,
-        messages,
-        todos: todos.filter((t) => !t.done),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-    };
-    try {
-        writeFileSync(join(SESSION_DIR, `${id}.json`), JSON.stringify(session, null, 2), 'utf-8');
-    }
-    catch (error) {
-        console.error('Failed to auto-save session:', error);
-    }
-    return id;
 }
 /**
  * Get the most recent session (excluding autosave).

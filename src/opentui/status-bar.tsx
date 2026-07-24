@@ -19,6 +19,7 @@ interface StatusBarProps {
   theme: Theme;
   mouseEnabled?: boolean;
   mcpToolCount?: number;
+  workspace?: string;
 }
 
 function spinnerFrame(ms: number): string {
@@ -43,6 +44,7 @@ export function StatusBar({
   theme,
   mouseEnabled = true,
   mcpToolCount = 0,
+  workspace,
 }: StatusBarProps) {
   const cfg: Record<AgentState, { color: string; label: string }> = {
     idle: { color: theme.statusIdle, label: 'idle' },
@@ -56,6 +58,7 @@ export function StatusBar({
   const s = cfg[state];
   const toolLabel = currentTool ? ` ${currentTool.name}` : '';
   const displayModel = model.length > 28 ? model.slice(0, 27) + '…' : model;
+  const workspaceName = workspace ? (workspace.split(/[/\\]/).filter(Boolean).pop() || workspace) : '';
 
   const lastTokens = lastUsage
     ? `${fmt(lastUsage.input_tokens)}↑${fmt(lastUsage.output_tokens)}↓`
@@ -82,6 +85,7 @@ export function StatusBar({
     <box flexDirection="column" height={2} flexShrink={0} backgroundColor={theme.bgPanel}>
       <box flexDirection="row" paddingX={1} height={1}>
         <text fg={theme.headerFg}>⚡ NanoAgent</text>
+        {workspaceName && <text fg={theme.accent || theme.headerFg}> [{workspaceName}]</text>}
         <box flexGrow={1} />
         <text fg={theme.mutedFg}>
           {displayModel}

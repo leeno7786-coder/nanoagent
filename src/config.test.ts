@@ -45,4 +45,21 @@ describe('config.ts - Configuration Management', () => {
       expect(modelKeys.some((k) => k.toLowerCase().includes('qwen'))).toBe(true);
     });
   });
+
+  describe('loadConfig workspace isolation & scratchpad', () => {
+    it('should default workspace to process.cwd() when invoked without explicit workspace override', () => {
+      const { loadConfig } = require('./config.js');
+      const cfg = loadConfig();
+      expect(cfg.workspace).toBe(process.cwd());
+    });
+
+    it('should ensure .nanoagent/scratchpad exists in workspace', () => {
+      const { existsSync } = require('fs');
+      const { join } = require('path');
+      const { loadConfig } = require('./config.js');
+      const cfg = loadConfig();
+      const scratchDir = join(cfg.workspace, '.nanoagent', 'scratchpad');
+      expect(existsSync(scratchDir)).toBe(true);
+    });
+  });
 });

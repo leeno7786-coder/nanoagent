@@ -1971,6 +1971,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           theme={theme}
           mouseEnabled={mouseEnabled}
           mcpToolCount={agentRef.current?.mcpManager?.totalTools ?? 0}
+          workspace={agentRef.current?.cfg.workspace || process.cwd()}
         />
 
         <box flexDirection="row" flexGrow={1} minHeight={0} overflow="hidden">
