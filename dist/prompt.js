@@ -82,6 +82,17 @@ export function appendPromptExtras(base, ctx, smallModel = false) {
     system +=
         '\n\n## Todos\nBreak multi-step requests into manage_todos items. Mark complete via the tool — do not skip it.';
     system +=
+        '\n\n## Conferring & User Check-ins\n' +
+            '- You are pair programming with the user. Do not execute endless tool loops without conferring.\n' +
+            '- After completing major steps or when faced with architectural choices, stop to summarize your progress and ask for user confirmation/feedback.\n' +
+            '- Keep the user informed and involved in key decisions.';
+    system +=
+        '\n\n## Long-Running Commands & Downloads\n' +
+            'For downloads, package installations, or long build tasks (e.g. `curl`, `wget`, `git clone`, `pip`, `uv`, `npm/bun install`, `docker`):\n' +
+            '- Execute them using `execute_command`. Extended timeouts (up to 600s) apply automatically.\n' +
+            '- Long commands execute in the background — the system will automatically notify ("ping") you with the output when execution finishes.\n' +
+            '- Do NOT repeatedly poll or rerun duplicate commands while waiting; output a brief status to the user and wait for the system completion ping.';
+    system +=
         '\n\n## Remote sub-agents\n' +
             "You have 4 remote sub-agents backed by small Qwen models on another device, reached via this machine's LM Studio. " +
             'They have READ-ONLY tools (read_file, batch_read_files, list_dir, grep_search, map_project_tree, search_and_view, find_files) against this workspace.\n' +

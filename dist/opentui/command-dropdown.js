@@ -29,6 +29,7 @@ const BUILTIN_COMMANDS = [
     { name: '/mcp', description: 'List connected MCP servers' },
     { name: '/mcp-add', description: 'Add an MCP server' },
     { name: '/mcp-remove', description: 'Remove an MCP server' },
+    { name: '/permissions', description: 'Tool & command permissions (read_only, ask, allow_edits, always_allow)' },
     { name: '/exit', description: 'Quit (F10)' },
 ];
 export function CommandDropdown({ inputValue, theme, onPick, onSubmit, skillCommands: propSkillCommands, }) {

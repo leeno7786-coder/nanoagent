@@ -389,7 +389,129 @@ function extractApiMessage(err) {
         return e.error_detail;
     return '';
 }
-function errorMessage(status, attempt, originalErr, maxAttempts = 3) {
+/**
+ * Global rate-limit tracking map per base URL.
+ * Records timestamp until which new requests should wait.
+ */
+const endpointRateLimitedUntil = new Map();
+function cleanExpiredRateLimits() {
+    const now = Date.now();
+    for (const [key, until] of endpointRateLimitedUntil.entries()) {
+        if (until <= now) {
+            endpointRateLimitedUntil.delete(key);
+        }
+    }
+}
+/**
+ * Record a rate-limit event for a base URL.
+ */
+export function markEndpointRateLimited(baseURL, delayMs) {
+    if (!baseURL || !delayMs || delayMs <= 0)
+        return;
+    cleanExpiredRateLimits();
+    const key = baseURL.toLowerCase().replace(/\/+$/, '');
+    const until = Date.now() + delayMs;
+    const current = endpointRateLimitedUntil.get(key) || 0;
+    if (until > current) {
+        endpointRateLimitedUntil.set(key, until);
+    }
+}
+/**
+ * Wait if the endpoint is currently in a rate-limit backoff window.
+ */
+export async function awaitEndpointRateLimit(baseURL, signal) {
+    if (!baseURL)
+        return;
+    cleanExpiredRateLimits();
+    const key = baseURL.toLowerCase().replace(/\/+$/, '');
+    const until = endpointRateLimitedUntil.get(key);
+    if (!until)
+        return;
+    const remaining = until - Date.now();
+    if (remaining > 0) {
+        if (signal?.aborted)
+            return;
+        await sleepWithSignal(Math.min(remaining, 60000), signal);
+    }
+}
+/**
+ * Extract retry-after delay (in milliseconds) from error headers or message text.
+ */
+export function extractRetryAfterDelayMs(err) {
+    if (!err)
+        return undefined;
+    const e = err;
+    // 1. Inspect response headers if available on error object
+    let headerVal;
+    const headers = (e.headers || e.response?.headers);
+    if (headers) {
+        if (typeof headers.get === 'function') {
+            const getFn = headers.get.bind(headers);
+            headerVal =
+                getFn('retry-after') ||
+                    getFn('Retry-After') ||
+                    getFn('x-ratelimit-reset-requests') ||
+                    getFn('x-ratelimit-reset-tokens') ||
+                    getFn('x-ratelimit-reset') ||
+                    undefined;
+        }
+        else if (typeof headers === 'object') {
+            const hdrs = headers;
+            headerVal =
+                hdrs['retry-after'] ||
+                    hdrs['Retry-After'] ||
+                    hdrs['x-ratelimit-reset-requests'] ||
+                    hdrs['x-ratelimit-reset-tokens'] ||
+                    hdrs['x-ratelimit-reset'];
+        }
+    }
+    if (headerVal) {
+        const cleaned = String(headerVal).trim().replace(/s$/i, '');
+        const parsedSec = parseFloat(cleaned);
+        if (!isNaN(parsedSec) && parsedSec > 0) {
+            return Math.min(Math.ceil(parsedSec * 1000), 120000);
+        }
+        const dateMs = Date.parse(headerVal);
+        if (!isNaN(dateMs)) {
+            const diffMs = dateMs - Date.now();
+            if (diffMs > 0)
+                return Math.min(diffMs, 120000);
+        }
+    }
+    // 2. Parse text pattern from error message
+    const msg = extractApiMessage(err) || e.message || '';
+    const matchSec = msg.match(/(?:try again in|retry after|wait|reset in|in)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:s|sec|seconds?)\b/i);
+    if (matchSec && matchSec[1]) {
+        const sec = parseFloat(matchSec[1]);
+        if (!isNaN(sec) && sec > 0) {
+            return Math.min(Math.ceil(sec * 1000), 120000);
+        }
+    }
+    return undefined;
+}
+/**
+ * Sleep helper that respects AbortSignal.
+ */
+export async function sleepWithSignal(ms, signal) {
+    if (signal?.aborted)
+        throw new Error('Aborted');
+    await new Promise((resolve, reject) => {
+        let timer = null;
+        const onAbort = () => {
+            if (timer)
+                clearTimeout(timer);
+            reject(new Error('Aborted'));
+        };
+        timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        if (signal) {
+            signal.addEventListener('abort', onAbort, { once: true });
+        }
+    });
+}
+function errorMessage(status, attempt, originalErr, maxAttempts = 3, retryDelayMs) {
     if (status === 401) {
         const detail = extractApiMessage(originalErr);
         return detail
@@ -408,15 +530,19 @@ function errorMessage(status, attempt, originalErr, maxAttempts = 3) {
     }
     if (status === 429) {
         const detail = extractApiMessage(originalErr);
+        const delaySecStr = retryDelayMs ? ` in ${(retryDelayMs / 1000).toFixed(1)}s` : '';
         return attempt >= maxAttempts
-            ? `Rate limited by provider.${detail ? ' ' + detail : ''} Wait a minute, then retry with fewer sub-agents.`
-            : 'Rate limited. Retrying...';
+            ? `Rate limited by provider.${detail ? ' ' + detail : ''} Maximum retries reached (${maxAttempts}). Try reducing sub-agent concurrency or waiting.`
+            : `Rate limited (429) by provider.${detail ? ' ' + detail : ''} Retrying${delaySecStr} (attempt ${attempt}/${maxAttempts})...`;
     }
-    if (status === 503) {
-        return `Provider temporarily unavailable (503). Retrying (attempt ${attempt}/${maxAttempts})...`;
+    if (status === 503 || status === 529 || status === 504) {
+        const delaySecStr = retryDelayMs ? ` in ${(retryDelayMs / 1000).toFixed(1)}s` : '';
+        return `Provider temporarily unavailable (${status}). Retrying${delaySecStr} (attempt ${attempt}/${maxAttempts})...`;
     }
-    if (status >= 500)
-        return `Server error. Retrying (attempt ${attempt}/${maxAttempts})...`;
+    if (status >= 500) {
+        const delaySecStr = retryDelayMs ? ` in ${(retryDelayMs / 1000).toFixed(1)}s` : '';
+        return `Server error (${status}). Retrying${delaySecStr} (attempt ${attempt}/${maxAttempts})...`;
+    }
     const apiMsg = extractApiMessage(originalErr);
     if (apiMsg)
         return `HTTP ${status}: ${apiMsg}`;
@@ -439,6 +565,8 @@ const NON_RETRIABLE_ERRORS = [
     'invalid_model',
     'invalid_api_key',
     'insufficient_quota',
+    'out_of_credits',
+    'credit balance',
 ];
 function isRetriable(err) {
     if (!err)
@@ -457,17 +585,31 @@ function shouldRetry(status, attempt, err) {
         return true; // network error
     if (status === 429)
         return true;
-    if (status === 503)
+    if (status === 502 || status === 503 || status === 504 || status === 529)
         return true;
     if (status >= 500)
         return true;
-    // Some providers return transient 400s under load — retry once
-    if (status === 400 && attempt !== undefined && attempt < 2)
-        return true;
-    // Mistral sometimes returns 422 on transient validation errors
+    // Mistral/OpenRouter transient validation or rate-limiting subcodes
     if (status === 422 && attempt !== undefined && attempt < 2)
         return true;
     return false;
+}
+/**
+ * Calculate backoff delay with exponential scaling and full jitter.
+ * Rate limit (429/503/529) errors start with a higher base delay (2s) vs 1s for general errors.
+ */
+export function calculateBackoffDelay(attempt, status, err) {
+    const explicitDelay = extractRetryAfterDelayMs(err);
+    if (explicitDelay !== undefined) {
+        return explicitDelay + Math.floor(Math.random() * 600) + 200;
+    }
+    const isRateLimitOrOverload = status === 429 || status === 503 || status === 529 || status === 504;
+    const baseMs = isRateLimitOrOverload ? 2000 : 1000;
+    const capMs = isRateLimitOrOverload ? 60000 : 30000;
+    const exponential = Math.min(baseMs * Math.pow(2, attempt - 1), capMs);
+    const minDelay = Math.floor(exponential / 2);
+    const jitter = Math.floor(Math.random() * (exponential - minDelay)) + minDelay;
+    return Math.max(100, jitter);
 }
 /**
  * Cap max output tokens to the model's supported limit.
@@ -490,10 +632,12 @@ function getMaxOutputTokens(modelId, configuredMax) {
     return configuredMax ?? 65536;
 }
 export async function chat(client, cfg, messages, tools, signal, options) {
-    const maxRetries = cfg.retryCount ?? 3;
+    const baseMaxRetries = cfg.retryCount ?? 3;
     let lastError;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let attempt = 1;
+    while (true) {
         try {
+            await awaitEndpointRateLimit(cfg.baseURL, signal);
             const isQwen = cfg.model.toLowerCase().includes('qwen');
             const enableThinking = options?.enableThinking ?? (isQwen ? true : false);
             const reqParams = {
@@ -566,30 +710,36 @@ export async function chat(client, cfg, messages, tools, signal, options) {
             }
             const errStatus = e.status || e.status_code || e.response?.status || 0;
             lastError = err;
-            if (!shouldRetry(errStatus, attempt, err)) {
-                throw new ApiError(errorMessage(errStatus, attempt, err, maxRetries), errStatus);
+            const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
+            const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
+            if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
+                throw new ApiError(errorMessage(errStatus, attempt, err, effectiveMaxRetries), errStatus);
             }
-            const message = errorMessage(errStatus, attempt, err, maxRetries);
-            if (attempt === maxRetries) {
-                throw new ApiError(message, errStatus);
+            const delayMs = calculateBackoffDelay(attempt, errStatus, err);
+            if (isRateLimit) {
+                markEndpointRateLimited(cfg.baseURL, delayMs);
             }
-            // Exponential backoff with jitter: 1-2s, 2-4s, 4-8s
-            const base = Math.pow(2, attempt - 1) * 1000;
-            const jitter = Math.random() * base;
-            await new Promise((res) => setTimeout(res, base + jitter));
+            const msgStr = errorMessage(errStatus, attempt, err, effectiveMaxRetries, delayMs);
+            options?.onRetry?.({ attempt, maxAttempts: effectiveMaxRetries, delayMs, status: errStatus, message: msgStr });
+            if (process.env.QWEN_DEBUG_LLM || isRateLimit) {
+                console.error(`[LLM Retry] ${msgStr}`);
+            }
+            await sleepWithSignal(delayMs, signal);
+            attempt++;
         }
     }
-    throw lastError || new ApiError('Unknown error');
 }
 /**
  * Stream a chat completion, yielding chunks as they arrive.
  * Tool calls are accumulated and yielded once complete.
  */
 export async function* streamChat(client, cfg, messages, tools, signal, options) {
-    const maxRetries = cfg.retryCount ?? 3;
+    const baseMaxRetries = cfg.retryCount ?? 3;
     let lastError;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let attempt = 1;
+    while (true) {
         try {
+            await awaitEndpointRateLimit(cfg.baseURL, signal);
             const isQwen = cfg.model.toLowerCase().includes('qwen');
             const enableThinking = options?.enableThinking ?? (isQwen ? true : false);
             const streamReqParams = {
@@ -728,17 +878,22 @@ export async function* streamChat(client, cfg, messages, tools, signal, options)
             }
             const errStatus = e.status || e.status_code || e.response?.status || 0;
             lastError = err;
-            if (!shouldRetry(errStatus, attempt, err)) {
-                throw new ApiError(errorMessage(errStatus, attempt, err, maxRetries), errStatus);
+            const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
+            const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
+            if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
+                throw new ApiError(errorMessage(errStatus, attempt, err, effectiveMaxRetries), errStatus);
             }
-            const message = errorMessage(errStatus, attempt, err, maxRetries);
-            if (attempt === maxRetries) {
-                throw new ApiError(message, errStatus);
+            const delayMs = calculateBackoffDelay(attempt, errStatus, err);
+            if (isRateLimit) {
+                markEndpointRateLimited(cfg.baseURL, delayMs);
             }
-            // Exponential backoff with jitter: 1-2s, 2-4s, 4-8s
-            const base = Math.pow(2, attempt - 1) * 1000;
-            const jitter = Math.random() * base;
-            await new Promise((res) => setTimeout(res, base + jitter));
+            const msgStr = errorMessage(errStatus, attempt, err, effectiveMaxRetries, delayMs);
+            options?.onRetry?.({ attempt, maxAttempts: effectiveMaxRetries, delayMs, status: errStatus, message: msgStr });
+            if (process.env.QWEN_DEBUG_LLM || isRateLimit) {
+                console.error(`[LLM Retry] ${msgStr}`);
+            }
+            await sleepWithSignal(delayMs, signal);
+            attempt++;
         }
     }
     throw lastError || new ApiError('Unknown error');

@@ -36,6 +36,7 @@ const ARG_BEARING = new Set([
     '/resume',
     '/delete-session',
     '/rename',
+    '/permissions',
     '/copy',
     '/todo',
     '/unload',
@@ -126,15 +127,33 @@ export function ChatScreen({ theme, messages, toolResults = [], state, elapsedMs
     }, [onSubmit]);
     // Check if dropdown is open to prevent double-handling of Enter key
     const dropdownOpen = inputValue.startsWith('/');
-    const filteredMessages = useMemo(() => messages.filter((msg) => msg.role !== 'system' &&
-        msg.role !== 'tool' &&
-        !(msg.role === 'assistant' && !msg.toolCalls?.length && msg.content.trim() === '')), [messages]);
+    const filteredMessages = useMemo(() => messages.filter((msg, idx) => {
+        if (msg.role === 'system' || msg.role === 'tool')
+            return false;
+        // Never filter out the active message currently streaming or working
+        const isLastMessage = idx === messages.length - 1;
+        if (isLastMessage && state !== 'idle')
+            return true;
+        // Keep assistant messages if they have content, tool calls, or reasoning content
+        if (msg.role === 'assistant' &&
+            !msg.toolCalls?.length &&
+            !msg.reasoningContent &&
+            msg.content.trim() === '') {
+            return false;
+        }
+        return true;
+    }), [messages, state]);
     const visibleMessages = useMemo(() => {
         if (!paginated)
             return filteredMessages;
-        const start = (page - 1) * MESSAGES_PER_PAGE;
-        return filteredMessages.slice(start, start + MESSAGES_PER_PAGE);
-    }, [filteredMessages, paginated, page]);
+        const safePage = Math.min(Math.max(1, page), totalPages);
+        const start = (safePage - 1) * MESSAGES_PER_PAGE;
+        const slice = filteredMessages.slice(start, start + MESSAGES_PER_PAGE);
+        if (slice.length === 0 && filteredMessages.length > 0) {
+            return filteredMessages.slice(-MESSAGES_PER_PAGE);
+        }
+        return slice;
+    }, [filteredMessages, paginated, page, totalPages]);
     const showBusy = busy && !(state === 'executing_tool' && currentTool);
     useEffect(() => {
         if (selectedMessageIndex !== null && scrollRef.current) {
@@ -146,6 +165,16 @@ export function ChatScreen({ theme, messages, toolResults = [], state, elapsedMs
             }
         }
     }, [selectedMessageIndex]);
+    useEffect(() => {
+        if (scrollRef.current && busy) {
+            try {
+                scrollRef.current.scrollToBottom?.();
+            }
+            catch {
+                // Ignore
+            }
+        }
+    }, [filteredMessages.length, page, currentTool, busy]);
     return (_jsxs("box", { flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0, height: "100%", overflow: "hidden", backgroundColor: theme.bgPanel, children: [_jsxs("scrollbox", { ref: scrollRef, flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0, overflow: "hidden", paddingX: 2, paddingY: 1, stickyScroll: true, stickyStart: "bottom", wrapperOptions: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0 }, viewportOptions: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0 }, children: [visibleMessages.map((msg, index) => {
                         const globalIndex = paginated ? (page - 1) * MESSAGES_PER_PAGE + index : index;
                         const isSelected = selectedMessageIndex === globalIndex;

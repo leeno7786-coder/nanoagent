@@ -12,6 +12,7 @@ import { createContextManager } from './context/manager.js';
 import { createSecurityManager } from './security/index.js';
 import { createMcpManager } from './mcp/index.js';
 import { autoSaveSession } from './store.js';
+const MAX_REASONING_ONLY = 5;
 /**
  * Core agent orchestrator: manages conversation state, tool execution,
  * and the agent lifecycle.
@@ -34,6 +35,8 @@ export class AgentCore {
     onUpdate;
     /** Called after a tool finishes executing. */
     onToolResult;
+    /** Permission request callback for interactive user confirmation. */
+    onPermissionRequest;
     /** Enable streaming mode — assistant content updates in real-time. */
     streaming = true;
     /** Round counter and maximum rounds before stopping. */
@@ -61,6 +64,8 @@ export class AgentCore {
     backgroundSubAgents = new Map();
     /** Max number of concurrently running background sub-agents (default: 3). */
     maxBackgroundSubAgents;
+    /** Counter for continuous tool rounds before checking in with user. */
+    consecutiveToolRounds = 0;
     /**
      * Snapshot of the live background sub-agent handles for the TUI. Returns a
      * plain array (not the internal Map) so React state updates correctly.
@@ -71,9 +76,12 @@ export class AgentCore {
             prompt: h.prompt,
             focusPath: h.focusPath,
             status: h.status,
-            log: h.log,
+            log: h.log || [],
             result: h.result,
         }));
+    }
+    getBackgroundSubAgents() {
+        return this.getSubAgentSnapshot();
     }
     /**
      * @param cfg - Agent configuration.
@@ -89,6 +97,8 @@ export class AgentCore {
             validateCommands: cfg.securityValidateCommands,
             validateFileAccess: cfg.securityValidateFileAccess,
             sanitizeOutput: cfg.securitySanitizeOutput,
+            permissionMode: cfg.permissionMode,
+            permissionRules: cfg.permissionRules,
             maxFileSize: cfg.securityMaxFileSize,
             maxBatchFiles: cfg.securityMaxBatchFiles,
             allowedPaths: cfg.securityAllowedPaths,
@@ -444,20 +454,29 @@ export class AgentCore {
             return;
         }
         if (!skipUserMessage) {
+            this.consecutiveToolRounds = 0;
             this.addUserMessage(userText);
         }
+        let iterationCount = 0;
         let reasoningOnlyStreak = 0;
-        const MAX_REASONING_ONLY = 3;
-        for (let i = 0; i < this.cfg.maxIterations; i++) {
+        while (true) {
             if (signal?.aborted) {
-                this.addAssistantMessage('Request cancelled.');
                 this.setState('idle');
+                this.onUpdate?.();
+                return;
+            }
+            // Check optional maxIterations limit if explicitly configured
+            if (this.cfg.maxIterations > 0 && iterationCount >= this.cfg.maxIterations) {
+                this.addAssistantMessage(`Turn limit reached (${this.cfg.maxIterations} iterations). Resuming on your next prompt.`);
+                this.setState('idle');
+                this.onUpdate?.();
                 return;
             }
             // Rate limiting: delay between LLM calls to avoid hitting provider rate limits
-            if (i > 0 && (this.cfg.rateLimitMs ?? 0) > 0) {
+            if (iterationCount > 0 && (this.cfg.rateLimitMs ?? 0) > 0) {
                 await new Promise((r) => setTimeout(r, this.cfg.rateLimitMs));
             }
+            iterationCount++;
             // Check and compact context if needed
             this.checkAndCompactContext();
             let assistantMsg;
@@ -587,6 +606,18 @@ export class AgentCore {
                 }
                 catch (err) {
                     const e = err;
+                    const isAborted = signal?.aborted ||
+                        e.name === 'AbortError' ||
+                        e.message === 'Aborted' ||
+                        e.message?.toLowerCase().includes('abort');
+                    if (isAborted) {
+                        if (!assistantMsg.content.trim() && !assistantMsg.reasoningContent) {
+                            this.messages = this.messages.filter((m) => m.id !== assistantMsg.id);
+                        }
+                        this.setState('idle');
+                        this.onUpdate?.();
+                        return;
+                    }
                     const status = e.status || e.status_code;
                     const msg = e.message || String(err);
                     if (status === 401) {
@@ -622,6 +653,15 @@ export class AgentCore {
                 }
                 catch (err) {
                     const e = err;
+                    const isAborted = signal?.aborted ||
+                        e.name === 'AbortError' ||
+                        e.message === 'Aborted' ||
+                        e.message?.toLowerCase().includes('abort');
+                    if (isAborted) {
+                        this.setState('idle');
+                        this.onUpdate?.();
+                        return;
+                    }
                     const status = e.status || e.status_code;
                     const msg = e.message || String(err);
                     if (status === 401) {
@@ -636,6 +676,7 @@ export class AgentCore {
                         this.addAssistantMessage(`API error (${status || 'unknown'}): ${msg}`);
                     }
                     this.setState('error');
+                    this.onUpdate?.();
                     return;
                 }
                 const msg = response.message;
@@ -679,13 +720,32 @@ export class AgentCore {
             }
             // Abort gate: if signal fired during the LLM call, stop here
             if (signal?.aborted) {
-                this.addAssistantMessage('Request cancelled.');
                 this.setState('idle');
                 this.onUpdate?.();
                 return;
             }
             // Execute tools (shared between streaming and non-streaming)
             const tcs = assistantMsg.toolCalls || [];
+            if (tcs.length === 0) {
+                this.consecutiveToolRounds = 0;
+            }
+            else {
+                this.consecutiveToolRounds++;
+                const checkinLimit = this.cfg.maxToolRoundsBeforeCheckin ?? 12;
+                if (checkinLimit > 0 && this.consecutiveToolRounds >= checkinLimit) {
+                    this.consecutiveToolRounds = 0;
+                    const todoSummary = this.todos.length > 0
+                        ? '\n\n**Task status:**\n' +
+                            this.todos.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n')
+                        : '';
+                    this.addAssistantMessage(`🤝 **Check-in with User** (${checkinLimit} continuous tool rounds completed):\n` +
+                        `I've completed several execution steps on your request.${todoSummary}\n\n` +
+                        `Pausing to confer with you before continuing. Would you like me to keep going, or do you have any feedback/adjustments?`);
+                    this.setState('idle');
+                    this.onUpdate?.();
+                    return;
+                }
+            }
             // Group tools for parallel execution
             const { parallel, sequential } = groupToolsForParallelExecution(tcs);
             // Execute parallel tools first
@@ -697,8 +757,8 @@ export class AgentCore {
                 await this.executeToolSequential(tc, signal);
             }
         }
-        this.addAssistantMessage('Max iterations reached without completion.');
-        this.setState('error');
+        this.setState('idle');
+        this.onUpdate?.();
     }
     /**
      * Launch a remote sub-agent as a DETACHED background task.
@@ -900,6 +960,34 @@ export class AgentCore {
         const tool = findTool(toolName);
         if (!tool)
             return JSON.stringify({ ok: false, error: `Unknown tool: ${toolName}` });
+        const perm = this.securityManager.permissionManager.checkPermission(toolName, args);
+        if (!perm.allowed) {
+            if (perm.requiresConfirmation && this.onPermissionRequest) {
+                const userDecision = await this.onPermissionRequest({
+                    id: Math.random().toString(36).slice(2, 10),
+                    tool: toolName,
+                    category: perm.category,
+                    command: perm.command,
+                    args,
+                });
+                if (userDecision === 'deny') {
+                    return JSON.stringify({
+                        ok: false,
+                        error: `Permission denied by user for ${perm.command ? `command "${perm.command}"` : `tool "${toolName}"`}`,
+                    });
+                }
+                else if (userDecision === 'always_allow') {
+                    const target = perm.command || toolName;
+                    this.securityManager.permissionManager.setRule(target, 'allow');
+                }
+            }
+            else {
+                return JSON.stringify({
+                    ok: false,
+                    error: `Permission denied by policy (${perm.reason || 'restricted'})`,
+                });
+            }
+        }
         const configWithSecurity = { ...this.cfg, securityManager: this.securityManager };
         if (tool.executeAsync) {
             return tool.executeAsync(args, this.cfg.workspace, configWithSecurity);
@@ -915,6 +1003,54 @@ export class AgentCore {
         let wasCached = false;
         try {
             const args = this.parseToolArgs(tc);
+            // Permission check
+            const perm = this.securityManager.permissionManager.checkPermission(tc.name, args);
+            if (!perm.allowed) {
+                if (perm.requiresConfirmation) {
+                    if (this.onPermissionRequest) {
+                        this.setState('waiting_for_user');
+                        const userDecision = await this.onPermissionRequest({
+                            id: tc.id,
+                            tool: tc.name,
+                            category: perm.category,
+                            command: perm.command,
+                            args,
+                        });
+                        this.setState('executing_tool');
+                        if (userDecision === 'deny') {
+                            output = JSON.stringify({
+                                ok: false,
+                                error: `Permission denied by user for ${perm.command ? `command "${perm.command}"` : `tool "${tc.name}"`}`,
+                            });
+                            this.addToolMessage(output, tc.id);
+                            this.currentTool = undefined;
+                            return;
+                        }
+                        else if (userDecision === 'always_allow') {
+                            const target = perm.command || tc.name;
+                            this.securityManager.permissionManager.setRule(target, 'allow');
+                        }
+                    }
+                    else {
+                        output = JSON.stringify({
+                            ok: false,
+                            error: `Permission confirmation required for ${perm.command ? `command "${perm.command}"` : `tool "${tc.name}"`}`,
+                        });
+                        this.addToolMessage(output, tc.id);
+                        this.currentTool = undefined;
+                        return;
+                    }
+                }
+                else {
+                    output = JSON.stringify({
+                        ok: false,
+                        error: `Permission denied by policy (${perm.reason || 'read_only mode'})`,
+                    });
+                    this.addToolMessage(output, tc.id);
+                    this.currentTool = undefined;
+                    return;
+                }
+            }
             // Check cache first
             const cached = this.toolCache.get(tc.name, args, this.cfg.workspace);
             if (cached) {
@@ -1043,11 +1179,41 @@ export class AgentCore {
     }
     /**
      * Execute multiple tools in parallel.
+     * Permission checks are resolved sequentially first to avoid
+     * race conditions on the pendingPermissionReq UI state.
      */
     async executeToolsParallel(parallelTools, signal) {
         this.setState('executing_tool');
+        // Resolve all permission checks sequentially first to avoid
+        // overlapping pendingPermissionReq state in the TUI.
+        const permissionResults = new Map();
+        for (const tc of parallelTools) {
+            const args = this.parseToolArgs(tc);
+            const perm = this.securityManager.permissionManager.checkPermission(tc.name, args);
+            if (!perm.allowed) {
+                if (perm.requiresConfirmation && this.onPermissionRequest) {
+                    this.setState('waiting_for_user');
+                    const decision = await this.onPermissionRequest({
+                        id: tc.id,
+                        tool: tc.name,
+                        category: perm.category,
+                        command: perm.command,
+                        args,
+                    });
+                    this.setState('executing_tool');
+                    permissionResults.set(tc.id, decision);
+                    if (decision === 'always_allow') {
+                        const target = perm.command || tc.name;
+                        this.securityManager.permissionManager.setRule(target, 'allow');
+                    }
+                }
+                else if (!perm.allowed) {
+                    permissionResults.set(tc.id, 'deny');
+                }
+            }
+        }
         const results = [];
-        // Execute all parallel tools concurrently
+        // Execute all parallel tools concurrently (permission already resolved)
         const promises = parallelTools.map(async (tc) => {
             const tool = findTool(tc.name);
             const toolStart = performance.now();
@@ -1055,6 +1221,26 @@ export class AgentCore {
             let wasCached = false;
             try {
                 const args = this.parseToolArgs(tc);
+                // Check if permission was denied during sequential resolution
+                const decision = permissionResults.get(tc.id);
+                if (decision === 'deny') {
+                    output = JSON.stringify({
+                        ok: false,
+                        error: `Permission denied by user for ${tc.name}`,
+                    });
+                    return { index: tc.index, id: tc.id, output, duration: performance.now() - toolStart, wasCached: false };
+                }
+                // Fallback policy check for tools that do not require interactive confirmation
+                if (decision === undefined) {
+                    const perm = this.securityManager.permissionManager.checkPermission(tc.name, args);
+                    if (!perm.allowed) {
+                        output = JSON.stringify({
+                            ok: false,
+                            error: `Permission denied by policy (${perm.reason || 'restricted'})`,
+                        });
+                        return { index: tc.index, id: tc.id, output, duration: performance.now() - toolStart, wasCached: false };
+                    }
+                }
                 // Check cache first
                 const cached = this.toolCache.get(tc.name, args, this.cfg.workspace);
                 if (cached) {
@@ -1441,6 +1627,9 @@ export class AgentCore {
             return true;
         }
         return false;
+    }
+    compactContextIfNeeded() {
+        return this.checkAndCompactContext();
     }
     /** Update agent state and notify listeners. */
     setState(s) {

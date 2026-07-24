@@ -81,7 +81,7 @@ export function StatusBar({
   return (
     <box flexDirection="column" height={2} flexShrink={0} backgroundColor={theme.bgPanel}>
       <box flexDirection="row" paddingX={1} height={1}>
-        <text fg={theme.headerFg}>Agent</text>
+        <text fg={theme.headerFg}>⚡ NanoAgent</text>
         <box flexGrow={1} />
         <text fg={theme.mutedFg}>
           {displayModel}

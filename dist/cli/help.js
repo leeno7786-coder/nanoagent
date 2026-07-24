@@ -15,6 +15,7 @@ Commands:
   run       Run one task headlessly (for scripts and agents)
   models    List models from a local runtime (LM Studio)
   doctor    Check config and runtime connectivity
+  todo      Manage your todo list
   tui       Interactive terminal UI (default)
 
 Options:
@@ -26,6 +27,8 @@ Examples:
   echo "list src files" | nanogent run --stdin --workspace .
   nanogent models --base-url http://127.0.0.1:1234/v1
   nanogent doctor --json
+  nanogent todo add "Buy milk"
+  nanogent todo list
 `);
 }
 export function printRunHelp() {
