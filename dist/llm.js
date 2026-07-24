@@ -51,8 +51,16 @@ export function isLocalProvider(baseURL) {
     const u = baseURL.toLowerCase();
     return (u.includes('localhost') ||
         u.includes('127.0.0.1') ||
+        u.includes('0.0.0.0') ||
         u.includes('lm-studio') ||
-        u.includes('ollama'));
+        u.includes('lmstudio') ||
+        u.includes('ollama') ||
+        u.includes('llamacpp') ||
+        u.includes('foundry') ||
+        u.includes('fastflow') ||
+        u.includes('vllm') ||
+        u.includes('jan') ||
+        u.includes('localai'));
 }
 /**
  * Heuristic: model is ≤8B parameters (local coding models).
