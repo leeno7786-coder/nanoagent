@@ -1,5 +1,5 @@
 import type { RuntimeProvider, ModelInfo } from './types.js';
-import { fetchLMStudioModels, isLMStudioURL } from './model-runtime.js';
+import { fetchLMStudioModels, isLMStudioURL, parseParamBillionsFromModelId } from './model-runtime.js';
 import { isLocalProvider } from './llm.js';
 
 /**
@@ -573,9 +573,105 @@ export const RUNTIME_PROVIDERS: RuntimeProvider[] = [
     isLocal: true,
     dynamicModels: true,
     icon: '💻',
-    description: 'Local model inference server',
+    description: 'Local LM Studio inference server',
     docsUrl: 'http://127.0.0.1:1234',
     models: [], // Will be fetched dynamically
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama',
+    baseURL: 'http://localhost:11434/v1',
+    requiresAuth: false,
+    isLocal: true,
+    dynamicModels: true,
+    icon: '🦙',
+    description: 'Local Ollama model runner & API server',
+    docsUrl: 'https://ollama.com',
+    models: [],
+  },
+  {
+    id: 'foundry-local',
+    name: 'Foundry Local',
+    baseURL: 'http://localhost:5272/v1',
+    requiresAuth: false,
+    isLocal: true,
+    dynamicModels: true,
+    icon: '🏗️',
+    description: 'Microsoft Azure AI Foundry Local Engine',
+    docsUrl: 'https://ai.azure.com',
+    models: [],
+  },
+  {
+    id: 'llamacpp',
+    name: 'llama.cpp',
+    baseURL: 'http://localhost:8080/v1',
+    requiresAuth: false,
+    isLocal: true,
+    dynamicModels: true,
+    icon: '🦙',
+    description: 'Local llama.cpp HTTP server (OpenAI compatible)',
+    docsUrl: 'https://github.com/ggerganov/llama.cpp',
+    models: [],
+  },
+  {
+    id: 'fastflowlm',
+    name: 'FastFlowLM',
+    baseURL: 'http://localhost:8000/v1',
+    requiresAuth: false,
+    isLocal: true,
+    dynamicModels: true,
+    icon: '⚡',
+    description: 'High-efficiency FastFlowLM local runtime',
+    docsUrl: 'https://github.com/fastflowlm',
+    models: [],
+  },
+  {
+    id: 'vllm',
+    name: 'vLLM',
+    baseURL: 'http://localhost:8000/v1',
+    requiresAuth: false,
+    isLocal: true,
+    dynamicModels: true,
+    icon: '🚀',
+    description: 'High-throughput local vLLM inference server',
+    docsUrl: 'https://github.com/vllm-project/vllm',
+    models: [],
+  },
+  {
+    id: 'jan',
+    name: 'Jan',
+    baseURL: 'http://localhost:1337/v1',
+    requiresAuth: false,
+    isLocal: true,
+    dynamicModels: true,
+    icon: '🤖',
+    description: 'Open-source local AI desktop assistant & server',
+    docsUrl: 'https://jan.ai',
+    models: [],
+  },
+  {
+    id: 'localai',
+    name: 'LocalAI',
+    baseURL: 'http://localhost:8080/v1',
+    requiresAuth: false,
+    isLocal: true,
+    dynamicModels: true,
+    icon: '🏡',
+    description: 'Self-hosted local OpenAI alternative',
+    docsUrl: 'https://localai.io',
+    models: [],
+  },
+  {
+    id: 'oobabooga',
+    name: 'Text Generation WebUI',
+    baseURL: 'http://localhost:5000/v1',
+    requiresAuth: false,
+    isLocal: true,
+    dynamicModels: true,
+    icon: '💬',
+    description: 'oobabooga Text Generation WebUI OpenAI API server',
+    docsUrl: 'https://github.com/oobabooga/text-generation-webui',
+    models: [],
   },
   {
     id: 'anthropic',
@@ -882,37 +978,77 @@ export async function fetchLocalModels(baseURL: string): Promise<ModelInfo[]> {
       if (lsModels.length > 0) return lsModels;
     }
 
-    const response = await fetch(`${apiBase}/models`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    try {
+      const response = await fetch(`${apiBase}/models`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(3000),
+      });
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch models: ${response.statusText}`);
+      if (response.ok) {
+        const body: unknown = await response.json();
+        const modelResponse = body as { data?: Array<Record<string, unknown>> } | null;
+
+        if (modelResponse?.data && Array.isArray(modelResponse.data)) {
+          return modelResponse.data.map((m: Record<string, unknown>) => {
+            const id = (m.id as string) || (m.name as string) || 'unknown';
+            const params = parseParamBillionsFromModelId(id);
+            const paramsStr = params ? (params < 1 ? `${Math.round(params * 1000)}M` : `${params}B`) : '';
+            return {
+              id,
+              name: (m.name as string) || id,
+              description: [paramsStr, m.description as string].filter(Boolean).join(' · '),
+              paramBillions: params,
+            };
+          });
+        }
+
+        if (Array.isArray(body)) {
+          return body.map((m: Record<string, unknown>) => {
+            const id = (m.id as string) || (m.name as string) || 'unknown';
+            const params = parseParamBillionsFromModelId(id);
+            const paramsStr = params ? (params < 1 ? `${Math.round(params * 1000)}M` : `${params}B`) : '';
+            return {
+              id,
+              name: (m.name as string) || id,
+              description: [paramsStr, m.description as string].filter(Boolean).join(' · '),
+              paramBillions: params,
+            };
+          });
+        }
+      }
+    } catch {
+      /* Fall back to Ollama native tags API */
     }
 
-    const body: unknown = await response.json();
+    // Fallback for native Ollama tag list endpoint
+    const rawHost = baseURL.replace(/\/v1\/?$/i, '').replace(/\/+$/, '');
+    try {
+      const ollamaRes = await fetch(`${rawHost}/api/tags`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(3000),
+      });
 
-    const modelResponse = body as { data?: Array<Record<string, unknown>> } | null;
-
-    // Handle OpenAI format: { data: [{ id: string, ... }] }
-    if (modelResponse?.data && Array.isArray(modelResponse.data)) {
-      return modelResponse.data.map((m: Record<string, unknown>) => ({
-        id: m.id as string,
-        name: (m.id as string) || (m.name as string),
-        description: m.description as string | undefined,
-      }));
-    }
-
-    // Handle simple array format
-    if (Array.isArray(body)) {
-      return body.map((m: Record<string, unknown>) => ({
-        id: (m.id as string) || (m.name as string),
-        name: (m.name as string) || (m.id as string),
-        description: m.description as string | undefined,
-      }));
+      if (ollamaRes.ok) {
+        const body = (await ollamaRes.json()) as { models?: Array<{ name: string; size?: number }> };
+        if (body?.models && Array.isArray(body.models)) {
+          return body.models.map((m) => {
+            const id = m.name;
+            const params = parseParamBillionsFromModelId(id);
+            const sizeGb = m.size ? `${(m.size / (1024 * 1024 * 1024)).toFixed(1)}GB` : '';
+            const paramsStr = params ? (params < 1 ? `${Math.round(params * 1000)}M` : `${params}B`) : '';
+            return {
+              id,
+              name: id,
+              description: [paramsStr, sizeGb].filter(Boolean).join(' · '),
+              paramBillions: params,
+            };
+          });
+        }
+      }
+    } catch {
+      /* ignore */
     }
 
     return [];
@@ -927,28 +1063,37 @@ export async function fetchLocalModels(baseURL: string): Promise<ModelInfo[]> {
  * Only works for local providers (LM Studio, local Ollama, etc.) - not for cloud APIs.
  */
 export async function checkRuntimeHealth(baseURL: string): Promise<boolean> {
-  // Only check health for local providers - cloud APIs don't have a health endpoint
   if (!isLocalProvider(baseURL)) {
     return false;
   }
 
   try {
-    // Try to fetch the models endpoint
     let healthUrl = baseURL.replace(/\/+$/, '');
     if (!healthUrl.endsWith('/v1')) {
       healthUrl += '/v1';
     }
 
-    const response = await fetch(`${healthUrl}/models`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      // Short timeout for health check
-      signal: AbortSignal.timeout(2000),
-    });
+    try {
+      const response = await fetch(`${healthUrl}/models`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(2500),
+      });
+      if (response.ok) return true;
+    } catch {}
 
-    return response.ok;
+    // Ollama API tags fallback check
+    const rawHost = baseURL.replace(/\/v1\/?$/i, '').replace(/\/+$/, '');
+    try {
+      const response = await fetch(`${rawHost}/api/tags`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(2500),
+      });
+      if (response.ok) return true;
+    } catch {}
+
+    return false;
   } catch {
     return false;
   }

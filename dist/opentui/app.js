@@ -273,7 +273,7 @@ export function App({ renderer }) {
             agent.messages.push({
                 id: 'welcome-banner',
                 role: 'assistant',
-                content: `\`\`\`text${NANOAGENT_BANNER}\`\`\`\nWelcome to **NanoAgent**! Type \`/help\` for commands or \`/config\` to manage settings.`,
+                content: `${NANOAGENT_BANNER}\nWelcome to **NanoAgent**! Type \`/help\` for commands or \`/config\` to manage settings.`,
                 timestamp: Date.now(),
             });
             setMessages([...agent.messages]);
