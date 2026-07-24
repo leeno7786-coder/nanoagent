@@ -10,6 +10,7 @@ import { CommandDropdown } from './command-dropdown.js';
 import { getSyntaxStyle } from './syntax-style.js';
 import type { Theme } from './theme.js';
 import { buildToolDisplayBlock, type ToolDisplayBlock } from './tool-display.js';
+import { ErrorBoundary } from './error-boundary.js';
 
 interface ChatScreenProps {
   theme: Theme;
@@ -64,6 +65,39 @@ function parseCodeBlocks(
   }
   if (lastIndex < content.length) segments.push({ type: 'text', text: content.slice(lastIndex) });
   return segments;
+}
+
+function renderLinesSafely(text: string, maxLines = 40, fgColor: string, prefix = '') {
+  if (!text) return null;
+  const allLines = text.split('\n');
+  if (allLines.length <= maxLines) {
+    return allLines.map((line, idx) => (
+      <text key={idx} fg={fgColor}>
+        {prefix}{line || ' '}
+      </text>
+    ));
+  }
+  const headCount = 10;
+  const tailCount = Math.max(1, maxLines - headCount - 1);
+  const head = allLines.slice(0, headCount);
+  const tail = allLines.slice(-tailCount);
+  const hiddenCount = allLines.length - headCount - tailCount;
+
+  return [
+    ...head.map((line, idx) => (
+      <text key={`h-${idx}`} fg={fgColor}>
+        {prefix}{line || ' '}
+      </text>
+    )),
+    <text key="trunc" fg={fgColor}>
+      {prefix}… [truncated {hiddenCount} lines]
+    </text>,
+    ...tail.map((line, idx) => (
+      <text key={`t-${idx}`} fg={fgColor}>
+        {prefix}{line || ' '}
+      </text>
+    )),
+  ];
 }
 
 const syntaxStyle = getSyntaxStyle();
@@ -189,18 +223,15 @@ export function ChatScreen({
     [onSubmit]
   );
 
-  // Check if dropdown is open to prevent double-handling of Enter key
   const dropdownOpen = inputValue.startsWith('/');
 
   const filteredMessages = useMemo(
     () =>
       messages.filter((msg, idx) => {
         if (msg.role === 'system' || msg.role === 'tool') return false;
-        // Never filter out the active message currently streaming or working
         const isLastMessage = idx === messages.length - 1;
         if (isLastMessage && state !== 'idle') return true;
 
-        // Keep assistant messages if they have content, tool calls, or reasoning content
         if (
           msg.role === 'assistant' &&
           !msg.toolCalls?.length &&
@@ -215,7 +246,12 @@ export function ChatScreen({
   );
 
   const visibleMessages = useMemo(() => {
-    if (!paginated) return filteredMessages;
+    if (!paginated) {
+      if (filteredMessages.length > 25) {
+        return filteredMessages.slice(-25);
+      }
+      return filteredMessages;
+    }
     const safePage = Math.min(Math.max(1, page), totalPages);
     const start = (safePage - 1) * MESSAGES_PER_PAGE;
     const slice = filteredMessages.slice(start, start + MESSAGES_PER_PAGE);
@@ -232,7 +268,6 @@ export function ChatScreen({
       try {
         scrollRef.current.scrollChildIntoView(`msg-${selectedMessageIndex}`);
       } catch {
-        // Ignore if unmounted
       }
     }
   }, [selectedMessageIndex]);
@@ -242,7 +277,6 @@ export function ChatScreen({
       try {
         (scrollRef.current as { scrollToBottom?: () => void }).scrollToBottom?.();
       } catch {
-        // Ignore
       }
     }
   }, [filteredMessages.length, page, currentTool, busy]);
@@ -276,24 +310,27 @@ export function ChatScreen({
           const globalIndex = paginated ? (page - 1) * MESSAGES_PER_PAGE + index : index;
           const isSelected = selectedMessageIndex === globalIndex;
           return (
-            <box key={msg.id} id={`msg-${globalIndex}`} flexDirection="column">
-              <MessageItem
-                message={msg}
-                theme={theme}
-                toolMap={toolMap}
-                toolResultByCallId={toolResultByCallId}
-                lastUsage={lastUsage}
-                state={index === visibleMessages.length - 1 ? state : undefined}
-                currentTool={currentTool}
-                highlighted={isSelected}
-              />
-            </box>
+            <ErrorBoundary key={msg.id} theme={theme}>
+              <box id={`msg-${globalIndex}`} flexDirection="column">
+                <MessageItem
+                  message={msg}
+                  theme={theme}
+                  toolMap={toolMap}
+                  toolResultByCallId={toolResultByCallId}
+                  lastUsage={lastUsage}
+                  state={index === visibleMessages.length - 1 ? state : undefined}
+                  currentTool={currentTool}
+                  highlighted={isSelected}
+                />
+              </box>
+            </ErrorBoundary>
           );
         })}
         {showBusy && <text fg={theme.statusThinking}> {spinnerFrame(elapsedMs)} thinking</text>}
 
-        {/* Live sub-agent stream renders inline in the main chat, not a separate panel. */}
-        <SubAgentPanel subAgents={subAgents} theme={theme} elapsedMs={elapsedMs} />
+        <ErrorBoundary theme={theme}>
+          <SubAgentPanel subAgents={subAgents} theme={theme} elapsedMs={elapsedMs} />
+        </ErrorBoundary>
       </scrollbox>
 
       {paginated && totalPages > 1 && (
@@ -351,7 +388,6 @@ export function ChatScreen({
           value={inputValue}
           onInput={setInputValue}
           onSubmit={useCallback(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (v: any) => {
               if (!dropdownOpen && v.trim()) handleSubmitLocal(v);
             },
@@ -398,11 +434,6 @@ const ERROR = 'error';
 /**
  * Live sub-agent stream, rendered inline in the chat flow.
  * Compact format: agent name, task, and tool calls.
- *
- *   subagent-1: security audit
- *     ● grep_search(src/auth.ts)
- *     ● read_file(src/config.ts)
- *     ✓ Completed in 4 turns · 1.2s
  */
 function SubAgentPanel({
   subAgents,
@@ -431,17 +462,13 @@ function SubAgentPanel({
         const turns = sa.result?.toolCalls ?? 0;
         const isRunning = sa.status === RUNNING;
 
-        // Derive short agent name: "subagent-1", "subagent-2", etc.
         const agentName = `subagent-${idx + 1}`;
 
-        // Extract a short task label from the prompt.
-        // If enriched with shared context, grab the task after the context block.
         let rawPrompt = sa.prompt;
         const endCtxIdx = rawPrompt.indexOf('=== END CONTEXT ===');
         if (endCtxIdx !== -1) {
           rawPrompt = rawPrompt.slice(endCtxIdx + '=== END CONTEXT ==='.length).trim();
         }
-        // Also strip leading === SHARED CONTEXT === wrapper if present without END
         if (rawPrompt.startsWith('=== SHARED CONTEXT ===')) {
           rawPrompt = rawPrompt
             .replace(/^=== SHARED CONTEXT ===[\s\S]*?=== END CONTEXT ===\s*/m, '')
@@ -453,15 +480,14 @@ function SubAgentPanel({
           .slice(0, 60)
           .replace(/[.,;:]+$/, '');
 
-        // Collect completed tool calls
         const toolCalls: Array<{ name: string; ok: boolean }> = [];
         for (const ev of log) {
           if (ev.type === 'subagent_tool_result' && ev.tool) {
             toolCalls.push({ name: ev.tool, ok: ev.ok !== false });
           }
         }
+        const recentToolCalls = toolCalls.slice(-8);
 
-        // Find currently running tool
         const runningTools = new Map<string, string>();
         for (const ev of log) {
           if (ev.type === 'subagent_tool' && ev.tool) {
@@ -476,7 +502,6 @@ function SubAgentPanel({
 
         return (
           <box key={sa.id} flexDirection="column" marginY={0}>
-            {/* Header: agent name + task */}
             <text
               fg={
                 sa.status === DONE
@@ -490,22 +515,19 @@ function SubAgentPanel({
               {agentName}: {taskLabel || 'working…'}
             </text>
 
-            {/* Completed tool calls */}
-            {toolCalls.map((tc, i) => (
+            {recentToolCalls.map((tc, i) => (
               <text key={i} fg={tc.ok ? theme.mutedFg : theme.errorFg} marginLeft={2}>
                 {tc.ok ? '●' : '✗'} {tc.name}
               </text>
             ))}
 
-            {/* Currently running tools */}
             {isRunning &&
-              [...runningTools.entries()].map(([toolName, _args], i) => (
+              [...runningTools.entries()].slice(0, 3).map(([toolName, _args], i) => (
                 <text key={`r-${i}`} fg={theme.statusTool} marginLeft={2}>
                   {spin} {toolName}…
                 </text>
               ))}
 
-            {/* Status line */}
             {sa.status === DONE && (
               <text fg={theme.mutedFg} marginLeft={2}>
                 ✓ {turns} turns
@@ -568,11 +590,7 @@ function MessageItem({
         <text fg={theme.userFg} bg={highlighted ? theme.bgSelected : undefined}>
           ▸ You
         </text>
-        {message.content.split('\n').map((line, i) => (
-          <text key={i} fg={theme.headerFg}>
-            {line || ' '}
-          </text>
-        ))}
+        {renderLinesSafely(message.content, 40, theme.headerFg)}
       </box>
     );
   }
@@ -585,7 +603,6 @@ function MessageItem({
 
   return (
     <box flexDirection="column" marginY={1}>
-      {/* Model Reasoning Prose live token stream rendered at top of response */}
       {(hasReasoning || isThinking) && (
         <box flexDirection="column" marginY={0} marginBottom={1}>
           <text fg={theme.statusThinking}>
@@ -593,11 +610,7 @@ function MessageItem({
           </text>
           {hasReasoning && (
             <box flexDirection="column" marginLeft={2} marginTop={0}>
-              {(message.reasoningContent || '').split('\n').map((line, idx) => (
-                <text key={idx} fg={theme.mutedFg}>
-                  {line || ' '}
-                </text>
-              ))}
+              {renderLinesSafely(message.reasoningContent || '', 35, theme.mutedFg)}
             </box>
           )}
         </box>
@@ -606,11 +619,11 @@ function MessageItem({
       {displayContent.trim() !== '' &&
         segments.map((seg, si) => {
           if (seg.type === 'text') {
-            return seg.text.split('\n').map((line, li) => (
-              <text key={`${si}-${li}`} fg={theme.headerFg}>
-                {line || ' '}
-              </text>
-            ));
+            return (
+              <box key={si} flexDirection="column">
+                {renderLinesSafely(seg.text, 60, theme.headerFg)}
+              </box>
+            );
           }
           if (seg.lang === 'diff') {
             return (
@@ -619,17 +632,18 @@ function MessageItem({
               </box>
             );
           }
+          const safeCode =
+            seg.code.split('\n').length > 120
+              ? seg.code.split('\n').slice(0, 120).join('\n') + '\n… [truncated]'
+              : seg.code;
           return (
             <box key={si} flexDirection="column" marginY={1}>
               {seg.lang && <text fg={theme.mutedFg}>{seg.lang}</text>}
-              <code content={seg.code} filetype={seg.lang || 'text'} syntaxStyle={syntaxStyle} />
+              <code content={safeCode} filetype={seg.lang || 'text'} syntaxStyle={syntaxStyle} />
             </box>
           );
         })}
 
-      {/* The main agent's own explore_subagent calls are background launches — their
-          live activity is shown by SubAgentPanel, so don't render the instant "ok"
-          tool-call blocks here. */}
       {toolCalls
         .filter((tc) => tc.name !== 'explore_subagent')
         .map((tc) => renderToolCall(tc, toolMap, toolResultByCallId, theme))}

@@ -108,7 +108,13 @@ function loadEnv(workspace) {
  * @returns Resolved configuration object.
  */
 export function loadConfig(pathOrConfig) {
-    const cfg = { ...getDefault() };
+    const invocationCwd = process.cwd();
+    const explicitWorkspace = (typeof pathOrConfig === 'object' && pathOrConfig?.workspace) ||
+        process.env.QWEN_WORKSPACE;
+    const cfg = {
+        ...getDefault(),
+        workspace: explicitWorkspace ? resolve(explicitWorkspace) : invocationCwd,
+    };
     // If a partial config object is passed, merge it with defaults
     if (pathOrConfig && typeof pathOrConfig === 'object') {
         const filteredConfig = Object.fromEntries(Object.entries(pathOrConfig).filter(([_, v]) => v !== undefined));
@@ -119,23 +125,48 @@ export function loadConfig(pathOrConfig) {
     const configPath = typeof pathOrConfig === 'string' ? pathOrConfig : undefined;
     const candidates = [
         configPath,
-        join(process.cwd(), '.nanogent.json'),
-        join(process.cwd(), 'nanogent.json'),
+        join(invocationCwd, '.nanoagent.json'),
+        join(invocationCwd, 'nanoagent.json'),
+        join(invocationCwd, '.nanogent.json'),
+        join(invocationCwd, 'nanogent.json'),
+        join(homedir(), '.nanoagent.json'),
         join(homedir(), '.nanogent.json'),
         join(homedir(), '.nanogent', 'config.json'),
-        join(process.cwd(), 'qwen-agent.json'),
-        join(process.cwd(), '.qwen-agent.json'),
+        join(invocationCwd, 'qwen-agent.json'),
+        join(invocationCwd, '.qwen-agent.json'),
         join(homedir(), '.qwen-agent.json'),
     ].filter(Boolean);
     for (const p of candidates) {
         if (existsSync(p)) {
             try {
-                Object.assign(cfg, JSON.parse(readFileSync(p, 'utf-8')));
+                const parsed = JSON.parse(readFileSync(p, 'utf-8'));
+                // If loading a global home-directory config file and user did NOT explicitly pass a workspace,
+                // ignore the global workspace property so current invocation directory process.cwd() is preserved.
+                if (p.startsWith(homedir()) && !explicitWorkspace) {
+                    delete parsed.workspace;
+                }
+                Object.assign(cfg, parsed);
             }
             catch (err) {
                 console.warn(`Warning: failed to parse config file ${p}:`, err instanceof Error ? err.message : String(err));
             }
             break;
+        }
+    }
+    if (!explicitWorkspace && (!cfg.workspace || cfg.workspace === homedir())) {
+        cfg.workspace = invocationCwd;
+    }
+    else {
+        cfg.workspace = resolve(cfg.workspace);
+    }
+    // Ensure local scratchpad directory exists inside workspace for scratch work
+    const scratchDir = join(cfg.workspace, '.nanoagent', 'scratchpad');
+    if (!existsSync(scratchDir)) {
+        try {
+            mkdirSync(scratchDir, { recursive: true });
+        }
+        catch {
+            /* best-effort */
         }
     }
     // Sanitize baseURL to remove any embedded API keys

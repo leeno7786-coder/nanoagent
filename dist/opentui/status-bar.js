@@ -11,7 +11,7 @@ function fmt(n) {
         return (n / 1000).toFixed(1) + 'k';
     return String(n);
 }
-export function StatusBar({ state, model, modelRuntime, todoCount, currentTool, lastUsage, totalUsage, elapsedMs, theme, mouseEnabled = true, mcpToolCount = 0, }) {
+export function StatusBar({ state, model, modelRuntime, todoCount, currentTool, lastUsage, totalUsage, elapsedMs, theme, mouseEnabled = true, mcpToolCount = 0, workspace, }) {
     const cfg = {
         idle: { color: theme.statusIdle, label: 'idle' },
         thinking: { color: theme.statusThinking, label: 'thinking' },
@@ -23,6 +23,7 @@ export function StatusBar({ state, model, modelRuntime, todoCount, currentTool, 
     const s = cfg[state];
     const toolLabel = currentTool ? ` ${currentTool.name}` : '';
     const displayModel = model.length > 28 ? model.slice(0, 27) + '…' : model;
+    const workspaceName = workspace ? (workspace.split(/[/\\]/).filter(Boolean).pop() || workspace) : '';
     const lastTokens = lastUsage
         ? `${fmt(lastUsage.input_tokens)}↑${fmt(lastUsage.output_tokens)}↓`
         : '';
@@ -42,5 +43,5 @@ export function StatusBar({ state, model, modelRuntime, todoCount, currentTool, 
     const elapsed = elapsedMs && elapsedMs > 0 ? `${(elapsedMs / 1000).toFixed(1)}s` : '';
     const mcpIndicator = mcpToolCount > 0 ? ` · MCP:${mcpToolCount}` : '';
     const spin = state !== 'idle' && state !== 'error' ? spinnerFrame(elapsedMs || 0) + ' ' : '';
-    return (_jsxs("box", { flexDirection: "column", height: 2, flexShrink: 0, backgroundColor: theme.bgPanel, children: [_jsxs("box", { flexDirection: "row", paddingX: 1, height: 1, children: [_jsx("text", { fg: theme.headerFg, children: "\u26A1 NanoAgent" }), _jsx("box", { flexGrow: 1 }), _jsxs("text", { fg: theme.mutedFg, children: [displayModel, smallModelIndicator, ctxIndicator] }), lastTokens && _jsxs("text", { fg: theme.mutedFg, children: [" \u00B7 ", lastTokens] }), totalTokens && _jsxs("text", { fg: theme.mutedFg, children: [" \u00B7 ", totalTokens] }), mcpIndicator && _jsx("text", { fg: theme.mutedFg, children: mcpIndicator }), elapsed && _jsxs("text", { fg: theme.mutedFg, children: [" \u00B7 ", elapsed] }), _jsxs("text", { fg: s.color, children: [spin, s.label, toolLabel] }), todoCount > 0 && _jsxs("text", { fg: theme.mutedFg, children: [" \u00B7 ", todoCount] })] }), _jsxs("box", { flexDirection: "row", paddingX: 1, height: 1, children: [_jsx("text", { fg: theme.mutedFg, children: "F1=help F2=clear F3=auto F4=todo F5=save F6=load F7=mouse F9=theme F10=exit F12=todo-app" }), !mouseEnabled && _jsx("text", { fg: theme.statusError, children: " [MOUSE OFF \u2014 select/copy enabled]" })] })] }));
+    return (_jsxs("box", { flexDirection: "column", height: 2, flexShrink: 0, backgroundColor: theme.bgPanel, children: [_jsxs("box", { flexDirection: "row", paddingX: 1, height: 1, children: [_jsx("text", { fg: theme.headerFg, children: "\u26A1 NanoAgent" }), workspaceName && _jsxs("text", { fg: theme.accent || theme.headerFg, children: [" [", workspaceName, "]"] }), _jsx("box", { flexGrow: 1 }), _jsxs("text", { fg: theme.mutedFg, children: [displayModel, smallModelIndicator, ctxIndicator] }), lastTokens && _jsxs("text", { fg: theme.mutedFg, children: [" \u00B7 ", lastTokens] }), totalTokens && _jsxs("text", { fg: theme.mutedFg, children: [" \u00B7 ", totalTokens] }), mcpIndicator && _jsx("text", { fg: theme.mutedFg, children: mcpIndicator }), elapsed && _jsxs("text", { fg: theme.mutedFg, children: [" \u00B7 ", elapsed] }), _jsxs("text", { fg: s.color, children: [spin, s.label, toolLabel] }), todoCount > 0 && _jsxs("text", { fg: theme.mutedFg, children: [" \u00B7 ", todoCount] })] }), _jsxs("box", { flexDirection: "row", paddingX: 1, height: 1, children: [_jsx("text", { fg: theme.mutedFg, children: "F1=help F2=clear F3=auto F4=todo F5=save F6=load F7=mouse F9=theme F10=exit F12=todo-app" }), !mouseEnabled && _jsx("text", { fg: theme.statusError, children: " [MOUSE OFF \u2014 select/copy enabled]" })] })] }));
 }
