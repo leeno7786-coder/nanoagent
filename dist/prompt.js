@@ -5,27 +5,24 @@ import { isSmallModelFromConfig } from './model-runtime.js';
  */
 export function buildSmallModelPrompt(ctx) {
     return [
-        `You are a coding agent. Workspace: ${ctx.workspace}`,
+        `You are NanoAgent, an intelligent pair-programming AI assistant. Workspace: ${ctx.workspace}`,
         '',
-        '## CRITICAL: You MUST use tools',
-        'You have tools available. ALWAYS use them to explore and edit files.',
-        'NEVER describe what you would do — actually DO it using tools.',
+        '## CRITICAL: Tool Execution & Pair Programming',
+        'You are equipped with execution tools. ALWAYS call tools to inspect and modify files.',
+        'Do not explain steps in text without executing them.',
         '',
-        '## Workflow',
-        '1. **Explore** — list_dir to see files; find_files (by name) or search_and_view (by content) to locate code',
-        '2. **Read** — read_file to examine files before editing',
-        '3. **Edit** — edit_file (exact old_text) or edit_file_lines (1-based line numbers)',
-        '4. **Run** — execute_command for shell commands (PowerShell on Windows)',
-        '5. **Track** — manage_todos for tasks with 2+ steps',
+        '## Harness Guidelines',
+        '1. **Dynamic Skills**: Relevant skills are loaded automatically into context based on the task. Follow active skill instructions closely.',
+        '2. **Confer on Ambiguity**: When user requirements or architecture choices are open-ended, ask a brief clarifying question with concise options before executing broad edits.',
+        '3. **Explore First**: Use list_dir or find_files to locate code before reading or modifying.',
+        '4. **Read Before Edit**: Always read_file before edit_file. Never invent line numbers or contents.',
+        '5. **Verify & Conclude**: Run execute_command to test or verify changes, then provide a short summary when finished.',
         '',
         '## Rules',
-        '- ALWAYS call a tool — never just talk about what you would do',
-        '- Write 1 short line describing your action, THEN call the tool',
-        '- Use list_dir first when asked to review or explore code',
-        '- Read before editing; never invent file contents',
-        '- One focused change per edit; verify with execute_command when unsure',
-        '- Short replies; put detail in tool use, not prose',
-        '- git_status / git_diff / git_commit only when the user asks about git',
+        '- ALWAYS call a tool for file/system actions — never just talk about what you would do',
+        '- Write 1 brief line describing your intended action, then call the appropriate tool',
+        '- Keep text responses concise and direct; put execution details in tool operations',
+        '- Use manage_todos for multi-step tasks to keep work organized',
     ].join('\n');
 }
 /**
@@ -33,7 +30,7 @@ export function buildSmallModelPrompt(ctx) {
  */
 export function buildLargeModelPrompt(ctx, _cfg) {
     const lines = [
-        `You are Qwen Agent, a senior software engineer. Workspace: ${ctx.workspace}`,
+        `You are NanoAgent, a senior software engineer and pair programmer. Workspace: ${ctx.workspace}`,
         '',
         '## Workflow',
         '1. git_diff / git_status first for review or audit tasks',
@@ -59,7 +56,7 @@ export function buildLargeModelPrompt(ctx, _cfg) {
 /**
  * Shared suffix: platform, paths, git, skills, todos.
  */
-export function appendPromptExtras(base, ctx, smallModel = false) {
+export function appendPromptExtras(base, ctx, _smallModel = false) {
     let system = base;
     if (ctx.allowedPaths?.length) {
         system += `\n\nExtra approved paths: ${ctx.allowedPaths.join(', ')}`;
@@ -67,14 +64,11 @@ export function appendPromptExtras(base, ctx, smallModel = false) {
     if (ctx.branch) {
         system += `\nGit branch: ${ctx.branch}`;
     }
-    if (!smallModel) {
-        // Skills section is too verbose for small models — they don't use skills well
-        if (ctx.skillInfos?.length) {
-            system += `\n\n## Skills\nType /skill:name to load one. Skills also auto-load when you mention related keywords.\n${ctx.skillInfos.map((s) => `- /skill:${s.name} — ${s.desc}`).join('\n')}`;
-        }
-        else if (ctx.skillNames?.length) {
-            system += `\n\n## Skills\nType /skill:name to load one. Skills also auto-load when you mention related keywords.\nAvailable: ${ctx.skillNames.join(', ')}`;
-        }
+    if (ctx.skillInfos?.length) {
+        system += `\n\n## Skills Catalog\nSkills auto-load when relevant keywords appear in prompt. Type /skill:name to load manually.\n${ctx.skillInfos.map((s) => `- /skill:${s.name} — ${s.desc}`).join('\n')}`;
+    }
+    else if (ctx.skillNames?.length) {
+        system += `\n\n## Skills Catalog\nSkills auto-load when relevant keywords appear in prompt. Type /skill:name to load manually.\nAvailable: ${ctx.skillNames.join(', ')}`;
     }
     if (ctx.platformNote) {
         system += `\n\n${ctx.platformNote}`;
