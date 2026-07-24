@@ -1,10 +1,11 @@
-import { jsx as _jsx, jsxs as _jsxs } from "@opentui/react/jsx-runtime";
+import { jsxs as _jsxs, jsx as _jsx } from "@opentui/react/jsx-runtime";
 /** @jsxImportSource @opentui/react */
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useKeyboard } from '@opentui/react';
 import { CommandDropdown } from './command-dropdown.js';
 import { getSyntaxStyle } from './syntax-style.js';
 import { buildToolDisplayBlock } from './tool-display.js';
+import { ErrorBoundary } from './error-boundary.js';
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 function spinnerFrame(ms) {
     return SPINNER[Math.floor(ms / 80) % SPINNER.length];
@@ -23,6 +24,24 @@ function parseCodeBlocks(content) {
     if (lastIndex < content.length)
         segments.push({ type: 'text', text: content.slice(lastIndex) });
     return segments;
+}
+function renderLinesSafely(text, maxLines = 40, fgColor, prefix = '') {
+    if (!text)
+        return null;
+    const allLines = text.split('\n');
+    if (allLines.length <= maxLines) {
+        return allLines.map((line, idx) => (_jsxs("text", { fg: fgColor, children: [prefix, line || ' '] }, idx)));
+    }
+    const headCount = 10;
+    const tailCount = Math.max(1, maxLines - headCount - 1);
+    const head = allLines.slice(0, headCount);
+    const tail = allLines.slice(-tailCount);
+    const hiddenCount = allLines.length - headCount - tailCount;
+    return [
+        ...head.map((line, idx) => (_jsxs("text", { fg: fgColor, children: [prefix, line || ' '] }, `h-${idx}`))),
+        _jsxs("text", { fg: fgColor, children: [prefix, "\u2026 [truncated ", hiddenCount, " lines]"] }, "trunc"),
+        ...tail.map((line, idx) => (_jsxs("text", { fg: fgColor, children: [prefix, line || ' '] }, `t-${idx}`))),
+    ];
 }
 const syntaxStyle = getSyntaxStyle();
 const ARG_BEARING = new Set([
@@ -125,16 +144,13 @@ export function ChatScreen({ theme, messages, toolResults = [], state, elapsedMs
         setTimeout(() => setInputValue(''), 0);
         onSubmit(v);
     }, [onSubmit]);
-    // Check if dropdown is open to prevent double-handling of Enter key
     const dropdownOpen = inputValue.startsWith('/');
     const filteredMessages = useMemo(() => messages.filter((msg, idx) => {
         if (msg.role === 'system' || msg.role === 'tool')
             return false;
-        // Never filter out the active message currently streaming or working
         const isLastMessage = idx === messages.length - 1;
         if (isLastMessage && state !== 'idle')
             return true;
-        // Keep assistant messages if they have content, tool calls, or reasoning content
         if (msg.role === 'assistant' &&
             !msg.toolCalls?.length &&
             !msg.reasoningContent &&
@@ -144,8 +160,12 @@ export function ChatScreen({ theme, messages, toolResults = [], state, elapsedMs
         return true;
     }), [messages, state]);
     const visibleMessages = useMemo(() => {
-        if (!paginated)
+        if (!paginated) {
+            if (filteredMessages.length > 25) {
+                return filteredMessages.slice(-25);
+            }
             return filteredMessages;
+        }
         const safePage = Math.min(Math.max(1, page), totalPages);
         const start = (safePage - 1) * MESSAGES_PER_PAGE;
         const slice = filteredMessages.slice(start, start + MESSAGES_PER_PAGE);
@@ -161,7 +181,6 @@ export function ChatScreen({ theme, messages, toolResults = [], state, elapsedMs
                 scrollRef.current.scrollChildIntoView(`msg-${selectedMessageIndex}`);
             }
             catch {
-                // Ignore if unmounted
             }
         }
     }, [selectedMessageIndex]);
@@ -171,15 +190,14 @@ export function ChatScreen({ theme, messages, toolResults = [], state, elapsedMs
                 scrollRef.current.scrollToBottom?.();
             }
             catch {
-                // Ignore
             }
         }
     }, [filteredMessages.length, page, currentTool, busy]);
     return (_jsxs("box", { flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0, height: "100%", overflow: "hidden", backgroundColor: theme.bgPanel, children: [_jsxs("scrollbox", { ref: scrollRef, flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0, overflow: "hidden", paddingX: 2, paddingY: 1, stickyScroll: true, stickyStart: "bottom", wrapperOptions: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0 }, viewportOptions: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0 }, children: [visibleMessages.map((msg, index) => {
                         const globalIndex = paginated ? (page - 1) * MESSAGES_PER_PAGE + index : index;
                         const isSelected = selectedMessageIndex === globalIndex;
-                        return (_jsx("box", { id: `msg-${globalIndex}`, flexDirection: "column", children: _jsx(MessageItem, { message: msg, theme: theme, toolMap: toolMap, toolResultByCallId: toolResultByCallId, lastUsage: lastUsage, state: index === visibleMessages.length - 1 ? state : undefined, currentTool: currentTool, highlighted: isSelected }) }, msg.id));
-                    }), showBusy && _jsxs("text", { fg: theme.statusThinking, children: [" ", spinnerFrame(elapsedMs), " thinking"] }), _jsx(SubAgentPanel, { subAgents: subAgents, theme: theme, elapsedMs: elapsedMs })] }), paginated && totalPages > 1 && (_jsx("box", { flexDirection: "row", height: 1, flexShrink: 0, paddingX: 2, backgroundColor: theme.bgPanel, children: _jsxs("text", { fg: theme.mutedFg, children: ["Page ", page, "/", totalPages, " \u00B7 PgUp/PgDn to change page \u00B7 Shift+\u2191/\u2193 to scroll"] }) })), _jsx(CommandDropdown, { inputValue: inputValue, theme: theme, onSubmit: useCallback((v) => {
+                        return (_jsx(ErrorBoundary, { theme: theme, children: _jsx("box", { id: `msg-${globalIndex}`, flexDirection: "column", children: _jsx(MessageItem, { message: msg, theme: theme, toolMap: toolMap, toolResultByCallId: toolResultByCallId, lastUsage: lastUsage, state: index === visibleMessages.length - 1 ? state : undefined, currentTool: currentTool, highlighted: isSelected }) }) }, msg.id));
+                    }), showBusy && _jsxs("text", { fg: theme.statusThinking, children: [" ", spinnerFrame(elapsedMs), " thinking"] }), _jsx(ErrorBoundary, { theme: theme, children: _jsx(SubAgentPanel, { subAgents: subAgents, theme: theme, elapsedMs: elapsedMs }) })] }), paginated && totalPages > 1 && (_jsx("box", { flexDirection: "row", height: 1, flexShrink: 0, paddingX: 2, backgroundColor: theme.bgPanel, children: _jsxs("text", { fg: theme.mutedFg, children: ["Page ", page, "/", totalPages, " \u00B7 PgUp/PgDn to change page \u00B7 Shift+\u2191/\u2193 to scroll"] }) })), _jsx(CommandDropdown, { inputValue: inputValue, theme: theme, onSubmit: useCallback((v) => {
                     handleSubmitLocal(v);
                 }, [handleSubmitLocal]), onPick: useCallback((cmd) => {
                     const trimmed = inputValue.trim();
@@ -192,9 +210,7 @@ export function ChatScreen({ theme, messages, toolResults = [], state, elapsedMs
                     else {
                         handleSubmitLocal(cmd);
                     }
-                }, [inputValue, handleSubmitLocal]) }), _jsxs("box", { flexDirection: "row", paddingX: 2, paddingY: 0, borderStyle: "single", borderColor: theme.borderColor, height: 3, flexShrink: 0, backgroundColor: theme.bgPanel, children: [_jsx("text", { fg: theme.inputFg, children: "\u25B6 " }), _jsx("input", { flexGrow: 1, placeholder: busy ? 'Working…' : 'Type a message or / for commands…', value: inputValue, onInput: setInputValue, onSubmit: useCallback(
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        (v) => {
+                }, [inputValue, handleSubmitLocal]) }), _jsxs("box", { flexDirection: "row", paddingX: 2, paddingY: 0, borderStyle: "single", borderColor: theme.borderColor, height: 3, flexShrink: 0, backgroundColor: theme.bgPanel, children: [_jsx("text", { fg: theme.inputFg, children: "\u25B6 " }), _jsx("input", { flexGrow: 1, placeholder: busy ? 'Working…' : 'Type a message or / for commands…', value: inputValue, onInput: setInputValue, onSubmit: useCallback((v) => {
                             if (!dropdownOpen && v.trim())
                                 handleSubmitLocal(v);
                         }, [dropdownOpen, handleSubmitLocal]), focused: true })] })] }));
@@ -212,11 +228,6 @@ const ERROR = 'error';
 /**
  * Live sub-agent stream, rendered inline in the chat flow.
  * Compact format: agent name, task, and tool calls.
- *
- *   subagent-1: security audit
- *     ● grep_search(src/auth.ts)
- *     ● read_file(src/config.ts)
- *     ✓ Completed in 4 turns · 1.2s
  */
 function SubAgentPanel({ subAgents, theme, elapsedMs, }) {
     if (!subAgents || subAgents.length === 0)
@@ -226,16 +237,12 @@ function SubAgentPanel({ subAgents, theme, elapsedMs, }) {
             const log = sa.log ?? [];
             const turns = sa.result?.toolCalls ?? 0;
             const isRunning = sa.status === RUNNING;
-            // Derive short agent name: "subagent-1", "subagent-2", etc.
             const agentName = `subagent-${idx + 1}`;
-            // Extract a short task label from the prompt.
-            // If enriched with shared context, grab the task after the context block.
             let rawPrompt = sa.prompt;
             const endCtxIdx = rawPrompt.indexOf('=== END CONTEXT ===');
             if (endCtxIdx !== -1) {
                 rawPrompt = rawPrompt.slice(endCtxIdx + '=== END CONTEXT ==='.length).trim();
             }
-            // Also strip leading === SHARED CONTEXT === wrapper if present without END
             if (rawPrompt.startsWith('=== SHARED CONTEXT ===')) {
                 rawPrompt = rawPrompt
                     .replace(/^=== SHARED CONTEXT ===[\s\S]*?=== END CONTEXT ===\s*/m, '')
@@ -246,14 +253,13 @@ function SubAgentPanel({ subAgents, theme, elapsedMs, }) {
                 .replace(/^(analyze|review|investigate|check|audit|explore|find|search|look)\s+/i, '')
                 .slice(0, 60)
                 .replace(/[.,;:]+$/, '');
-            // Collect completed tool calls
             const toolCalls = [];
             for (const ev of log) {
                 if (ev.type === 'subagent_tool_result' && ev.tool) {
                     toolCalls.push({ name: ev.tool, ok: ev.ok !== false });
                 }
             }
-            // Find currently running tool
+            const recentToolCalls = toolCalls.slice(-8);
             const runningTools = new Map();
             for (const ev of log) {
                 if (ev.type === 'subagent_tool' && ev.tool) {
@@ -269,8 +275,8 @@ function SubAgentPanel({ subAgents, theme, elapsedMs, }) {
                             ? theme.toolFg
                             : sa.status === ERROR
                                 ? theme.errorFg
-                                : theme.statusTool, children: [isRunning ? `${spin} ` : sa.status === DONE ? '✓ ' : '✗ ', agentName, ": ", taskLabel || 'working…'] }), toolCalls.map((tc, i) => (_jsxs("text", { fg: tc.ok ? theme.mutedFg : theme.errorFg, marginLeft: 2, children: [tc.ok ? '●' : '✗', " ", tc.name] }, i))), isRunning &&
-                        [...runningTools.entries()].map(([toolName, _args], i) => (_jsxs("text", { fg: theme.statusTool, marginLeft: 2, children: [spin, " ", toolName, "\u2026"] }, `r-${i}`))), sa.status === DONE && (_jsxs("text", { fg: theme.mutedFg, marginLeft: 2, children: ["\u2713 ", turns, " turns", sa.result?.durationMs != null
+                                : theme.statusTool, children: [isRunning ? `${spin} ` : sa.status === DONE ? '✓ ' : '✗ ', agentName, ": ", taskLabel || 'working…'] }), recentToolCalls.map((tc, i) => (_jsxs("text", { fg: tc.ok ? theme.mutedFg : theme.errorFg, marginLeft: 2, children: [tc.ok ? '●' : '✗', " ", tc.name] }, i))), isRunning &&
+                        [...runningTools.entries()].slice(0, 3).map(([toolName, _args], i) => (_jsxs("text", { fg: theme.statusTool, marginLeft: 2, children: [spin, " ", toolName, "\u2026"] }, `r-${i}`))), sa.status === DONE && (_jsxs("text", { fg: theme.mutedFg, marginLeft: 2, children: ["\u2713 ", turns, " turns", sa.result?.durationMs != null
                                 ? ` · ${(sa.result.durationMs / 1000).toFixed(1)}s`
                                 : ''] })), sa.status === ERROR && (_jsxs("text", { fg: theme.errorFg, marginLeft: 2, children: ["\u2717 ", sa.result?.error?.slice(0, 80) || 'failed'] }))] }, sa.id));
         }) }));
@@ -285,22 +291,25 @@ function MessageItem({ message, theme, toolMap, toolResultByCallId, lastUsage, s
     if (message.role === 'system')
         return null;
     if (message.role === 'user') {
-        return (_jsxs("box", { flexDirection: "column", marginY: 1, children: [_jsx("text", { fg: theme.userFg, bg: highlighted ? theme.bgSelected : undefined, children: "\u25B8 You" }), message.content.split('\n').map((line, i) => (_jsx("text", { fg: theme.headerFg, children: line || ' ' }, i)))] }));
+        return (_jsxs("box", { flexDirection: "column", marginY: 1, children: [_jsx("text", { fg: theme.userFg, bg: highlighted ? theme.bgSelected : undefined, children: "\u25B8 You" }), renderLinesSafely(message.content, 40, theme.headerFg)] }));
     }
     const displayContent = message.content || '';
     const segments = parseCodeBlocks(displayContent);
     const hasReasoning = message.reasoningContent && message.reasoningContent.trim() !== '';
     const isThinking = message.role === 'assistant' && state === 'thinking';
     const toolCalls = message.toolCalls ?? [];
-    return (_jsxs("box", { flexDirection: "column", marginY: 1, children: [(hasReasoning || isThinking) && (_jsxs("box", { flexDirection: "column", marginY: 0, marginBottom: 1, children: [_jsx("text", { fg: theme.statusThinking, children: isThinking ? `${spinnerFrame(Date.now())} Thinking…` : '🧠 Thought' }), hasReasoning && (_jsx("box", { flexDirection: "column", marginLeft: 2, marginTop: 0, children: (message.reasoningContent || '').split('\n').map((line, idx) => (_jsx("text", { fg: theme.mutedFg, children: line || ' ' }, idx))) }))] })), displayContent.trim() !== '' &&
+    return (_jsxs("box", { flexDirection: "column", marginY: 1, children: [(hasReasoning || isThinking) && (_jsxs("box", { flexDirection: "column", marginY: 0, marginBottom: 1, children: [_jsx("text", { fg: theme.statusThinking, children: isThinking ? `${spinnerFrame(Date.now())} Thinking…` : '🧠 Thought' }), hasReasoning && (_jsx("box", { flexDirection: "column", marginLeft: 2, marginTop: 0, children: renderLinesSafely(message.reasoningContent || '', 35, theme.mutedFg) }))] })), displayContent.trim() !== '' &&
                 segments.map((seg, si) => {
                     if (seg.type === 'text') {
-                        return seg.text.split('\n').map((line, li) => (_jsx("text", { fg: theme.headerFg, children: line || ' ' }, `${si}-${li}`)));
+                        return (_jsx("box", { flexDirection: "column", children: renderLinesSafely(seg.text, 60, theme.headerFg) }, si));
                     }
                     if (seg.lang === 'diff') {
                         return (_jsx("box", { flexDirection: "column", marginY: 1, children: _jsx("diff", { diff: seg.code, ...DIFF_PROPS }) }, si));
                     }
-                    return (_jsxs("box", { flexDirection: "column", marginY: 1, children: [seg.lang && _jsx("text", { fg: theme.mutedFg, children: seg.lang }), _jsx("code", { content: seg.code, filetype: seg.lang || 'text', syntaxStyle: syntaxStyle })] }, si));
+                    const safeCode = seg.code.split('\n').length > 120
+                        ? seg.code.split('\n').slice(0, 120).join('\n') + '\n… [truncated]'
+                        : seg.code;
+                    return (_jsxs("box", { flexDirection: "column", marginY: 1, children: [seg.lang && _jsx("text", { fg: theme.mutedFg, children: seg.lang }), _jsx("code", { content: safeCode, filetype: seg.lang || 'text', syntaxStyle: syntaxStyle })] }, si));
                 }), toolCalls
                 .filter((tc) => tc.name !== 'explore_subagent')
                 .map((tc) => renderToolCall(tc, toolMap, toolResultByCallId, theme)), message.role === 'assistant' &&

@@ -359,6 +359,12 @@ export function App({ renderer }) {
             setPage(totalPages);
         }
     }, [displayMessageCount, totalPages, paginated, state]);
+    // Auto-enable pagination when message count exceeds 30 to prevent terminal layout overflow
+    useEffect(() => {
+        if (displayMessageCount > 30 && !paginated) {
+            setPaginated(true);
+        }
+    }, [displayMessageCount, paginated]);
     // Auto-save session periodically
     useEffect(() => {
         const agent = agentRef.current;
