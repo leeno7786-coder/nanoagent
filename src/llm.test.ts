@@ -67,3 +67,50 @@ describe('effectiveContextSize', () => {
     expect(size).toBeLessThanOrEqual(16384);
   });
 });
+
+describe('rate limit & backoff handling', () => {
+  const {
+    extractRetryAfterDelayMs,
+    calculateBackoffDelay,
+    markEndpointRateLimited,
+    awaitEndpointRateLimit,
+  } = require('./llm');
+
+  it('extracts retry-after from error headers', () => {
+    const errWithHeader = {
+      headers: { 'retry-after': '12.5s' },
+    };
+    expect(extractRetryAfterDelayMs(errWithHeader)).toBe(12500);
+
+    const errWithGetHeader = {
+      headers: {
+        get: (key: string) => (key === 'x-ratelimit-reset-requests' ? '5' : null),
+      },
+    };
+    expect(extractRetryAfterDelayMs(errWithGetHeader)).toBe(5000);
+  });
+
+  it('extracts retry-after from error message text', () => {
+    const err = { message: 'Rate limit reached for gpt-4. Please try again in 8.4s.' };
+    expect(extractRetryAfterDelayMs(err)).toBe(8400);
+
+    const err2 = { error: { message: 'Overloaded. Retry after 15 seconds.' } };
+    expect(extractRetryAfterDelayMs(err2)).toBe(15000);
+  });
+
+  it('calculates backoff delay with exponential scaling for rate limits', () => {
+    const delay1 = calculateBackoffDelay(1, 429);
+    const delay2 = calculateBackoffDelay(3, 429);
+    expect(delay1).toBeGreaterThanOrEqual(1000);
+    expect(delay2).toBeGreaterThanOrEqual(1000);
+  });
+
+  it('respects endpoint rate limit backoff tracking', async () => {
+    const baseURL = 'https://openrouter.ai/api/v1/test-endpoint';
+    markEndpointRateLimited(baseURL, 50);
+    const start = Date.now();
+    await awaitEndpointRateLimit(baseURL);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(30);
+  });
+});

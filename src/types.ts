@@ -1,4 +1,4 @@
-import type { SecurityManager } from './security/index.js';
+import type { SecurityManager, PermissionManager, PermissionMode, PermissionLevel } from './security/index.js';
 
 /**
  * Application configuration shape.
@@ -12,6 +12,8 @@ export interface Config {
   apiKey: string | null;
   /** Maximum number of tool-call iterations per turn. */
   maxIterations: number;
+  /** Maximum consecutive tool execution rounds before pausing to confer with user. */
+  maxToolRoundsBeforeCheckin?: number;
   /** Working directory for file and shell operations. */
   workspace: string;
   /** Additional absolute paths that tools may access with user permission. */
@@ -58,6 +60,12 @@ export interface Config {
   contextKeepCount?: number;
   /** Maximum history tokens (default: 128000 or model context size). */
   contextMaxHistoryTokens?: number;
+  /** Permission mode for tools and commands ('read_only' | 'ask' | 'allow_edits' | 'always_allow'). */
+  permissionMode?: PermissionMode;
+  /** Per-tool and per-command explicit permission level rules. */
+  permissionRules?: Record<string, PermissionLevel>;
+  /** Permission manager instance for runtime checks. */
+  permissionManager?: PermissionManager;
   /** Enable security checks (default: true). */
   securityEnabled?: boolean;
   /** Enable command validation (default: true). */

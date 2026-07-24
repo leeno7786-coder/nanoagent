@@ -83,6 +83,7 @@ function getDefault(): Config {
     model: 'model-identifier',
     apiKey: null,
     maxIterations: 50,
+    maxToolRoundsBeforeCheckin: 12,
     workspace: process.cwd(),
     // Small model defaults — undefined means auto-detect from model id
     temperature: 0.3,

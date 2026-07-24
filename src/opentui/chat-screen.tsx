@@ -78,6 +78,7 @@ const ARG_BEARING = new Set([
   '/resume',
   '/delete-session',
   '/rename',
+  '/permissions',
   '/copy',
   '/todo',
   '/unload',
@@ -193,20 +194,36 @@ export function ChatScreen({
 
   const filteredMessages = useMemo(
     () =>
-      messages.filter(
-        (msg) =>
-          msg.role !== 'system' &&
-          msg.role !== 'tool' &&
-          !(msg.role === 'assistant' && !msg.toolCalls?.length && msg.content.trim() === '')
-      ),
-    [messages]
+      messages.filter((msg, idx) => {
+        if (msg.role === 'system' || msg.role === 'tool') return false;
+        // Never filter out the active message currently streaming or working
+        const isLastMessage = idx === messages.length - 1;
+        if (isLastMessage && state !== 'idle') return true;
+
+        // Keep assistant messages if they have content, tool calls, or reasoning content
+        if (
+          msg.role === 'assistant' &&
+          !msg.toolCalls?.length &&
+          !msg.reasoningContent &&
+          msg.content.trim() === ''
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [messages, state]
   );
 
   const visibleMessages = useMemo(() => {
     if (!paginated) return filteredMessages;
-    const start = (page - 1) * MESSAGES_PER_PAGE;
-    return filteredMessages.slice(start, start + MESSAGES_PER_PAGE);
-  }, [filteredMessages, paginated, page]);
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const start = (safePage - 1) * MESSAGES_PER_PAGE;
+    const slice = filteredMessages.slice(start, start + MESSAGES_PER_PAGE);
+    if (slice.length === 0 && filteredMessages.length > 0) {
+      return filteredMessages.slice(-MESSAGES_PER_PAGE);
+    }
+    return slice;
+  }, [filteredMessages, paginated, page, totalPages]);
 
   const showBusy = busy && !(state === 'executing_tool' && currentTool);
 
@@ -219,6 +236,16 @@ export function ChatScreen({
       }
     }
   }, [selectedMessageIndex]);
+
+  useEffect(() => {
+    if (scrollRef.current && busy) {
+      try {
+        (scrollRef.current as { scrollToBottom?: () => void }).scrollToBottom?.();
+      } catch {
+        // Ignore
+      }
+    }
+  }, [filteredMessages.length, page, currentTool, busy]);
 
   return (
     <box

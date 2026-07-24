@@ -30,6 +30,7 @@ import type {
   RuntimeProvider,
   ModelInfo,
 } from '../types.js';
+import type { PermissionRequest } from '../security/index.js';
 import type { SubAgentProgressEvent } from '../tools/index.js';
 import type { SubAgentResult } from '../subagents.js';
 import { ChatScreen } from './chat-screen.js';
@@ -39,6 +40,7 @@ import { SkillsOverlay } from './skills-overlay.js';
 import { ConnectOverlay } from './connect-overlay.js';
 import { StatusBar } from './status-bar.js';
 import { TodoSidebar } from './todo-sidebar.js';
+import { TodoPage } from './todo-page.js';
 import { THEMES, DEFAULT_THEME, type Theme } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
 import { getProviderBaseURL } from '../providers.js';
@@ -202,48 +204,23 @@ function buildCompactMessages(agent: AgentCore, removed: Message[], kept: Messag
  */
 const MAX_MESSAGES_BEFORE_COMPACT = 200;
 
-function checkAndAutoCompact(
-  agent: AgentCore,
-  setMessages: React.Dispatch<React.SetStateAction<Message[]>>
-) {
+let isCompacting = false;
+async function checkAndAutoCompact(agent: AgentCore, setMessages: (msgs: Message[]) => void) {
+  if (isCompacting) return;
+  isCompacting = true;
   try {
-    const settings = getModelCompactionSettings(agent.cfg.model, agent.cfg.maxTokens, {
-      baseURL: agent.cfg.baseURL,
-      smallModelMode: agent.cfg.smallModelMode,
-      modelParamBillions: agent.cfg.modelParamBillions,
-      modelContextLength: agent.cfg.modelContextLength,
-      modelMaxContextLength: agent.cfg.modelMaxContextLength,
-    });
-    const { compactThreshold, keepCount } = settings;
-
-    if (
-      totalConversationTokens(agent.messages) <= compactThreshold &&
-      agent.messages.length <= MAX_MESSAGES_BEFORE_COMPACT
-    )
-      return;
-
-    const rest = agent.messages.filter(
-      (m) =>
-        m.role !== 'system' && !(m.role === 'assistant' && !m.toolCalls && m.content.trim() === '')
-    );
-
-    const kept = rest.slice(-keepCount);
-    const removed = rest.slice(0, -keepCount);
-
-    agent.messages = buildCompactMessages(agent, removed, kept);
-    setMessages([...agent.messages]);
-
-    if (process.env.QWEN_DEBUG_LLM) {
-      console.error(
-        `[auto-compact] ${removed.length} removed, ${kept.length} kept, est -> ~${calculateConversationTokenCount(agent.messages)} tokens`
-      );
+    const compacted = await agent.compactContextIfNeeded();
+    if (compacted) {
+      setMessages([...agent.messages]);
     }
   } catch (err) {
     console.error('[auto-compact] compaction failed:', err);
+  } finally {
+    isCompacting = false;
   }
 }
 
-type Overlay = 'help' | 'history' | 'skills' | 'connect' | null;
+type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'todo' | null;
 
 export function App({ renderer }: { renderer: CliRenderer }) {
   const [overlay, setOverlay] = useState<Overlay>(null);
@@ -253,6 +230,19 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     const cfg = loadConfig();
     return THEMES[cfg.theme || ''] || DEFAULT_THEME;
   });
+
+  // Permission state
+  const [pendingPermissionReq, setPendingPermissionReq] = useState<PermissionRequest | null>(null);
+  const permissionResolverRef = useRef<((choice: 'allow' | 'always_allow' | 'deny') => void) | null>(null);
+
+  const handlePermissionDecision = useCallback((decision: 'allow' | 'always_allow' | 'deny') => {
+    const resolve = permissionResolverRef.current;
+    permissionResolverRef.current = null;
+    setPendingPermissionReq(null);
+    if (resolve) {
+      resolve(decision);
+    }
+  }, []);
 
   // Agent state
   const [messages, setMessages] = useState<Message[]>([]);
@@ -335,6 +325,12 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     };
     agent.onToolResult = (r) => {
       setToolResults((prev) => [...prev.slice(-99), r]);
+    };
+    agent.onPermissionRequest = (req) => {
+      setPendingPermissionReq(req);
+      return new Promise<'allow' | 'always_allow' | 'deny'>((resolve) => {
+        permissionResolverRef.current = resolve;
+      });
     };
     agent.init().then(() => {
       agentRef.current = agent;
@@ -439,17 +435,29 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   // Auto-enable pagination when messages exceed threshold
   const PAGINATION_THRESHOLD = 100;
   const MESSAGES_PER_PAGE = 50;
+  const totalPages = paginated ? Math.max(1, Math.ceil(displayMessageCount / MESSAGES_PER_PAGE)) : 1;
 
   useEffect(() => {
-    setPaginated(messages.length > PAGINATION_THRESHOLD);
-  }, [messages.length]);
-
-  // Reset to page 1 when pagination is disabled
-  useEffect(() => {
-    if (!paginated) {
+    const shouldPaginate = messages.length > PAGINATION_THRESHOLD;
+    setPaginated(shouldPaginate);
+    if (!shouldPaginate) {
       setPage(1);
     }
-  }, [paginated]);
+  }, [messages.length]);
+
+  // Clamp page if totalPages shrinks
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(Math.max(1, totalPages));
+    }
+  }, [totalPages, page]);
+
+  // Auto-advance to latest page when new messages arrive or when agent is active
+  useEffect(() => {
+    if (paginated && state !== 'idle') {
+      setPage(totalPages);
+    }
+  }, [displayMessageCount, totalPages, paginated, state]);
 
   // Auto-save session periodically
   useEffect(() => {
@@ -470,6 +478,29 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
   // Global keyboard shortcuts
   useKeyboard((keyEvent) => {
+    if (pendingPermissionReq) {
+      if (keyEvent.name === 'y' || keyEvent.name === 'Y') {
+        handlePermissionDecision('allow');
+        keyEvent.preventDefault?.();
+        return;
+      }
+      if (keyEvent.name === 'a' || keyEvent.name === 'A') {
+        handlePermissionDecision('always_allow');
+        keyEvent.preventDefault?.();
+        return;
+      }
+      if (
+        keyEvent.name === 'n' ||
+        keyEvent.name === 'N' ||
+        keyEvent.name === 'escape' ||
+        keyEvent.name === 'Escape'
+      ) {
+        handlePermissionDecision('deny');
+        keyEvent.preventDefault?.();
+        return;
+      }
+    }
+
     if (overlay) {
       if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
         setOverlay(null);
@@ -482,6 +513,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
       if (busy) {
         abortControllerRef.current?.abort();
+        const agent = agentRef.current;
+        if (agent) {
+          agent.setState('idle');
+        }
         keyEvent.preventDefault?.();
       }
       return;
@@ -520,6 +555,9 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         autoSaveSession(agent.messages, agent.todos, cfg.workspace);
       }
       process.exit(0);
+    } else if (keyEvent.name === 'f12' || keyEvent.name === 'F12') {
+      setOverlay('todo');
+      keyEvent.preventDefault?.();
     }
 
     // Ctrl+Up/Down: Navigate message selection
@@ -694,6 +732,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     async (text: string) => {
       const agent = agentRef.current;
       if (!agent || state !== 'idle') return;
+
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
 
       try {
         if (text.startsWith('/')) {
@@ -1543,6 +1585,152 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               setMessages([...agent.messages]);
               return;
             }
+            case 'permissions': {
+              const pm = agent.securityManager.permissionManager;
+              const trimmedArgs = args ? args.trim() : '';
+
+              if (!trimmedArgs) {
+                const mode = pm.getMode();
+                const rules = pm.getRules();
+                const ruleEntries = Object.entries(rules);
+                const rulesText =
+                  ruleEntries.length > 0
+                    ? ruleEntries.map(([t, l]) => `- \`${t}\`: ${l}`).join('\n')
+                    : 'None';
+
+                agent.messages.push({
+                  id: Math.random().toString(36).slice(2, 10),
+                  role: 'assistant',
+                  content:
+                    `## Tool & Command Permissions\n\n` +
+                    `- **Current Global Mode**: \`${mode}\`\n` +
+                    `- **Category Defaults**:\n` +
+                    `  - Read tools (read_file, list_dir, grep_search, etc.): ALWAYS ALLOWED\n` +
+                    `  - Write tools (write_file, edit_file, etc.): ${
+                      mode === 'read_only'
+                        ? 'DENIED'
+                        : mode === 'allow_edits' || mode === 'always_allow'
+                          ? 'ALLOWED'
+                          : 'ASK'
+                    }\n` +
+                    `  - Commands (execute_command, run_tests, etc.): ${
+                      mode === 'read_only'
+                        ? 'DENIED'
+                        : mode === 'always_allow'
+                          ? 'ALLOWED'
+                          : 'ASK'
+                    }\n\n` +
+                    `### Custom Rules\n${rulesText}\n\n` +
+                    `### Commands\n` +
+                    `- Set Mode: \`/permissions read_only\` | \`/permissions ask\` | \`/permissions allow_edits\` | \`/permissions always_allow\`\n` +
+                    `- Set Rule: \`/permissions <allow|ask|deny> <tool_or_command>\` (e.g. \`/permissions allow execute_command\`)\n` +
+                    `- Reset Rules: \`/permissions reset\``,
+                  timestamp: Date.now(),
+                });
+                setMessages([...agent.messages]);
+                return;
+              }
+
+              const parts = trimmedArgs.split(/\s+/);
+              const sub = parts[0].toLowerCase();
+              const target = parts.slice(1).join(' ').trim();
+
+              if (sub === 'read_only' || sub === 'readonly') {
+                pm.setMode('read_only');
+                agent.messages.push({
+                  id: Math.random().toString(36).slice(2, 10),
+                  role: 'assistant',
+                  content: 'Permission mode set to **read_only**. Write tools and command execution are now blocked.',
+                  timestamp: Date.now(),
+                });
+              } else if (sub === 'ask') {
+                if (target) {
+                  pm.setRule(target, 'ask');
+                  agent.messages.push({
+                    id: Math.random().toString(36).slice(2, 10),
+                    role: 'assistant',
+                    content: `Permission rule for \`${target}\` set to **ask**.`,
+                    timestamp: Date.now(),
+                  });
+                } else {
+                  pm.setMode('ask');
+                  agent.messages.push({
+                    id: Math.random().toString(36).slice(2, 10),
+                    role: 'assistant',
+                    content: 'Permission mode set to **ask**. Write tools and commands will ask for confirmation.',
+                    timestamp: Date.now(),
+                  });
+                }
+              } else if (sub === 'allow_edits' || sub === 'allowedits') {
+                pm.setMode('allow_edits');
+                agent.messages.push({
+                  id: Math.random().toString(36).slice(2, 10),
+                  role: 'assistant',
+                  content: 'Permission mode set to **allow_edits**. Read and write tools are allowed; commands will ask for confirmation.',
+                  timestamp: Date.now(),
+                });
+              } else if (sub === 'always_allow' || sub === 'alwaysallow') {
+                pm.setMode('always_allow');
+                agent.messages.push({
+                  id: Math.random().toString(36).slice(2, 10),
+                  role: 'assistant',
+                  content: 'Permission mode set to **always_allow**. All read, write, and command operations are auto-allowed.',
+                  timestamp: Date.now(),
+                });
+              } else if (sub === 'allow') {
+                if (!target) {
+                  agent.messages.push({
+                    id: Math.random().toString(36).slice(2, 10),
+                    role: 'assistant',
+                    content: 'Usage: `/permissions allow <tool_or_command>`',
+                    timestamp: Date.now(),
+                  });
+                } else {
+                  pm.setRule(target, 'allow');
+                  agent.messages.push({
+                    id: Math.random().toString(36).slice(2, 10),
+                    role: 'assistant',
+                    content: `Permission rule for \`${target}\` set to **allow** (auto-approved).`,
+                    timestamp: Date.now(),
+                  });
+                }
+              } else if (sub === 'deny') {
+                if (!target) {
+                  agent.messages.push({
+                    id: Math.random().toString(36).slice(2, 10),
+                    role: 'assistant',
+                    content: 'Usage: `/permissions deny <tool_or_command>`',
+                    timestamp: Date.now(),
+                  });
+                } else {
+                  pm.setRule(target, 'deny');
+                  agent.messages.push({
+                    id: Math.random().toString(36).slice(2, 10),
+                    role: 'assistant',
+                    content: `Permission rule for \`${target}\` set to **deny** (blocked).`,
+                    timestamp: Date.now(),
+                  });
+                }
+              } else if (sub === 'reset') {
+                pm.setMode('ask');
+                pm.clearRules();
+                agent.messages.push({
+                  id: Math.random().toString(36).slice(2, 10),
+                  role: 'assistant',
+                  content: 'Permission mode reset to **ask** and all custom rules cleared.',
+                  timestamp: Date.now(),
+                });
+              } else {
+                agent.messages.push({
+                  id: Math.random().toString(36).slice(2, 10),
+                  role: 'assistant',
+                  content: `Unknown permission mode/command: \`${sub}\`. Options: read_only, ask, allow_edits, always_allow, allow <target>, deny <target>, reset`,
+                  timestamp: Date.now(),
+                });
+              }
+              setMessages([...agent.messages]);
+              return;
+            }
             default: {
               // Handle skill loading by name: /<skill-name>, /skill:name, /skill [name], or /skills [name]
               const cleanSkillName = command.replace(/^skill:/, '');
@@ -1587,10 +1775,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           }
         }
 
-        abortControllerRef.current?.abort();
-        abortControllerRef.current = new AbortController();
-        const signal = abortControllerRef.current.signal;
-
         // Check if auto-compaction is needed before sending
         if (agent) {
           checkAndAutoCompact(agent, setMessages);
@@ -1598,7 +1782,14 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
         await agent.run(text, signal);
       } catch (err) {
-        if (agent) {
+        const isAborted =
+          signal.aborted ||
+          (err instanceof Error &&
+            (err.name === 'AbortError' ||
+              err.message === 'Aborted' ||
+              err.message.toLowerCase().includes('abort')));
+
+        if (!isAborted && agent) {
           agent.messages.push({
             id: Math.random().toString(36).slice(2, 10),
             role: 'assistant',
@@ -1728,6 +1919,15 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       </ErrorBoundary>
     );
   }
+  if (overlay === 'todo') {
+    return (
+      <ErrorBoundary theme={theme}>
+        <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
+          <TodoPage theme={theme} onClose={closeOverlay} />
+        </box>
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <ErrorBoundary theme={theme}>
@@ -1766,6 +1966,28 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             height="100%"
             overflow="hidden"
           >
+            {pendingPermissionReq && (
+              <box
+                flexDirection="column"
+                borderStyle="rounded"
+                borderColor={theme.warningBorder || theme.borderColor}
+                paddingX={1}
+                paddingY={0}
+                marginY={1}
+              >
+                <text fg={theme.warningFg || theme.toolFg}>
+                  {`⚠️ PERMISSION REQUIRED: ${pendingPermissionReq.category.toUpperCase()} OPERATION`}
+                </text>
+                <text fg={theme.headerFg}>
+                  {`Tool: ${pendingPermissionReq.tool}${pendingPermissionReq.command ? ` | Command: "${pendingPermissionReq.command}"` : ''}`}
+                </text>
+                <box marginY={0} marginTop={1} gap={3}>
+                  <text fg={theme.accent || theme.userFg}>[Y] Allow Once</text>
+                  <text fg={theme.successFg || theme.agentFg}>[A] Always Allow Target</text>
+                  <text fg={theme.errorFg}>[N] Deny</text>
+                </box>
+              </box>
+            )}
             <ChatScreen
               theme={theme}
               messages={messages}

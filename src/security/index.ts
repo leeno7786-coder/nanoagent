@@ -5,6 +5,9 @@
 
 import { resolve, relative, isAbsolute } from 'path';
 import { existsSync, statSync } from 'fs';
+import { PermissionManager, PermissionMode, PermissionLevel } from './permissions.js';
+
+export * from './permissions.js';
 
 /**
  * Security configuration options.
@@ -18,6 +21,10 @@ export interface SecurityConfig {
   validateFileAccess: boolean;
   /** Enable API key sanitization (default: true). */
   sanitizeOutput: boolean;
+  /** Permission mode for tools and commands (default: 'ask'). */
+  permissionMode?: PermissionMode;
+  /** Per-tool/command explicit rules. */
+  permissionRules?: Record<string, PermissionLevel>;
   /** Additional blocked commands (regex patterns). */
   blockedCommands: RegExp[];
   /** Additional allowed commands (exact matches). */
@@ -40,6 +47,8 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
   validateCommands: true,
   validateFileAccess: true,
   sanitizeOutput: true,
+  permissionMode: 'ask',
+  permissionRules: {},
   blockedCommands: [],
   allowedCommands: new Set([]),
   allowedPaths: [],
@@ -217,6 +226,21 @@ const SAFE_COMMAND_PATTERNS: RegExp[] = [
   /^bun\s+test$/i,
   /^bun\s+run\s+\S+/i,
 
+  // Python/uv operations
+  /^python(?:\s+.*)?$/i,
+  /^python3(?:\s+.*)?$/i,
+  /^pytest(?:\s+.*)?$/i,
+  /^pip(?:\s+.*)?$/i,
+  /^uv(?:\s+.*)?$/i,
+  /^uvx(?:\s+.*)?$/i,
+
+  // Network & downloads
+  /^curl(?:\s+.*)?$/i,
+  /^wget(?:\s+.*)?$/i,
+  /^git\s+clone(?:\s+.*)?$/i,
+  /^docker(?:\s+.*)?$/i,
+  /^huggingface-cli(?:\s+.*)?$/i,
+
   // Build tools
   /^make$/i,
   /^make\s+\S+/i,
@@ -248,6 +272,7 @@ const SAFE_COMMAND_PATTERNS: RegExp[] = [
 export class SecurityManager {
   private config: SecurityConfig;
   private workspace: string;
+  public permissionManager: PermissionManager;
 
   constructor(config: Partial<SecurityConfig> = {}, workspace: string = '') {
     this.config = {
@@ -255,6 +280,10 @@ export class SecurityManager {
       ...Object.fromEntries(Object.entries(config).filter(([_, v]) => v !== undefined)),
     } as SecurityConfig;
     this.workspace = workspace;
+    this.permissionManager = new PermissionManager({
+      mode: this.config.permissionMode,
+      rules: this.config.permissionRules,
+    });
   }
 
   /**
@@ -271,7 +300,7 @@ export class SecurityManager {
       return { ok: false, error: 'Empty command' };
     }
 
-    // Check against blocked commands
+    // Check against dangerous patterns
     for (const pattern of DANGEROUS_COMMAND_PATTERNS) {
       if (pattern.test(trimmed)) {
         return { ok: false, error: `Command blocked: matches dangerous pattern` };
@@ -285,26 +314,28 @@ export class SecurityManager {
       }
     }
 
-    // Check against allowed commands (if any are specified)
+    // Check against custom allowed commands if specified
     if (this.config.allowedCommands.size > 0) {
       const isAllowed = Array.from(this.config.allowedCommands).some(
-        (allowed) => trimmed.toLowerCase() === allowed.toLowerCase()
+        (allowed) => trimmed.toLowerCase() === allowed.toLowerCase() || trimmed.toLowerCase().startsWith(allowed.toLowerCase() + ' ')
       );
       if (!isAllowed) {
         return { ok: false, error: `Command not in allowed list` };
       }
     }
 
-    // Check against safe patterns
-    for (const pattern of SAFE_COMMAND_PATTERNS) {
-      if (pattern.test(trimmed)) {
-        return { ok: true, command };
+    // Check against safe patterns — if no custom allow list is set,
+    // commands must match a safe pattern to be allowed (deny-by-default).
+    if (this.config.allowedCommands.size === 0) {
+      for (const pattern of SAFE_COMMAND_PATTERNS) {
+        if (pattern.test(trimmed)) {
+          return { ok: true, command };
+        }
       }
+      return { ok: false, error: `Command not in allowed safe list` };
     }
 
-    // If we get here, the command wasn't explicitly allowed or blocked
-    // Strict mode: deny by default
-    return { ok: false, error: `Command not in allowed safe list` };
+    return { ok: true, command };
   }
 
   /**

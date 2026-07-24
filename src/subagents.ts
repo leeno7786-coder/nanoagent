@@ -467,6 +467,14 @@ async function runSingleSubAgent(
 
     const stream = streamChat(wctx.client, wctx.cfg, messages, toolDefs, signal, {
       enableThinking: false,
+      onRetry: (info) => {
+        emit({
+          type: 'subagent_chunk',
+          agent: wctx.endpoint.name,
+          model: wctx.cfg.model,
+          text: `\n[Rate limit retry (${info.status}): waiting ${(info.delayMs / 1000).toFixed(1)}s (attempt ${info.attempt}/${info.maxAttempts})]\n`,
+        });
+      },
     });
 
     for await (const chunk of stream) {

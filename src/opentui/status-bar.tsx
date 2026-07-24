@@ -101,7 +101,7 @@ export function StatusBar({
       </box>
       <box flexDirection="row" paddingX={1} height={1}>
         <text fg={theme.mutedFg}>
-          F1=help F2=clear F3=auto F4=todo F5=save F6=load F7=mouse F9=theme F10=exit
+          F1=help F2=clear F3=auto F4=todo F5=save F6=load F7=mouse F9=theme F10=exit F12=todo-app
         </text>
         {!mouseEnabled && <text fg={theme.statusError}> [MOUSE OFF — select/copy enabled]</text>}
       </box>

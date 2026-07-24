@@ -20,6 +20,10 @@ export interface Theme {
   inputFg: string;
   bgSelected: string;
   bgPanel: string;
+  warningFg?: string;
+  warningBorder?: string;
+  accent?: string;
+  successFg?: string;
 }
 
 export const THEMES: Record<string, Theme> = {

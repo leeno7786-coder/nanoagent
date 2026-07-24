@@ -2,6 +2,7 @@ import { printRootHelp } from './help.js';
 import { cmdRun } from './run.js';
 import { cmdModels } from './models.js';
 import { cmdDoctor } from './doctor.js';
+import { cmdTodo } from './todo.js';
 
 export async function runCli(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -18,6 +19,8 @@ export async function runCli(argv: string[]): Promise<number> {
       return cmdModels(rest);
     case 'doctor':
       return cmdDoctor(rest);
+    case 'todo':
+      return cmdTodo(rest);
     case 'tui':
       return 0; // handled by main before dispatch
     default:

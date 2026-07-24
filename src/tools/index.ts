@@ -287,6 +287,18 @@ const ALLOWED_COMMANDS = new Set([
   'prettier',
   'jest',
   'test',
+  'uv',
+  'uvx',
+  'python',
+  'python3',
+  'pytest',
+  'pip',
+  'pip3',
+  'curl',
+  'wget',
+  'git clone',
+  'docker',
+  'huggingface-cli',
   // File operations (with proper validation)
   'read_file',
   'write_file',
@@ -298,15 +310,9 @@ const ALLOWED_COMMANDS = new Set([
   'search_and_view',
 ]);
 
-/** Validate a command string against the whitelist. */
+/** Validate a command string against dangerous patterns. Permission policy is handled by PermissionManager. */
 function validateCommand(cmd: string): boolean {
-  const trimmed = cmd.trim();
-  for (const allowed of ALLOWED_COMMANDS) {
-    if (trimmed === allowed || trimmed.startsWith(allowed + ' ')) {
-      return true;
-    }
-  }
-  return false;
+  return !isDangerous(cmd);
 }
 
 /** Shorter tool descriptions for ≤8B models (full params stay in JSON schema). */
@@ -1731,13 +1737,18 @@ export const tools: Tool[] = [
   // Command Execution and Build Tools
   {
     name: 'execute_command',
-    description: 'Run a shell command in the workspace',
+    description:
+      'Run a shell command in the workspace. Automatically supports extended timeouts (up to 600s) for downloads (curl, wget, git clone) and package installs (pip, uv, npm, bun). The system will notify ("ping") with results when execution finishes.',
     parameters: {
       type: 'object',
       properties: {
         command: {
           type: 'string',
-          description: "Shell command to execute (e.g., 'dir', 'git status', 'bun test')",
+          description: "Shell command to execute (e.g., 'dir', 'git status', 'curl -O <url>', 'pip install <pkg>')",
+        },
+        timeout: {
+          type: 'number',
+          description: "Optional custom timeout in seconds (default 60s, extended up to 600s for downloads)",
         },
       },
       required: ['command'],
@@ -1778,7 +1789,11 @@ export const tools: Tool[] = [
         return JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
       }
 
-      return execCmdAsync(cmd, ws, 60, signal);
+      const isDownloadOrBuild = /^(?:curl|wget|git\s+clone|npm|bun|pnpm|pip|pip3|uv|cargo|docker|huggingface-cli)\b/i.test(cmd);
+      const defaultTimeout = isDownloadOrBuild ? 600 : 60;
+      const userTimeout = typeof args.timeout === 'number' && args.timeout > 0 ? Math.min(args.timeout, 300) : defaultTimeout;
+
+      return execCmdAsync(cmd, ws, userTimeout, signal);
     },
   },
   {
