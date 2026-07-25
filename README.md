@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-An ultra-lightweight, scalable CLI/TUI coding agent built from the ground up to empower **tiny local models** (2B–8B parameter models like Qwen 2.5/3.5, Phi-3, Llama 3) while scaling seamlessly to remote runtimes (OpenAI, OpenRouter, Anthropic, Ollama, LM Studio).
+An ultra-lightweight, scalable CLI/TUI coding agent built from the ground up to empower **tiny local models** (2B–8B parameter models like Qwen 2.5/3.5, Phi-3, Llama 3) while scaling seamlessly to cloud APIs (OpenAI, Anthropic, OpenRouter). Run locally, think globally.
 
 ---
 
@@ -46,7 +46,7 @@ nanoagent
 npx nanoagent
 ```
 
-### Option 4: Build from Source (Bun)
+### Option 3: Build from Source (Bun)
 ```bash
 git clone https://github.com/leeno7786-coder/qwen-agent-tui.git
 cd qwen-agent-tui
