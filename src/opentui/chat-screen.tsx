@@ -451,13 +451,14 @@ function SubAgentPanel({
   theme: Theme;
   elapsedMs: number;
 }) {
-  if (!subAgents || subAgents.length === 0) return null;
+  const activeSubAgents = (subAgents || []).filter((sa) => sa.status === RUNNING);
+  if (activeSubAgents.length === 0) return null;
 
   const spin = spinnerFrame(elapsedMs);
 
   return (
     <box flexDirection="column" marginY={1}>
-      {subAgents.map((sa, idx) => {
+      {activeSubAgents.map((sa, idx) => {
         const log = sa.log ?? [];
         const turns = sa.result?.toolCalls ?? 0;
         const isRunning = sa.status === RUNNING;

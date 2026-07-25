@@ -230,10 +230,11 @@ const ERROR = 'error';
  * Compact format: agent name, task, and tool calls.
  */
 function SubAgentPanel({ subAgents, theme, elapsedMs, }) {
-    if (!subAgents || subAgents.length === 0)
+    const activeSubAgents = (subAgents || []).filter((sa) => sa.status === RUNNING);
+    if (activeSubAgents.length === 0)
         return null;
     const spin = spinnerFrame(elapsedMs);
-    return (_jsx("box", { flexDirection: "column", marginY: 1, children: subAgents.map((sa, idx) => {
+    return (_jsx("box", { flexDirection: "column", marginY: 1, children: activeSubAgents.map((sa, idx) => {
             const log = sa.log ?? [];
             const turns = sa.result?.toolCalls ?? 0;
             const isRunning = sa.status === RUNNING;

@@ -1883,10 +1883,14 @@ export class AgentCore {
     const result = this.contextManager.compact();
 
     if (result.removedCount > 0) {
-      // Add a system message about compaction
+      // Synchronize AgentCore's internal messages with ContextManager's pruned array
+      this.messages = this.contextManager.getMessages();
+
+      // Add a system notification about compaction
       if (result.summary) {
         this.addAssistantMessage(result.summary);
       }
+      this.onUpdate?.();
       return true;
     }
 
