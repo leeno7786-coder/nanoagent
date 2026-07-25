@@ -68,10 +68,12 @@
     "build:bun": "bun build src/main.ts src/opentui/index.tsx --outdir dist --minify --target node",
     "prepare": "npm run build",
     "prepack": "npm run build",
+    "postinstall": "node scripts/postinstall.js",
     "package": "npm pack"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/diff": "^7.0.0",
     "@types/node": "^20.14.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -86,11 +88,15 @@
     "@openrouter/sdk": "^0.13.7",
     "@opentui/core": "^0.2.1",
     "@opentui/react": "^0.2.1",
+    "bun": "^1.2.4",
     "clipboardy": "^5.3.1",
+    "diff": "^7.0.0",
     "dotenv": "^17.4.2",
     "openai": "^6.38.0",
     "pino": "^10.3.1",
     "react": "^19.2.6",
-    "tiktoken": "^1.0.22"
+    "react-dom": "^19.2.6",
+    "tiktoken": "^1.0.22",
+    "typescript": "^5.6.3"
   }
 }
