@@ -478,11 +478,13 @@ async function runSingleSubAgent(
       }, 60000);
     };
 
+    const onParentAbort = () => turnController.abort();
     if (signal) {
       if (signal.aborted) turnController.abort();
-      else signal.addEventListener('abort', () => turnController.abort());
+      else signal.addEventListener('abort', onParentAbort, { once: true });
     }
 
+    let streamError: string | undefined;
     try {
       const stream = streamChat(wctx.client, wctx.cfg, messages, toolDefs, turnController.signal, {
         enableThinking: false,
@@ -528,9 +530,20 @@ async function runSingleSubAgent(
           model: wctx.cfg.model,
           text: '\n[Sub-agent turn timed out — proceeding with gathered findings]\n',
         });
+      } else {
+        // Real API/network errors must NOT be swallowed — otherwise the
+        // sub-agent reports ok:true with empty output.
+        streamError = (e as { message?: string }).message || String(e);
+        emit({
+          type: 'subagent_chunk',
+          agent: wctx.endpoint.name,
+          model: wctx.cfg.model,
+          text: `\n[Sub-agent stream error: ${streamError}]\n`,
+        });
       }
     } finally {
       if (turnTimer) clearTimeout(turnTimer);
+      signal?.removeEventListener('abort', onParentAbort);
     }
 
     const msg = {
@@ -707,6 +720,29 @@ async function runSingleSubAgent(
 
     // Final text answer.
     const answer = msg.content || '';
+
+    // A stream error with no gathered output is a FAILURE, not an empty success
+    if (streamError && !answer && toolCallCount === 0) {
+      emit({
+        type: 'subagent_done',
+        agent: wctx.endpoint.name,
+        model: wctx.cfg.model,
+        ok: false,
+        output: streamError,
+        toolCalls: toolCallCount,
+      });
+      return {
+        name: wctx.endpoint.name,
+        model: wctx.cfg.model,
+        baseURL: wctx.cfg.baseURL,
+        ok: false,
+        output: '',
+        error: streamError,
+        durationMs: Math.round(performance.now() - start),
+        toolCalls: toolCallCount,
+      };
+    }
+
     emit({
       type: 'subagent_done',
       agent: wctx.endpoint.name,

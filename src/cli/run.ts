@@ -92,7 +92,12 @@ export async function cmdRun(argv: string[]): Promise<number> {
   }
 
   await agent.init();
-  await agent.run(prompt);
+  try {
+    await agent.run(prompt);
+  } finally {
+    // Tear down MCP child processes and cache watchers so the process can exit
+    await agent.shutdown();
+  }
 
   const lastAssistant = [...agent.messages]
     .reverse()

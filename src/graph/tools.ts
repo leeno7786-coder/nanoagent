@@ -73,7 +73,9 @@ export async function build_memory_graph(args: { workspace?: string }): Promise<
   const workspace = args.workspace || process.cwd();
 
   try {
-    const graph = await getMemoryGraph(workspace);
+    // autoRebuild=false: build exactly once below (getMemoryGraph would
+    // otherwise build AND we would build again)
+    const graph = await getMemoryGraph(workspace, false);
     const startTime = Date.now();
 
     await graph.build();

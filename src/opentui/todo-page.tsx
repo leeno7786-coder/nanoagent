@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/react */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useKeyboard } from '@opentui/react';
 import type { Theme } from './theme.js';
 
@@ -18,9 +18,21 @@ interface TodoPageProps {
 
 const STORAGE_KEY = 'nanoagent-todos';
 
+// localStorage exists under Bun but not plain Node — access it defensively.
+function getStorage(): {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+} | null {
+  const ls = (globalThis as Record<string, unknown>).localStorage;
+  if (ls && typeof (ls as { getItem?: unknown }).getItem === 'function') {
+    return ls as { getItem(key: string): string | null; setItem(key: string, value: string): void };
+  }
+  return null;
+}
+
 function loadTodos(): TodoItem[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = getStorage()?.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {
     /* ignore */
@@ -30,17 +42,17 @@ function loadTodos(): TodoItem[] {
 
 function saveTodos(todos: TodoItem[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
+    getStorage()?.setItem(STORAGE_KEY, JSON.stringify(todos));
   } catch {
     /* ignore */
   }
 }
 
 export function TodoPage({ theme, onClose }: TodoPageProps) {
-  const [todos, setTodos] = useState<TodoItem[]>(loadTodos);
-  const [input, setInput] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [filter, setFilter] = useState<'all' | 'active' | 'done'>('all');
+  const [todos] = useState<TodoItem[]>(loadTodos);
+  const [input] = useState('');
+  const [selectedIndex] = useState(0);
+  const [filter] = useState<'all' | 'active' | 'done'>('all');
 
   useEffect(() => {
     saveTodos(todos);
@@ -51,38 +63,6 @@ export function TodoPage({ theme, onClose }: TodoPageProps) {
       onClose();
     }
   });
-
-  const addTodo = useCallback(() => {
-    const text = input.trim();
-    if (!text) return;
-    const newTodo: TodoItem = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-      text,
-      done: false,
-      createdAt: Date.now(),
-    };
-    setTodos((prev) => [newTodo, ...prev]);
-    setInput('');
-    setSelectedIndex(0);
-  }, [input]);
-
-  const toggleTodo = useCallback((id: string) => {
-    setTodos((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t))
-    );
-  }, []);
-
-  const deleteTodo = useCallback((id: string) => {
-    setTodos((prev) => {
-      const next = prev.filter((t) => t.id !== id);
-      return next;
-    });
-    setSelectedIndex((prev) => Math.max(0, prev - 1));
-  }, []);
-
-  const clearCompleted = useCallback(() => {
-    setTodos((prev) => prev.filter((t) => !t.done));
-  }, []);
 
   const filteredTodos = todos.filter((t) => {
     if (filter === 'active') return !t.done;
@@ -172,9 +152,7 @@ export function TodoPage({ theme, onClose }: TodoPageProps) {
 
       {/* Footer hints */}
       <box flexDirection="row" height={1} marginTop={0}>
-        <text fg={theme.mutedFg}>
-          Enter: add · Space: toggle · d: delete · c: clear done · f: filter
-        </text>
+        <text fg={theme.mutedFg}>q/Esc: close</text>
       </box>
     </box>
   );

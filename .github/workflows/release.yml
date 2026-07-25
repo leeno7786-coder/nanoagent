@@ -31,8 +31,27 @@ jobs:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install dependencies (npm ci)
         run: npm ci
+
+      - name: Run tests
+        run: bun test
+
+      - name: Verify tag matches package.json version
+        run: |
+          REF="${{ github.event.inputs.tag != '' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}"
+          TAG_VERSION="${REF#refs/tags/v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version '$TAG_VERSION' does not match package.json version '$PKG_VERSION'"
+            exit 1
+          fi
+          echo "Tag version $TAG_VERSION matches package.json version"
 
       - name: Build (tsc -> dist/)
         run: npm run build
@@ -53,7 +72,7 @@ jobs:
             TAG="latest"        # stable release
           fi
           echo "Publishing @omega3_0/nanoagent@$VERSION with dist-tag '$TAG'"
-          npm publish --access public --tag "$TAG"
+          npm publish --access public --tag "$TAG" --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

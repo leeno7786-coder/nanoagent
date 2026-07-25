@@ -162,6 +162,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
           delete parsed.workspace;
         }
         Object.assign(cfg, parsed);
+        cfg.configFilePath = p;
       } catch (err) {
         console.warn(
           `Warning: failed to parse config file ${p}:`,
@@ -803,7 +804,7 @@ export function toggleSkillInConfig(name: string): boolean {
     if (!config.skills) {
       config.skills = {};
     }
-    if (!config.skills[name]) {
+    if (config.skills[name] === undefined) {
       if (config.enabled === undefined) {
         config.enabled = true;
       }

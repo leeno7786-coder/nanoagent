@@ -156,6 +156,21 @@ export class McpManager {
   }
 
   /**
+   * Build a sanitized base environment for spawned MCP servers.
+   * API keys/secrets are stripped — servers only receive secrets that are
+   * explicitly declared in their config `env` block.
+   */
+  private sanitizedBaseEnv(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v === undefined) continue;
+      if (/(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE)/i.test(k)) continue;
+      out[k] = v;
+    }
+    return out;
+  }
+
+  /**
    * Connect to a local MCP server via stdio transport.
    */
   private async connectLocal(
@@ -164,7 +179,7 @@ export class McpManager {
     config: McpLocalServerConfig
   ): Promise<void> {
     const [command, ...args] = config.command;
-    const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+    const env: Record<string, string> = this.sanitizedBaseEnv();
     if (config.env) {
       for (const [k, v] of Object.entries(config.env)) {
         env[k] = interpolateEnv(v, this.workspace);
@@ -269,18 +284,29 @@ export class McpManager {
     try {
       const result = await conn.client.callTool({ name: toolName, arguments: args });
 
+      // MCP protocol: a tool-level failure is reported via isError, NOT thrown
+      const isError = (result as { isError?: boolean }).isError === true;
+
       // Extract text content from the result
       const content = result.content;
       if (Array.isArray(content)) {
         const texts = content as Array<{ type?: string; text?: string }>;
         const filtered = texts.filter((c) => c.type === 'text').map((c) => c.text);
-        if (filtered.length === 1) return filtered[0]!;
-        if (filtered.length > 1) return JSON.stringify({ ok: true, output: filtered.join('\n') });
+        if (filtered.length === 1) {
+          return isError
+            ? JSON.stringify({ ok: false, error: filtered[0]! })
+            : JSON.stringify({ ok: true, output: filtered[0]! });
+        }
+        if (filtered.length > 1) {
+          return JSON.stringify(
+            isError ? { ok: false, error: filtered.join('\n') } : { ok: true, output: filtered.join('\n') }
+          );
+        }
         // Non-text content (images, etc.)
-        return JSON.stringify({ ok: true, content });
+        return JSON.stringify(isError ? { ok: false, error: 'MCP tool error', content } : { ok: true, content });
       }
 
-      return JSON.stringify({ ok: true, result: content });
+      return JSON.stringify(isError ? { ok: false, error: 'MCP tool error', result: content } : { ok: true, result: content });
     } catch (err: unknown) {
       return JSON.stringify({
         ok: false,

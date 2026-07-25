@@ -104,21 +104,20 @@ export function isSmallModel(
 
   const lower = modelId.toLowerCase();
 
-  // Explicit parameter counts in id (1b–8b, nano, etc.)
-  if (
-    /\b(0\.5|1\b(?!\d)|1\.5|2\b(?!\d)|3\b(?!\d)|4\b(?!\d)|7\b(?!\d)|8\b(?!\d))[-.]?b\b/.test(lower)
-  )
-    return true;
-  if (lower.includes('4b') || lower.includes('nano')) return true;
+  // Explicit parameter counts in id (0.5b–8b). Match a number directly
+  // followed by 'b', not preceded by another digit/dot (avoids '80b', '1.8b').
+  const paramSize = /(?:^|[^\d.])(0\.5|1\.5|1|2|3|4|7|8)b(?:[^\d]|$)/;
+  if (paramSize.test(lower)) return true;
+  if (lower.includes('nano')) return true;
 
   // Families commonly run locally at ≤8B
   if (lower.includes('nemotron') && (lower.includes('4b') || lower.includes('nano'))) return true;
   if (lower.includes('phi')) return true;
-  if (lower.includes('gemma') && /\b(1\b(?!\d)|2\b(?!\d)|4\b(?!\d)|7\b(?!\d)|8\b(?!\d))[-.]?b\b/.test(lower)) return true;
-  if (lower.includes('qwen') && /\b(0\.5|1\b(?!\d)|1\.5|2\b(?!\d)|3\b(?!\d)|4\b(?!\d)|7\b(?!\d)|8\b(?!\d))[-.]?b\b/.test(lower)) return true;
-  if (lower.includes('llama') && /\b(1\b(?!\d)|3\b(?!\d)|7\b(?!\d)|8\b(?!\d))[-.]?b\b/.test(lower)) return true;
+  if (lower.includes('gemma') && paramSize.test(lower)) return true;
+  if (lower.includes('qwen') && paramSize.test(lower)) return true;
+  if (lower.includes('llama') && paramSize.test(lower)) return true;
   if (lower.includes('mistral') && lower.includes('7b')) return true;
-  if (lower.includes('deepseek') && /\b(1\.5b|7b|8b)\b/.test(lower)) return true;
+  if (lower.includes('deepseek') && /(?:^|[^\d.])(1\.5|7|8)b(?:[^\d]|$)/.test(lower)) return true;
 
   return false;
 }
@@ -747,7 +746,6 @@ export async function chat(
   options?: ChatRequestOptions
 ): Promise<ChatResponse> {
   const baseMaxRetries = cfg.retryCount ?? 3;
-  let lastError: Error | undefined;
   let attempt = 1;
 
   while (true) {
@@ -839,7 +837,6 @@ export async function chat(
         throw err;
       }
       const errStatus = e.status || e.status_code || e.response?.status || 0;
-      lastError = err as Error;
 
       const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
@@ -967,9 +964,28 @@ export async function* streamChat(
 
         if (Array.isArray(toolCallsAny) && toolCallsAny.length > 0) {
           for (const tcRaw of toolCallsAny as Array<Record<string, unknown>>) {
-            const idx = (tcRaw.index ?? 0) as number;
             const tcId = tcRaw.id as string | undefined;
             const tcFn = tcRaw.function as Record<string, unknown> | undefined;
+            let idx = tcRaw.index as number | undefined;
+            if (idx === undefined) {
+              // Providers that omit `index` and emit several complete
+              // tool_calls in one chunk would otherwise all land in buffer 0
+              // and corrupt each other's arguments. Route by id instead.
+              if (tcId) {
+                let found: number | undefined;
+                for (const [k, v] of toolCallBuffers) {
+                  if (v.id === tcId) {
+                    found = k;
+                    break;
+                  }
+                }
+                idx =
+                  found ??
+                  (toolCallBuffers.size > 0 ? Math.max(...toolCallBuffers.keys()) + 1 : 0);
+              } else {
+                idx = 0;
+              }
+            }
             if (!toolCallBuffers.has(idx)) {
               const fallbackId = tcId || `call_${idx}_${Math.random().toString(36).slice(2, 10)}`;
               toolCallBuffers.set(idx, {

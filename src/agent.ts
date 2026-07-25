@@ -78,6 +78,52 @@ export class AgentCore {
   };
   /** Called whenever the agent state changes. */
   public onUpdate?: () => void;
+  /** Timestamp of the last throttled UI update emission. */
+  private lastUpdateEmit = 0;
+  /** Cached OpenAI tool schemas (rebuilt only when the tool/skill set changes). */
+  private toolSchemaCache?: { key: string; tools: ReturnType<typeof toOpenAI> };
+  /** Cached sub-agent pool (avoids an HTTP /models fetch per dispatch). */
+  private subAgentPoolCache?: {
+    key: string;
+    pool: Awaited<ReturnType<typeof resolveSubAgentPool>>;
+  };
+
+  /**
+   * Throttled onUpdate emission for hot paths (streaming). Emits at most
+   * once per `minIntervalMs`; callers must always do a final direct
+   * `onUpdate?.()` after the loop so the last chunk is rendered.
+   */
+  private emitUpdateThrottled(minIntervalMs = 60): void {
+    const nowTs = Date.now();
+    if (nowTs - this.lastUpdateEmit >= minIntervalMs) {
+      this.lastUpdateEmit = nowTs;
+      this.onUpdate?.();
+    }
+  }
+
+  /** Build (and cache) the OpenAI tool schemas for the current tool/skill set. */
+  private buildToolSchemas(activeSkills: Set<string>): ReturnType<typeof toOpenAI> {
+    const all = getAllTools();
+    const key = `${all.length}|${[...activeSkills].sort().join(',')}`;
+    if (this.toolSchemaCache?.key === key) return this.toolSchemaCache.tools;
+    const tools = toOpenAI(all, this.cfg, activeSkills);
+    this.toolSchemaCache = { key, tools };
+    return tools;
+  }
+
+  /** Resolve the remote sub-agent pool, memoized against the relevant config. */
+  private async getSubAgentPool() {
+    const key = JSON.stringify({
+      s: this.cfg.subagents,
+      sb: this.cfg.subAgentBaseURL,
+      b: this.cfg.baseURL,
+      r: process.env.REMOTE_LMSTUDIO_URL,
+    });
+    if (!this.subAgentPoolCache || this.subAgentPoolCache.key !== key) {
+      this.subAgentPoolCache = { key, pool: await resolveSubAgentPool(this.cfg) };
+    }
+    return this.subAgentPoolCache.pool;
+  }
   /** Called after a tool finishes executing. */
   public onToolResult?: (r: ToolResult) => void;
   /** Permission request callback for interactive user confirmation. */
@@ -183,6 +229,7 @@ export class AgentCore {
       newCfg.toolCacheMaxSize !== undefined ||
       workspaceChanged
     ) {
+      this.toolCache.stopAllWatchers();
       this.toolCache = createToolCacheManager(this.cfg, this.cfg.workspace);
     }
 
@@ -266,6 +313,7 @@ export class AgentCore {
     applySubAgentDefaults(this.cfg);
 
     // Recreate cache manager with new config
+    this.toolCache.stopAllWatchers();
     this.toolCache = createToolCacheManager(this.cfg);
 
     // Preserve security manager across config reload
@@ -281,19 +329,42 @@ export class AgentCore {
   async init() {
     await this.applyRuntimeProfile();
 
-    // Connect to MCP servers if configured
+    // Connect to MCP servers if configured.
+    // SECURITY: MCP servers defined in a PROJECT-LOCAL config (a repo the user
+    // just opened) are NOT auto-connected — a malicious repo could spawn
+    // arbitrary processes or exfiltrate env vars via {env:...} headers.
+    // Trusted sources: global (home-dir) configs, an explicit config path, or
+    // NANOGENT_TRUST_PROJECT_MCP=1.
     if (this.cfg.mcp && Object.keys(this.cfg.mcp).length > 0) {
-      this.mcpStates = await this.mcpManager.connectAll();
-      const mcpTools = this.mcpManager.getTools();
-      registerExternalTools(mcpTools);
-      if (process.env.QWEN_DEBUG_LLM) {
-        console.error(
-          '[QWEN_DEBUG] MCP:',
-          this.mcpManager.connectedCount,
-          'servers,',
-          this.mcpManager.totalTools,
-          'tools'
+      const { homedir } = await import('os');
+      const source = this.cfg.configFilePath;
+      const isProjectConfig = !!source && !source.startsWith(homedir());
+      const trustOverride = process.env.NANOGENT_TRUST_PROJECT_MCP === '1';
+
+      if (isProjectConfig && !trustOverride) {
+        this.mcpStates = Object.keys(this.cfg.mcp).map((name) => ({
+          name,
+          status: 'disabled' as const,
+          toolCount: 0,
+          error: 'blocked: MCP servers from project configs are not auto-connected (untrusted source)',
+        }));
+        console.warn(
+          `[security] Skipped auto-connecting ${this.mcpStates.length} MCP server(s) from project config ${source}. ` +
+            `Move the "mcp" block to your global config (~/.nanogent.json) or set NANOGENT_TRUST_PROJECT_MCP=1 to allow it.`
         );
+      } else {
+        this.mcpStates = await this.mcpManager.connectAll();
+        const mcpTools = this.mcpManager.getTools();
+        registerExternalTools(mcpTools);
+        if (process.env.QWEN_DEBUG_LLM) {
+          console.error(
+            '[QWEN_DEBUG] MCP:',
+            this.mcpManager.connectedCount,
+            'servers,',
+            this.mcpManager.totalTools,
+            'tools'
+          );
+        }
       }
     }
 
@@ -352,6 +423,14 @@ export class AgentCore {
     this.messages = [{ id: 'system-base', role: 'system', content: system, timestamp: now() }];
     this.syncTodoMessage();
     this.skillManager.syncSkillMessages(this.messages, this._smallModel);
+
+    // Seed the context manager with the system prompt (which includes active
+    // skill prompts) so token accounting and post-compaction sync keep it.
+    // Compaction preserves leading system messages.
+    const baseMsg = this.messages.find((m) => m.id === 'system-base');
+    if (baseMsg) {
+      this.contextManager.setMessages([baseMsg]);
+    }
 
     // Debug: log model detection info
     if (process.env.QWEN_DEBUG_LLM) {
@@ -453,7 +532,7 @@ export class AgentCore {
     }
 
     if (trimmed === '/subagents') {
-      const pool = await resolveSubAgentPool(this.cfg);
+      const pool = await this.getSubAgentPool();
       if (!pool) {
         this.addAssistantMessage(
           'No remote sub-agent pool configured. Set `subagents` in ~/.nanogent.json or set REMOTE_LMSTUDIO_URL.'
@@ -598,6 +677,14 @@ export class AgentCore {
         return;
       }
 
+      // Enforce the maxRounds knob (CLI --max-rounds / agent.maxRounds)
+      if (this.maxRounds > 0 && iterationCount >= this.maxRounds) {
+        this.addAssistantMessage(`Round limit reached (${this.maxRounds} rounds). Resuming on your next prompt.`);
+        this.setState('idle');
+        this.onUpdate?.();
+        return;
+      }
+
       // Rate limiting: delay between LLM calls to avoid hitting provider rate limits
       if (iterationCount > 0 && (this.cfg.rateLimitMs ?? 0) > 0) {
         await new Promise((r) => setTimeout(r, this.cfg.rateLimitMs));
@@ -630,7 +717,7 @@ export class AgentCore {
             this.client,
             this.cfg,
             this.toChatMessages(),
-            toOpenAI(getAllTools(), this.cfg, activeSkills),
+            this.buildToolSchemas(activeSkills),
             signal
           );
 
@@ -638,6 +725,7 @@ export class AgentCore {
           let toolCallBuffers: Array<{ id: string; name: string; arguments: string }> = [];
 
           let inThinkTag = false;
+          let thinkCarry = ''; // holds a trailing partial <think>/</think> tag across chunks
           const iter = stream[Symbol.asyncIterator]();
           let iterResult = await iter.next();
           while (!iterResult.done) {
@@ -662,8 +750,20 @@ export class AgentCore {
             }
 
             const rawChunkText = chunk.content || '';
-            if (rawChunkText) {
-              let textToProcess = rawChunkText;
+            if (rawChunkText || thinkCarry) {
+              let textToProcess = thinkCarry + rawChunkText;
+              thinkCarry = '';
+
+              // Hold back a trailing partial tag (e.g. '<thi' + 'nk>') so
+              // cross-chunk <think> boundaries are still detected.
+              const lt = textToProcess.lastIndexOf('<');
+              if (lt >= 0) {
+                const tail = textToProcess.slice(lt);
+                if ('<think>'.startsWith(tail) || '</think>'.startsWith(tail)) {
+                  thinkCarry = tail;
+                  textToProcess = textToProcess.slice(0, lt);
+                }
+              }
 
               if (!inThinkTag && textToProcess.includes('<think>')) {
                 const parts = textToProcess.split('<think>');
@@ -698,8 +798,18 @@ export class AgentCore {
               );
             }
 
-            this.onUpdate?.();
+            this.emitUpdateThrottled();
             iterResult = await iter.next();
+          }
+
+          // Flush any held-back partial tag at end of stream
+          if (thinkCarry) {
+            if (inThinkTag) {
+              assistantMsg.reasoningContent = (assistantMsg.reasoningContent || '') + thinkCarry;
+            } else {
+              assistantMsg.content += thinkCarry;
+            }
+            thinkCarry = '';
           }
 
           const streamUsage = (
@@ -734,9 +844,8 @@ export class AgentCore {
                 : `I will use a tool (${first?.name || 'tool'}) to gather the needed context.`;
           }
 
-          // Now that streaming is complete, add the message to history context
-          this.contextManager.addMessage(assistantMsg);
-
+          // Drop completely empty responses from history BEFORE adding to the
+          // context manager, so no phantom message resurfaces after compaction.
           if (
             !assistantMsg.toolCalls &&
             assistantMsg.content.trim() === '' &&
@@ -747,6 +856,9 @@ export class AgentCore {
             this.onUpdate?.();
             return;
           }
+
+          // Now that streaming is complete, add the message to history context
+          this.contextManager.addMessage(assistantMsg);
 
           // Reasoning-only: model was just thinking, loop back for actual content
           if (
@@ -827,7 +939,7 @@ export class AgentCore {
             this.client,
             this.cfg,
             this.toChatMessages(),
-            toOpenAI(getAllTools(), this.cfg, activeSkills),
+            this.buildToolSchemas(activeSkills),
             signal
           );
         } catch (err: unknown) {
@@ -864,6 +976,11 @@ export class AgentCore {
         }
 
         const msg = response.message;
+        if (response.usage) {
+          this.lastUsage = response.usage;
+          this.totalUsage.input_tokens += response.usage.input_tokens;
+          this.totalUsage.output_tokens += response.usage.output_tokens;
+        }
         assistantMsg = {
           id: rnd(),
           role: 'assistant',
@@ -897,11 +1014,6 @@ export class AgentCore {
             continue;
           }
           this.setState('idle');
-          if (response.usage) {
-            this.lastUsage = response.usage;
-            this.totalUsage.input_tokens += response.usage.input_tokens;
-            this.totalUsage.output_tokens += response.usage.output_tokens;
-          }
           return;
         }
       }
@@ -1000,7 +1112,7 @@ export class AgentCore {
     // Add .catch() to prevent unhandled promise rejections
     void (async () => {
       try {
-        const pool = await resolveSubAgentPool(this.cfg);
+        const pool = await this.getSubAgentPool();
         if (!pool) {
           handle.status = 'error';
           handle.result = {
@@ -1118,14 +1230,17 @@ export class AgentCore {
 
     const formatted = formatSubAgentResults(results);
 
-    // Emit one consolidated tool result message per batch.
-    this.messages.push({
+    // Emit one consolidated assistant message per batch (a `tool` message
+    // here would reference a tool_call id that does not exist and break the
+    // OpenAI tool-calling protocol on strict providers).
+    const consolidated: Message = {
       id: rnd(),
-      role: 'tool',
+      role: 'assistant',
       content: formatted,
       timestamp: now(),
-      toolCallId: `bg-${handles.map((h) => h.id).join(',')}`,
-    });
+    };
+    this.messages.push(consolidated);
+    this.contextManager.addMessage(consolidated);
 
     // Always clear the background sub-agents map, even on errors
     this.backgroundSubAgents.clear();
@@ -1636,7 +1751,7 @@ export class AgentCore {
   /**
    * Handle special tool results that require agent state updates.
    */
-  private handleSpecialToolResults(toolName: string, output: string, toolCallId: string): void {
+  private handleSpecialToolResults(toolName: string, output: string, _toolCallId: string): void {
     // Intercept change_workspace results to sync agent state
     if (toolName === 'change_workspace') {
       try {
@@ -1742,13 +1857,12 @@ export class AgentCore {
     this.syncTodoMessage();
 
     // Filter out internal/empty messages that can poison the next chat template turn.
-    // Keep only the main system prompt and todo system message.
-    // Other system messages (like "Connected to LM Studio") are filtered out
-    // because Qwen's Jinja template requires system messages at the beginning.
+    // Keep the main system prompt and the todo system message (the model needs
+    // todo ids for manage_todos). Other transient system notices are filtered
+    // out because Qwen's Jinja template requires system messages at the beginning.
     const messagesToSend = this.messages.filter(
       (m) =>
-        !(m.role === 'system' && m.id === 'system-todos') &&
-        !(m.role === 'system' && m.id !== 'system-base') &&
+        !(m.role === 'system' && m.id !== 'system-base' && m.id !== 'system-todos') &&
         !(m.role === 'assistant' && !m.toolCalls && !m.reasoningContent && m.content.trim() === '')
     );
 
@@ -1837,8 +1951,18 @@ export class AgentCore {
     const result = this.contextManager.compact();
 
     if (result.removedCount > 0) {
-      // Synchronize AgentCore's internal messages with ContextManager's pruned array
-      this.messages = this.contextManager.getMessages();
+      // Preserve non-base system messages (todo context, transient notices)
+      // that live only in AgentCore.messages, then re-sync from the pruned
+      // context manager (which holds system-base + conversation history).
+      const extraSystem = this.messages.filter(
+        (m) => m.role === 'system' && m.id !== 'system-base'
+      );
+      const synced = this.contextManager.getMessages();
+      const firstNonSystem = synced.findIndex((m) => m.role !== 'system');
+      const insertAt = firstNonSystem === -1 ? synced.length : firstNonSystem;
+      synced.splice(insertAt, 0, ...extraSystem);
+      this.messages = synced;
+      this.syncTodoMessage();
 
       // Add a system notification about compaction
       if (result.summary) {
@@ -1895,6 +2019,11 @@ export class AgentCore {
       this.mcpManager?.disconnectAll();
     } catch (err) {
       console.warn('MCP disconnect error during shutdown:', err);
+    }
+    try {
+      this.toolCache?.stopAllWatchers();
+    } catch {
+      // ignore watcher cleanup errors
     }
     this.backgroundSubAgents.clear();
   }

@@ -112,6 +112,22 @@ export class ContextManager {
     if (cfg.contextManagementEnabled !== undefined) {
       this.config.enabled = cfg.contextManagementEnabled;
     }
+
+    // Seed the token caches so fast-path totals are correct for restored sessions
+    this.reseedTokenCache();
+  }
+
+  /**
+   * Recompute per-message token caches and the cached total from scratch.
+   */
+  private reseedTokenCache(): void {
+    this.messageTokenCache.clear();
+    this.cachedTotalTokens = 0;
+    for (const msg of this.messages) {
+      const tokens = this.countSingleMessageTokens(msg);
+      this.messageTokenCache.set(msg.id, tokens);
+      this.cachedTotalTokens += tokens;
+    }
   }
 
   /**
@@ -147,6 +163,7 @@ export class ContextManager {
    */
   setMessages(messages: Message[]): void {
     this.messages = [...messages];
+    this.reseedTokenCache();
     this.stats = null; // Invalidate cached stats
   }
 
@@ -263,11 +280,7 @@ export class ContextManager {
     const messageTokens = this.countMessageTokens([message]);
 
     // Use the maxTokens from stats which already accounts for reserved space
-    // Also ensure we don't exceed the absolute context size
-    return (
-      stats.currentTokens + messageTokens < stats.maxTokens &&
-      stats.currentTokens + messageTokens < stats.maxTokens * 1.1
-    ); // Small buffer
+    return stats.currentTokens + messageTokens < stats.maxTokens;
   }
 
   /**
@@ -306,33 +319,52 @@ export class ContextManager {
       return { removedCount: 0 };
     }
 
-    // Try to remove messages from the beginning (oldest first)
-    const messagesToRemove: Message[] = [];
-    let removedTokens = 0;
-    let removedCount = 0;
+    // Don't remove leading system messages (main prompt, todo context, skills)
+    let firstRemovable = 0;
+    while (
+      firstRemovable < this.messages.length &&
+      this.messages[firstRemovable].role === 'system'
+    ) {
+      firstRemovable++;
+    }
 
     // Don't remove the last keepCount messages
     const minKeep = Math.min(this.config.keepCount, this.messages.length);
-    const removableMessages = this.messages.slice(0, this.messages.length - minKeep);
+    const lastRemovable = Math.max(firstRemovable, this.messages.length - minKeep);
 
-    for (const msg of removableMessages) {
-      const msgTokens = this.countMessageTokens([msg]);
-      if (removedTokens + msgTokens <= tokensToRemove) {
-        messagesToRemove.push(msg);
-        removedTokens += msgTokens;
-        removedCount++;
-      } else if (removedTokens === 0 && messagesToRemove.length === 0) {
-        // First message is too large — remove it anyway to make progress
-        messagesToRemove.push(msg);
-        removedTokens += msgTokens;
-        removedCount++;
+    // Walk a contiguous cut point forward from the first removable message
+    let cut = firstRemovable;
+    let removedTokens = 0;
+    while (cut < lastRemovable) {
+      const msgTokens = this.countMessageTokens([this.messages[cut]]);
+      if (removedTokens + msgTokens > tokensToRemove && cut > firstRemovable) {
         break;
       }
+      removedTokens += msgTokens;
+      cut++;
+    }
+    if (cut === firstRemovable && lastRemovable > firstRemovable) {
+      // First removable message is too large — remove it anyway to make progress
+      removedTokens += this.countMessageTokens([this.messages[cut]]);
+      cut++;
     }
 
-    // Remove the messages
+    // Never split an assistant tool_calls group from its tool responses:
+    // if the cut lands right before `tool` messages, advance past them.
+    while (cut < this.messages.length && this.messages[cut].role === 'tool') {
+      removedTokens += this.countMessageTokens([this.messages[cut]]);
+      cut++;
+    }
+
+    const messagesToRemove = this.messages.slice(firstRemovable, cut);
+    const removedCount = messagesToRemove.length;
+
+    // Remove the messages (system prefix is preserved)
     if (messagesToRemove.length > 0) {
-      this.messages = this.messages.slice(messagesToRemove.length);
+      this.messages = [
+        ...this.messages.slice(0, firstRemovable),
+        ...this.messages.slice(cut),
+      ];
       // Update cached totals and remove stale cache entries
       for (const msg of messagesToRemove) {
         const tokens = this.messageTokenCache.get(msg.id);
@@ -446,6 +478,8 @@ export class ContextManager {
    */
   clear(): void {
     this.messages = [];
+    this.messageTokenCache.clear();
+    this.cachedTotalTokens = 0;
     this.stats = null;
     this.compactionCount = 0;
   }

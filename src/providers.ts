@@ -1080,7 +1080,9 @@ export async function checkRuntimeHealth(baseURL: string): Promise<boolean> {
         signal: AbortSignal.timeout(2500),
       });
       if (response.ok) return true;
-    } catch {}
+    } catch {
+      /* health endpoint unreachable — try fallback */
+    }
 
     // Ollama API tags fallback check
     const rawHost = baseURL.replace(/\/v1\/?$/i, '').replace(/\/+$/, '');
@@ -1091,7 +1093,9 @@ export async function checkRuntimeHealth(baseURL: string): Promise<boolean> {
         signal: AbortSignal.timeout(2500),
       });
       if (response.ok) return true;
-    } catch {}
+    } catch {
+      /* tags endpoint unreachable — report unhealthy */
+    }
 
     return false;
   } catch {

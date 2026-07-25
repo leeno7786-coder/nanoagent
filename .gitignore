@@ -3,8 +3,7 @@ node_modules
 
 # output
 out
-# dist is prebuilt and shipped so the package runs even if `prepare` is blocked
-!dist/**
+dist/
 *.tgz
 
 # code coverage

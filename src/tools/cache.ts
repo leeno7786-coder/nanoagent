@@ -245,6 +245,7 @@ export class ToolCacheManager {
     const age = Date.now() - entry.timestamp;
     if (age > this.config.ttlMs) {
       this.cache.delete(key);
+      this.releaseOrphanWatchers();
       this.misses++;
       return undefined;
     }
@@ -254,6 +255,7 @@ export class ToolCacheManager {
       for (const dep of entry.dependencies) {
         if (this.hasFileChanged(dep, entry.timestamp)) {
           this.cache.delete(key);
+          this.releaseOrphanWatchers();
           this.misses++;
           return undefined;
         }
@@ -299,14 +301,17 @@ export class ToolCacheManager {
       : extractDependencies(toolName, args, workspace);
 
     // Evict oldest entries if cache is full (Map preserves insertion order)
+    let evicted = false;
     while (this.cache.size >= this.config.maxSize) {
       const oldestKey = this.cache.keys().next().value;
       if (oldestKey !== undefined) {
         this.cache.delete(oldestKey);
+        evicted = true;
       } else {
         break;
       }
     }
+    if (evicted) this.releaseOrphanWatchers();
 
     this.cache.set(key, {
       toolName,
@@ -412,6 +417,23 @@ export class ToolCacheManager {
       this.fileWatchers.set(absPath, watcher);
     } catch {
       // File watching not supported on this platform
+    }
+  }
+
+  /**
+   * Stop watching dependency files that are no longer referenced by any
+   * cache entry (called after eviction/expiry so watchers don't leak).
+   */
+  private releaseOrphanWatchers(): void {
+    if (this.fileWatchers.size === 0) return;
+    const referenced = new Set<string>();
+    for (const e of this.cache.values()) {
+      if (e.dependencies) {
+        for (const d of e.dependencies) referenced.add(resolve(this.workspace, d));
+      }
+    }
+    for (const watched of [...this.fileWatchers.keys()]) {
+      if (!referenced.has(watched)) this.unwatchFile(watched);
     }
   }
 

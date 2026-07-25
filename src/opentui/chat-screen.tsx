@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/react */
 
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
 import type { ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import type { Message, ToolResult, AgentState, ToolCall } from '../types.js';
@@ -268,6 +268,7 @@ export function ChatScreen({
       try {
         scrollRef.current.scrollChildIntoView(`msg-${selectedMessageIndex}`);
       } catch {
+        /* scroll target may not exist yet */
       }
     }
   }, [selectedMessageIndex]);
@@ -277,6 +278,7 @@ export function ChatScreen({
       try {
         (scrollRef.current as { scrollToBottom?: () => void }).scrollToBottom?.();
       } catch {
+        /* scroll target may not exist yet */
       }
     }
   }, [filteredMessages.length, page, currentTool, busy]);
@@ -388,8 +390,10 @@ export function ChatScreen({
           value={inputValue}
           onInput={setInputValue}
           onSubmit={useCallback(
-            (v: any) => {
-              if (!dropdownOpen && v.trim()) handleSubmitLocal(v);
+            (v: unknown) => {
+              const text =
+                typeof v === 'string' ? v : String((v as { value?: string })?.value ?? '');
+              if (!dropdownOpen && text.trim()) handleSubmitLocal(text);
             },
             [dropdownOpen, handleSubmitLocal]
           )}
@@ -561,16 +565,7 @@ function renderToolCall(
   return <ToolActivityBlock key={tc.id} block={block} theme={theme} />;
 }
 
-function MessageItem({
-  message,
-  theme,
-  toolMap,
-  toolResultByCallId,
-  lastUsage,
-  state,
-  currentTool,
-  highlighted = false,
-}: {
+type MessageItemProps = {
   message: Message;
   theme: Theme;
   toolMap: Map<string, ToolResult>;
@@ -582,7 +577,24 @@ function MessageItem({
     args: string;
   };
   highlighted?: boolean;
-}) {
+};
+
+/**
+ * Memoized so that per-token streaming updates only re-render the message
+ * that actually changed (app.tsx clones the streaming message to give it a
+ * new identity). Tool-result bindings are compared per call id so the
+ * rebuilt Maps don't defeat the memo.
+ */
+const MessageItem = memo(function MessageItem({
+  message,
+  theme,
+  toolMap,
+  toolResultByCallId,
+  lastUsage,
+  state,
+  currentTool,
+  highlighted = false,
+}: MessageItemProps) {
   if (message.role === 'system') return null;
 
   if (message.role === 'user') {
@@ -673,4 +685,34 @@ function MessageItem({
       )}
     </box>
   );
-}
+},
+(prev, next) => {
+  if (
+    prev.theme !== next.theme ||
+    prev.state !== next.state ||
+    prev.highlighted !== next.highlighted ||
+    prev.lastUsage !== next.lastUsage ||
+    prev.currentTool !== next.currentTool
+  ) {
+    return false;
+  }
+  const pm = prev.message;
+  const nm = next.message;
+  if (pm !== nm) {
+    if (
+      pm.id !== nm.id ||
+      pm.content !== nm.content ||
+      pm.reasoningContent !== nm.reasoningContent ||
+      (pm.toolCalls?.length ?? 0) !== (nm.toolCalls?.length ?? 0)
+    ) {
+      return false;
+    }
+  }
+  // Compare tool-result bindings per call id (the Maps are rebuilt per update)
+  const tcs = nm.toolCalls ?? [];
+  for (const tc of tcs) {
+    if (prev.toolResultByCallId.get(tc.id) !== next.toolResultByCallId.get(tc.id)) return false;
+    if (prev.toolMap.get(tc.id) !== next.toolMap.get(tc.id)) return false;
+  }
+  return true;
+});

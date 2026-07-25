@@ -20,6 +20,8 @@ export interface Config {
   allowedPaths?: string[];
   /** Optional custom system prompt. */
   systemPrompt?: string;
+  /** Absolute path of the config file the configuration was loaded from (set by loadConfig). */
+  configFilePath?: string;
   /** Optional model profile name (e.g. "qwen-plus"). */
   profile?: string;
   /** Number of retries on transient failures. */

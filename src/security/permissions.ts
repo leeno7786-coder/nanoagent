@@ -32,27 +32,6 @@ export interface PermissionConfig {
   rules: Record<string, PermissionLevel>;
 }
 
-const READ_TOOLS = new Set([
-  'read_file',
-  'batch_read_files',
-  'list_dir',
-  'grep_search',
-  'find_files',
-  'search_and_view',
-  'map_project_tree',
-  'stat_path',
-  'git_status',
-  'git_diff',
-  'git_log',
-  'git_show',
-  'git_branch',
-  'manage_todos',
-  'explore_subagent',
-  'read_resource',
-  'list_permissions',
-  'list_resources',
-]);
-
 const WRITE_TOOLS = new Set([
   'write_file',
   'edit_file',
@@ -60,6 +39,8 @@ const WRITE_TOOLS = new Set([
   'multi_replace_file_content',
   'replace_file_content',
   'create_new_skill',
+  'manage_todos',
+  'build_memory_graph',
 ]);
 
 const COMMAND_TOOLS = new Set([
@@ -74,6 +55,7 @@ const COMMAND_TOOLS = new Set([
   'git_add',
   'git_reset',
   'git_checkout',
+  'change_workspace',
 ]);
 
 export class PermissionManager {
@@ -123,6 +105,9 @@ export class PermissionManager {
 
   getCategory(toolName: string): ToolCategory {
     const name = toolName.toLowerCase();
+    // MCP tools are provided by external servers and can do anything —
+    // never auto-allow them; route through the command (confirmation) path.
+    if (name.startsWith('mcp_')) return 'command';
     if (WRITE_TOOLS.has(name)) return 'write';
     if (COMMAND_TOOLS.has(name)) return 'command';
     return 'read';

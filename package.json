@@ -1,6 +1,6 @@
 {
   "name": "@omega3_0/nanoagent",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Ultra-lightweight, scalable CLI/TUI coding agent optimized for tiny local models & remote runtimes",
   "module": "dist/opentui/index.js",
   "type": "module",
@@ -21,11 +21,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/leeno7786-coder/qwen-agent-tui.git"
+    "url": "https://github.com/leeno7786-coder/nanoagent.git"
   },
-  "homepage": "https://github.com/leeno7786-coder/qwen-agent-tui#readme",
+  "homepage": "https://github.com/leeno7786-coder/nanoagent#readme",
   "bugs": {
-    "url": "https://github.com/leeno7786-coder/qwen-agent-tui/issues"
+    "url": "https://github.com/leeno7786-coder/nanoagent/issues"
   },
   "keywords": [
     "agent",
@@ -59,16 +59,15 @@
     "lint": "eslint src --ext .ts,.tsx",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
-    "test": "node --test",
+    "test": "bun test",
     "test:bun": "bun test",
-    "test:security": "node --test src/security/index.test.ts",
+    "test:security": "bun test src/security/index.test.ts",
     "self-test": "node dist/main.js run --prompt \"run the built-in self-test\" --workspace .",
     "ci": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build",
     "build": "tsc -p tsconfig.json && node -e \"try{require('fs').chmodSync('dist/main.js',0o755)}catch(e){}\"",
     "build:bun": "bun build src/main.ts src/opentui/index.tsx --outdir dist --minify --target node",
     "prepare": "npm run build",
     "prepack": "npm run build",
-    "postinstall": "node scripts/postinstall.js",
     "package": "npm pack"
   },
   "devDependencies": {
@@ -96,7 +95,6 @@
     "pino": "^10.3.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "tiktoken": "^1.0.22",
-    "typescript": "^5.6.3"
+    "tiktoken": "^1.0.22"
   }
 }

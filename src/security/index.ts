@@ -149,9 +149,12 @@ const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
   />\s*\/dev\//i,
   />>\s*\/dev\//i,
 
-  // Shell injection patterns (stricter — must pipe TO a shell)
-  /\|\s*sh\s*$/i,
-  /\|\s*bash\s*$/i,
+  // Shell injection patterns — pipe to a shell ANYWHERE in the command
+  // (not just end-of-string: `curl x.sh | bash -s -- arg` must also match)
+  /\|\s*(sudo\s+)?(sh|bash|zsh|powershell|pwsh|cmd)\b/i,
+  // Command substitution into a shell
+  /`\s*(sh|bash)\b/i,
+  /\$\(\s*(sh|bash)\b/i,
 
   // Windows-specific destructive
   /\bdel\s+\\\\/i,
@@ -198,7 +201,7 @@ const SAFE_COMMAND_PATTERNS: RegExp[] = [
   /^head(?:\s+.*)?$/i,
   /^tail(?:\s+.*)?$/i,
   /^wc(?:\s+.*)?$/i,
-  /^find(?:\s+.*)?$/i,
+  /^find(?:\s+(?!.*\s-exec)(?!.*\s-delete).*)?$/i,
   /^grep(?:\s+.*)?$/i,
   /^sort$/i,
   /^uniq$/i,
@@ -226,9 +229,9 @@ const SAFE_COMMAND_PATTERNS: RegExp[] = [
   /^bun\s+test$/i,
   /^bun\s+run\s+\S+/i,
 
-  // Python/uv operations
-  /^python(?:\s+.*)?$/i,
-  /^python3(?:\s+.*)?$/i,
+  // Python/uv operations (no arbitrary `-c` / `-m` code execution)
+  /^python(?:\s+(?!-c\b)(?!-m\b).*)?$/i,
+  /^python3(?:\s+(?!-c\b)(?!-m\b).*)?$/i,
   /^pytest(?:\s+.*)?$/i,
   /^pip(?:\s+.*)?$/i,
   /^uv(?:\s+.*)?$/i,
@@ -238,7 +241,7 @@ const SAFE_COMMAND_PATTERNS: RegExp[] = [
   /^curl(?:\s+.*)?$/i,
   /^wget(?:\s+.*)?$/i,
   /^git\s+clone(?:\s+.*)?$/i,
-  /^docker(?:\s+.*)?$/i,
+  /^docker(?:\s+(?!run\b)(?!exec\b).*)?$/i,
   /^huggingface-cli(?:\s+.*)?$/i,
 
   // Build tools
@@ -458,6 +461,14 @@ export class SecurityManager {
   }
 
   /**
+   * Escape regex metacharacters in a literal pattern segment.
+   * (Leaves `*` and `?` intact for the glob replacements that follow.)
+   */
+  private escapeGlobLiterals(segment: string): string {
+    return segment.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
    * Check if a path matches a glob pattern.
    */
   private pathMatchesPattern(path: string, pattern: string): boolean {
@@ -469,8 +480,11 @@ export class SecurityManager {
     // Handle ** patterns (recursive)
     if (normalizedPattern.includes('**/')) {
       const parts = normalizedPattern.split('**/');
-      const prefix = parts[0].replace(/\*/g, '.*').replace(/\?/g, '.');
-      const suffix = parts.slice(1).join('.*').replace(/\*/g, '.*').replace(/\?/g, '.');
+      const prefix = this.escapeGlobLiterals(parts[0]).replace(/\*/g, '.*').replace(/\?/g, '.');
+      const suffix = this.escapeGlobLiterals(parts.slice(1).join('**/'))
+        .replace(/\*\*/g, '.*')
+        .replace(/\*/g, '.*')
+        .replace(/\?/g, '.');
       const regexPattern = '^' + prefix + '.*' + suffix + '$';
       try {
         const regex = new RegExp(regexPattern, 'i');
@@ -482,7 +496,9 @@ export class SecurityManager {
 
     // Handle patterns ending with /**
     if (normalizedPattern.endsWith('/**')) {
-      const prefix = normalizedPattern.slice(0, -3).replace(/\*/g, '.*').replace(/\?/g, '.');
+      const prefix = this.escapeGlobLiterals(normalizedPattern.slice(0, -3))
+        .replace(/\*/g, '.*')
+        .replace(/\?/g, '.');
       const regexPattern = '^' + prefix + '.*$';
       try {
         const regex = new RegExp(regexPattern, 'i');
@@ -494,7 +510,9 @@ export class SecurityManager {
 
     // Handle patterns starting with **/
     if (normalizedPattern.startsWith('**/')) {
-      const suffix = normalizedPattern.slice(3).replace(/\*/g, '.*').replace(/\?/g, '.');
+      const suffix = this.escapeGlobLiterals(normalizedPattern.slice(3))
+        .replace(/\*/g, '.*')
+        .replace(/\?/g, '.');
       const regexPattern = '^.*' + suffix + '$';
       try {
         const regex = new RegExp(regexPattern, 'i');
@@ -528,9 +546,9 @@ export class SecurityManager {
 
     let sanitized = output;
 
-    // Sanitize API keys
+    // Sanitize API keys (prefix is regex-escaped — keys can contain metacharacters)
     if (apiKey) {
-      const keyPrefix = apiKey.slice(0, 8);
+      const keyPrefix = apiKey.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       sanitized = sanitized.replace(new RegExp(keyPrefix + '.*', 'g'), '[REDACTED_API_KEY]');
     }
 

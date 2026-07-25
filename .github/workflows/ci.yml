@@ -29,5 +29,6 @@ jobs:
       - name: Test
         run: bun test
 
-      - name: Self-test
-        run: bun run self-test
+      # TODO: re-enable self-test once it can run without a live LLM endpoint
+      # - name: Self-test
+      #   run: bun run self-test

@@ -123,15 +123,15 @@ describe('tools', () => {
     expect(out.entries.map((e: { name: string }) => e.name)).toContain('foo.txt');
   });
 
-  it('git_status returns status in a git repo', () => {
+  it('git_status returns status in a git repo', async () => {
     execSync('git init', { cwd: ws, stdio: 'ignore' });
     const gitStatus = tools.find((t) => t.name === 'git_status')!;
-    const out = JSON.parse(gitStatus.execute({}, ws));
+    const out = JSON.parse(await gitStatus.executeAsync!({}, ws));
     expect(out.ok).toBe(true);
     expect(typeof out.status).toBe('string');
   });
 
-  it('git_diff returns differences in repo', () => {
+  it('git_diff returns differences in repo', async () => {
     execSync('git init', { cwd: ws, stdio: 'ignore' });
     execSync('git config user.email "test@example.com"', { cwd: ws, stdio: 'ignore' });
     execSync('git config user.name "Test User"', { cwd: ws, stdio: 'ignore' });
@@ -140,19 +140,19 @@ describe('tools', () => {
     writeFileSync(join(ws, 'a.txt'), 'hello modified', 'utf-8');
 
     const gitDiff = tools.find((t) => t.name === 'git_diff')!;
-    const out = JSON.parse(gitDiff.execute({}, ws));
+    const out = JSON.parse(await gitDiff.executeAsync!({}, ws));
     expect(out.ok).toBe(true);
     expect(out.diff).toContain('modified');
   });
 
-  it('git_commit stages and commits successfully', () => {
+  it('git_commit stages and commits successfully', async () => {
     execSync('git init', { cwd: ws, stdio: 'ignore' });
     execSync('git config user.email "test@example.com"', { cwd: ws, stdio: 'ignore' });
     execSync('git config user.name "Test User"', { cwd: ws, stdio: 'ignore' });
 
     writeFileSync(join(ws, 'b.txt'), 'new file', 'utf-8');
     const gitCommit = tools.find((t) => t.name === 'git_commit')!;
-    const out = JSON.parse(gitCommit.execute({ message: 'test commit' }, ws));
+    const out = JSON.parse(await gitCommit.executeAsync!({ message: 'test commit' }, ws));
     expect(out.ok).toBe(true);
     expect(out.stdout).toBeDefined();
     expect(out.error).toBeUndefined();
@@ -171,7 +171,7 @@ describe('tools', () => {
     expect(out.results[0].path).toBe('searchable.txt');
   });
 
-  it('run_command runs lint/format/build lifecycle hooks', () => {
+  it('run_command runs lint/format/build lifecycle hooks', async () => {
     const pkg = {
       name: 'test-pkg',
       scripts: {
@@ -182,14 +182,14 @@ describe('tools', () => {
     writeFileSync(join(ws, 'bun.lock'), '', 'utf-8');
 
     const runCmd = tools.find((t) => t.name === 'run_command')!;
-    const out = JSON.parse(runCmd.execute({ command: 'build' }, ws));
+    const out = JSON.parse(await runCmd.executeAsync!({ command: 'build' }, ws));
     expect(out.ok).toBe(true);
     expect(out.stdout).toContain('build-successful');
   });
 
-  it('run_command blocks invalid lifecycle commands', () => {
+  it('run_command blocks invalid lifecycle commands', async () => {
     const runCmd = tools.find((t) => t.name === 'run_command')!;
-    const out = JSON.parse(runCmd.execute({ command: 'invalid-lifecycle' }, ws));
+    const out = JSON.parse(await runCmd.executeAsync!({ command: 'invalid-lifecycle' }, ws));
     expect(out.ok).toBe(false);
     expect(out.error).toContain('Invalid command');
   });

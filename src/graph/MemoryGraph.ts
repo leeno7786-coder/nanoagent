@@ -24,7 +24,6 @@ import {
 } from './types.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { createHash } from 'node:crypto';
 import * as ts from 'typescript';
 
 const GRAPH_VERSION = '1.0.0';
@@ -173,7 +172,9 @@ export class MemoryGraph {
   }
 
   /**
-   * Compute hashes for all tracked files
+   * Compute staleness fingerprints for all tracked files.
+   * Uses mtime+size instead of content hashing — reading and MD5-hashing
+   * every workspace file on every graph query was seconds of blocking I/O.
    */
   private async computeFileHashes(): Promise<Record<string, string>> {
     const hashes: Record<string, string> = {};
@@ -181,11 +182,10 @@ export class MemoryGraph {
 
     for (const file of files) {
       try {
-        const content = readFileSync(file, 'utf-8');
-        const hash = createHash('md5').update(content).digest('hex');
-        hashes[relative(this.workspace, file)] = hash;
+        const st = statSync(file);
+        hashes[relative(this.workspace, file)] = `${st.mtimeMs}:${st.size}`;
       } catch {
-        // Skip files that can't be read
+        // Skip files that can't be stat'd
       }
     }
 

@@ -6,7 +6,6 @@ import type { CliRenderer } from '@opentui/core';
 import { AgentCore } from '../agent.js';
 import { loadConfig, saveConfigFile } from '../config.js';
 import { NANOAGENT_BANNER } from '../cli/help.js';
-import { getModelCompactionSettings, countTokens } from '../llm.js';
 import { tools } from '../tools/index.js';
 import {
   saveSession,
@@ -54,157 +53,9 @@ import {
 import { build_memory_graph, get_graph_stats, get_analysis_report } from '../graph/tools.js';
 
 /**
- * Simple token estimation function.
- * This is a rough approximation - in reality, tokenizers vary by model.
- * @param text - Text to estimate tokens for
- * @returns Estimated token count
- */
-function estimateTokenCount(text: string): number {
-  try {
-    return countTokens(text);
-  } catch {
-    /* tokenizer not available */
-  }
-  return Math.ceil(text.length / 4);
-}
-
-/**
- * Calculate the approximate token count of the entire conversation.
- * Accounts for message format overhead (roles, tool_call structure).
- * @param messages - Array of messages
- * @returns Total estimated token count
- */
-function calculateConversationTokenCount(messages: Message[]): number {
-  return messages.reduce((total, message) => {
-    let count = 0;
-
-    if (message.content) {
-      count += estimateTokenCount(message.content);
-    }
-
-    if (message.toolCalls) {
-      for (const toolCall of message.toolCalls) {
-        count += estimateTokenCount(toolCall.name || '');
-        if (toolCall.arguments) {
-          count += estimateTokenCount(
-            typeof toolCall.arguments === 'string'
-              ? toolCall.arguments
-              : JSON.stringify(toolCall.arguments)
-          );
-        }
-      }
-    }
-
-    if (message.role === 'tool' && message.content) {
-      count += estimateTokenCount(message.content);
-    }
-
-    // Per-message format overhead (role label, JSON structure, separators)
-    count += message.role.length + 4;
-    if (message.toolCallId) count += message.toolCallId.length + 10;
-    if (message.toolCalls && message.toolCalls.length > 0) count += message.toolCalls.length * 30;
-
-    return total + count;
-  }, 0);
-}
-
-/**
- * Calculate per-message format overhead tokens (role labels, tool_call structure).
- * More accurate than counting only content text.
- */
-function estimateMessageOverhead(m: Message): number {
-  let overhead = 0;
-  overhead += m.role.length + 4; // "role: " prefix, "content" wrapper
-  if (m.toolCalls) {
-    overhead += m.toolCalls.length * 50; // tool_call JSON structure overhead
-    for (const tc of m.toolCalls) {
-      overhead += (tc.name?.length || 0) + 2;
-      if (tc.arguments)
-        overhead +=
-          typeof tc.arguments === 'string'
-            ? tc.arguments.length / 4
-            : JSON.stringify(tc.arguments).length / 4;
-    }
-  }
-  if (m.role === 'tool' && m.toolCallId) {
-    overhead += m.toolCallId.length + 20;
-  }
-  return Math.ceil(overhead);
-}
-
-/**
- * Calculate the total estimated token count for a conversation.
- */
-function totalConversationTokens(messages: Message[]): number {
-  return (
-    calculateConversationTokenCount(messages) +
-    messages.reduce((t, m) => t + estimateMessageOverhead(m), 0)
-  );
-}
-
-/**
- * Generate a summary string from removed messages for compact display.
- */
-function summarizeRemovedMessages(removed: Message[]): string {
-  const toolCalls = removed.filter((m) => m.toolCalls && m.toolCalls.length > 0);
-  const userMessages = removed.filter((m) => m.role === 'user');
-  const assistantMessages = removed.filter((m) => m.role === 'assistant' && m.content);
-
-  const parts: string[] = [];
-
-  if (toolCalls.length > 0) {
-    const toolNames = new Set<string>();
-    toolCalls.forEach((tc) => tc.toolCalls?.forEach((t) => toolNames.add(t.name || 'unknown')));
-    parts.push(`Tools used: ${Array.from(toolNames).join(', ')}`);
-  }
-
-  if (userMessages.length > 0) {
-    const keyRequests = userMessages
-      .slice(-3)
-      .map((m) => m.content.slice(0, 100))
-      .filter(Boolean);
-    if (keyRequests.length > 0) {
-      parts.push(`Recent requests: ${keyRequests.join('; ')}`);
-    }
-  }
-
-  if (assistantMessages.length > 0) {
-    parts.push(`Completed ${assistantMessages.length} response cycles`);
-  }
-
-  return parts.length > 0
-    ? `Summary of ${removed.length} earlier messages: ${parts.join('. ')}.`
-    : '';
-}
-
-/**
- * Build a compacted message array: system messages + optional summary + kept messages.
- */
-function buildCompactMessages(agent: AgentCore, removed: Message[], kept: Message[]): Message[] {
-  const sys = agent.messages.filter((m) => m.role === 'system');
-  const summary = summarizeRemovedMessages(removed);
-  return [
-    ...sys,
-    ...(summary
-      ? [
-          {
-            id: Math.random().toString(36).slice(2, 10),
-            role: 'user' as const,
-            content: `[Compact: ${removed.length} messages summarized. ${summary}]`,
-            timestamp: Date.now(),
-          },
-        ]
-      : []),
-    ...kept,
-  ];
-}
-
-/**
  * Check if the conversation needs auto-compaction and perform it if necessary.
  * Uses rolling window approach: keeps recent messages and summarizes older ones.
  */
-const MAX_MESSAGES_BEFORE_COMPACT = 200;
-
 let isCompacting = false;
 async function checkAndAutoCompact(agent: AgentCore, setMessages: (msgs: Message[]) => void) {
   if (isCompacting) return;
@@ -212,7 +63,13 @@ async function checkAndAutoCompact(agent: AgentCore, setMessages: (msgs: Message
   try {
     const compacted = await agent.compactContextIfNeeded();
     if (compacted) {
-      setMessages([...agent.messages]);
+      // Clone the last assistant message so React.memo in MessageItem can
+      // detect in-place streaming mutations via identity change.
+      const msgs = agent.messages;
+      const last = msgs[msgs.length - 1];
+      setMessages(
+        last && last.role === 'assistant' ? [...msgs.slice(0, -1), { ...last }] : [...msgs]
+      );
     }
   } catch (err) {
     console.error('[auto-compact] compaction failed:', err);
@@ -798,6 +655,11 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             case 'clear':
               if (agent) {
                 agent.messages = agent.messages.filter((m) => m.role === 'system');
+                // Also reset the context manager (keeping the system prompt),
+                // otherwise cleared messages resurrect after the next compaction.
+                agent.contextManager.clear();
+                const baseMsg = agent.messages.find((m) => m.id === 'system-base');
+                if (baseMsg) agent.contextManager.setMessages([baseMsg]);
                 setMessages([...agent.messages]);
                 setToolResults([]);
               }
@@ -862,8 +724,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
                   timestamp: Date.now(),
                 });
                 setMessages([...agent.messages]);
-                // Strip /auto and run the task
-                await agent.run(task);
+                // Strip /auto and run the task (pass the abort signal so Escape cancels)
+                await agent.run(task, signal);
               } else {
                 agent.messages.push({
                   id: Math.random().toString(36).slice(2, 10),

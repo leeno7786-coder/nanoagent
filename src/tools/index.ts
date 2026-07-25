@@ -379,6 +379,26 @@ function safe(p: string, ws: string, _cfg?: Config): string {
 
     return resolved;
   } catch {
+    // The target doesn't exist yet (new file). Resolve symlinks on the
+    // nearest existing ancestor so a symlinked directory inside the
+    // workspace can't be used to write outside it.
+    try {
+      let ancestor = dirname(resolved);
+      while (!existsSync(ancestor)) {
+        const parent = dirname(ancestor);
+        if (parent === ancestor) break;
+        ancestor = parent;
+      }
+      const realAncestor = realpathSync(ancestor).replace(/\\/g, '/');
+      const realWorkspace = realpathSync(ws).replace(/\\/g, '/');
+      if (realAncestor !== realWorkspace && !realAncestor.startsWith(realWorkspace + '/')) {
+        throw new Error(`Path escapes workspace (via symlinked parent): ${p}`);
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('escapes workspace')) throw e;
+      // Fall through to string comparison if ancestors can't be resolved
+    }
+
     // If realpath fails, fall back to string comparison with the original paths
     const normResolved = resolved.replace(/\\/g, '/');
     const normWorkspace = ws.replace(/\\/g, '/');
@@ -415,6 +435,15 @@ function truncate(
   return { content: joined, truncated: lines.length > limit, originalLength: lines.length };
 }
 
+/**
+ * Check whether the security manager blocks READ access to a path
+ * (blockedPaths: .env, *.pem, id_rsa, .ssh, ...).
+ */
+function isAccessBlocked(p: string, cfg: Config | undefined): boolean {
+  if (!cfg?.securityManager) return false;
+  return !cfg.securityManager.validateFileAccess(p, 'read').ok;
+}
+
 function walk(
   root: string,
   ws: string,
@@ -422,17 +451,23 @@ function walk(
   visit: (file: string) => boolean | void,
   depth = 0,
   maxDepth = 8
-): void {
-  if (depth > maxDepth) return;
+): boolean {
+  if (depth > maxDepth) return false;
   const entries = readdirSync(root, { withFileTypes: true });
   for (const entry of entries) {
     const p = resolve(root, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) walk(p, ws, cfg, visit, depth + 1, maxDepth);
+      if (!SKIP_DIRS.has(entry.name)) {
+        // Propagate early-exit from nested directories
+        if (walk(p, ws, cfg, visit, depth + 1, maxDepth)) return true;
+      }
       continue;
     }
-    if (entry.isFile() && visit(p) === false) return;
+    // Never expose blocked/sensitive files (.env, keys, ...) to search tools
+    if (entry.isFile() && isAccessBlocked(p, cfg)) continue;
+    if (entry.isFile() && visit(p) === false) return true;
   }
+  return false;
 }
 
 function formatExecResult(ok: boolean, out: string, err?: string, code?: number | null): string {
@@ -666,48 +701,65 @@ function isDangerous(cmd: string): boolean {
  * Run a git command directly (bypasses PowerShell translation for speed on Windows).
  * Sets GIT_OPTIONAL_LOCKS=0 to avoid lock contention during read-only operations.
  * Sets GIT_SKIP_HOOKS=1 to prevent malicious git hooks from executing.
+ * Async (spawn) so the TUI event loop never freezes on slow git operations.
  */
 function execGit(
   args: string[],
   ws: string,
   opts: { timeout?: number; maxBuffer?: number; write?: boolean } = {}
-) {
-  const env = {
-    ...getSanitizedEnv(),
-    GIT_OPTIONAL_LOCKS: '0',
-    GIT_SKIP_HOOKS: '1', // Security: Prevent git hooks from executing
-  };
+): Promise<{ ok: boolean; stdout: string; stderr: string; code: number | null }> {
+  return new Promise((resolvePromise) => {
+    const env = {
+      ...getSanitizedEnv(),
+      GIT_OPTIONAL_LOCKS: '0',
+      GIT_SKIP_HOOKS: '1', // Security: Prevent git hooks from executing
+    };
 
-  // Use spawnSync with explicit argument array for security
-  try {
-    const result = spawnSync('git', args, {
-      cwd: ws,
-      timeout: opts.timeout ?? 30000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env,
+    let child: ChildProcess;
+    try {
+      child = spawn('git', args, {
+        cwd: ws,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env,
+      });
+    } catch (e: unknown) {
+      resolvePromise({
+        ok: false,
+        stdout: '',
+        stderr: (e as { message?: string }).message || 'failed to spawn git',
+        code: null,
+      });
+      return;
+    }
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (ok: boolean, code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise({
+        ok,
+        stdout: stdout.replace(NULL_BYTE_RE, ''),
+        stderr: stderr.replace(NULL_BYTE_RE, ''),
+        code,
+      });
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      stderr = stderr || `git ${args[0] || ''} timed out`;
+      finish(false, null);
+    }, opts.timeout ?? 30000);
+
+    child.stdout?.on('data', (d) => (stdout += d.toString()));
+    child.stderr?.on('data', (d) => (stderr += d.toString()));
+    child.on('error', (e) => {
+      stderr = stderr || e.message;
+      finish(false, null);
     });
-
-    // Convert buffers to strings
-    const toString = (data: unknown): string => {
-      if (Buffer.isBuffer(data)) return (data as Buffer).toString('utf-8');
-      if (typeof data === 'string') return data;
-      return '';
-    };
-    const stdout = toString(result.stdout).replace(NULL_BYTE_RE, '');
-    const stderr = toString(result.stderr).replace(NULL_BYTE_RE, '');
-
-    return {
-      ok: result.status === 0,
-      stdout,
-      stderr,
-      code: result.status ?? null,
-    };
-  } catch (e: unknown) {
-    const err = e as { stdout?: string; stderr?: string; message?: string; status?: number | null };
-    const stdout = (err.stdout || '').replace(NULL_BYTE_RE, '');
-    const stderr = (err.stderr || '').replace(NULL_BYTE_RE, '');
-    return { ok: false, stdout, stderr: stderr || err.message || '', code: err.status ?? null };
-  }
+    child.on('close', (code) => finish(code === 0, code));
+  });
 }
 
 /** Built-in tools available to the agent. */
@@ -774,6 +826,10 @@ export const tools: Tool[] = [
         for (const rawPath of paths) {
           try {
             const p = safe(rawPath, ws, cfg);
+            if (isAccessBlocked(p, cfg)) {
+              results[rawPath] = { ok: false, error: 'Access denied (blocked path)' };
+              continue;
+            }
             const st = statSync(p);
             if (!st.isFile()) {
               results[rawPath] = { ok: false, error: `Not a file: ${rawPath}` };
@@ -806,8 +862,9 @@ export const tools: Tool[] = [
     name: 'git_diff',
     description: 'View uncommitted git changes',
     parameters: { type: 'object', properties: {} },
-    execute: (_args, ws) => {
-      const r = execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 });
+    execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
+    executeAsync: async (_args, ws) => {
+      const r = await execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 });
       if (!r.ok || r.stdout.trim() !== 'true') {
         return JSON.stringify({
           ok: true,
@@ -817,7 +874,7 @@ export const tools: Tool[] = [
         });
       }
 
-      const diff = execGit(['--no-optional-locks', 'diff'], ws, { timeout: 15000 });
+      const diff = await execGit(['--no-optional-locks', 'diff'], ws, { timeout: 15000 });
       if (!diff.ok) {
         return JSON.stringify({
           ok: false,
@@ -1386,6 +1443,9 @@ export const tools: Tool[] = [
     execute: (args, ws, cfg) => {
       try {
         const p = safe(args.path, ws, cfg);
+        if (isAccessBlocked(p, cfg)) {
+          return JSON.stringify({ ok: false, error: 'Access denied (blocked path)' });
+        }
         if (!existsSync(p)) return JSON.stringify({ ok: true, exists: false, path: args.path });
         const st = statSync(p);
         return JSON.stringify({
@@ -1439,6 +1499,7 @@ export const tools: Tool[] = [
         // If the user passed a file, search that file only (common small-model mistake).
         const rootStat = statSync(root);
         const searchFile = (file: string) => {
+          if (isAccessBlocked(file, cfg)) return;
           if (fileFilter && !file.toLowerCase().includes(fileFilter)) return;
           const st = statSync(file);
           const maxSize = isSmall ? 500_000 : 2_000_000;
@@ -1580,6 +1641,9 @@ export const tools: Tool[] = [
         if (rootStat.isFile()) {
           const q = String(args.query || '');
           if (!q) return JSON.stringify({ ok: false, error: 'query is required for grep_search' });
+          if (isAccessBlocked(root, cfg)) {
+            return JSON.stringify({ ok: false, error: 'Access denied (blocked path)' });
+          }
           const re = args.regex ? new RegExp(q, 'i') : null;
           const results: Array<{ path: string; line: number; text: string }> = [];
           let text = '';
@@ -1680,15 +1744,16 @@ export const tools: Tool[] = [
     name: 'git_status',
     description: 'Show git repository status',
     parameters: { type: 'object', properties: {} },
-    execute: (_args, ws) => {
+    execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
+    executeAsync: async (_args, ws) => {
       // Check working tree status (fast, no lock contention)
-      const r = execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 });
+      const r = await execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 });
       if (!r.ok || r.stdout.trim() !== 'true') {
         return JSON.stringify({ ok: true, status: 'not a git repository', isGit: false });
       }
 
       // Get porcelain status (skip untracked files for speed)
-      const status = execGit(
+      const status = await execGit(
         ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'],
         ws,
         { timeout: 10000 }
@@ -1720,18 +1785,19 @@ export const tools: Tool[] = [
       properties: { message: { type: 'string', description: 'Commit message' } },
       required: ['message'],
     },
-    execute: (args, ws) => {
+    execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
+    executeAsync: async (args, ws) => {
       const msg = String(args.message || '');
       if (!msg) return JSON.stringify({ ok: false, error: 'Commit message is required' });
 
       // Check we're in a git repo
-      const check = execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 });
+      const check = await execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 });
       if (!check.ok || check.stdout.trim() !== 'true') {
         return JSON.stringify({ ok: false, error: 'not a git repository - cannot commit' });
       }
 
       // Stage all
-      const add = execGit(['add', '-A'], ws, { timeout: 15000 });
+      const add = await execGit(['add', '-A'], ws, { timeout: 15000 });
       if (!add.ok) {
         return JSON.stringify({
           ok: false,
@@ -1740,7 +1806,7 @@ export const tools: Tool[] = [
       }
 
       // Commit
-      const commit = execGit(['commit', '-m', msg], ws, { timeout: 15000 });
+      const commit = await execGit(['commit', '-m', msg], ws, { timeout: 15000 });
       if (!commit.ok) {
         return JSON.stringify({
           ok: false,
@@ -1785,7 +1851,10 @@ export const tools: Tool[] = [
             error: result.error || 'Command blocked for security reasons',
           });
         }
-      } else if (isDangerous(cmd)) {
+      }
+      // Always run the local dangerous-command check (additive with the
+      // security manager, not either/or)
+      if (isDangerous(cmd)) {
         return JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
       }
 
@@ -1804,13 +1873,18 @@ export const tools: Tool[] = [
             error: result.error || 'Command blocked for security reasons',
           });
         }
-      } else if (isDangerous(cmd)) {
+      }
+      // Always run the local dangerous-command check (additive)
+      if (isDangerous(cmd)) {
         return JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
       }
 
       const isDownloadOrBuild = /^(?:curl|wget|git\s+clone|npm|bun|pnpm|pip|pip3|uv|cargo|docker|huggingface-cli)\b/i.test(cmd);
       const defaultTimeout = isDownloadOrBuild ? 600 : 60;
-      const userTimeout = typeof args.timeout === 'number' && args.timeout > 0 ? Math.min(args.timeout, 300) : defaultTimeout;
+      const userTimeout =
+        typeof args.timeout === 'number' && args.timeout > 0
+          ? Math.min(args.timeout, isDownloadOrBuild ? 600 : 300)
+          : defaultTimeout;
 
       return execCmdAsync(cmd, ws, userTimeout, signal);
     },
@@ -1819,20 +1893,22 @@ export const tools: Tool[] = [
     name: 'run_tests',
     description: 'Run project tests',
     parameters: { type: 'object', properties: {} },
-    execute: (_args, ws) => {
+    execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
+    executeAsync: async (_args, ws, _cfg, signal) => {
       const hasBun = existsSync(resolve(ws, 'bun.lock')) || existsSync(resolve(ws, 'bun.lockb'));
       const cmd = hasBun ? 'bun test' : 'npm test';
-      return execCmd(cmd, ws);
+      return execCmdAsync(cmd, ws, 300, signal);
     },
   },
   {
     name: 'install_dependencies',
     description: 'Install project dependencies',
     parameters: { type: 'object', properties: {} },
-    execute: (_args, ws) => {
+    execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
+    executeAsync: async (_args, ws, _cfg, signal) => {
       const hasBun = existsSync(resolve(ws, 'bun.lock')) || existsSync(resolve(ws, 'bun.lockb'));
       const cmd = hasBun ? 'bun install' : 'npm install';
-      return execCmd(cmd, ws);
+      return execCmdAsync(cmd, ws, 600, signal);
     },
   },
   {
@@ -1849,7 +1925,8 @@ export const tools: Tool[] = [
       },
       required: ['command'],
     },
-    execute: (args, ws) => {
+    execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
+    executeAsync: async (args, ws, _cfg, signal) => {
       const allowed = new Set(['build', 'lint', 'format']);
       const sub = String(args.command || '').trim();
       if (!allowed.has(sub)) {
@@ -1861,15 +1938,16 @@ export const tools: Tool[] = [
       const hasBun = existsSync(resolve(ws, 'bun.lock')) || existsSync(resolve(ws, 'bun.lockb'));
       const runner = hasBun ? 'bun run' : 'npm run';
       const cmd = `${runner} ${sub}`;
-      return execCmd(cmd, ws);
+      return execCmdAsync(cmd, ws, 300, signal);
     },
   },
   {
     name: 'typecheck',
     description: 'Run tsc --noEmit',
     parameters: { type: 'object', properties: {} },
-    execute: (_args, ws) => {
-      return execCmd('tsc --noEmit', ws);
+    execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
+    executeAsync: async (_args, ws, _cfg, signal) => {
+      return execCmdAsync('tsc --noEmit', ws, 180, signal);
     },
   },
 

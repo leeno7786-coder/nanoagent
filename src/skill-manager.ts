@@ -44,7 +44,7 @@ export class SkillManager {
     const cleanBase = base.content
       .replace(/\n\n## Active skill[\s\S]*?(?=\n\n##|$)/g, '')
       .trimEnd();
-    const skillCharCap = smallModel ? 6000 : 3500;
+    const skillCharCap = smallModel ? 3500 : 6000;
     let skillSection = '';
 
     for (const [name, skill] of this.activeSkills) {
