@@ -16,8 +16,31 @@
     "skills/",
     "AGENTS.md",
     "README.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "LICENSE"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leeno7786-coder/qwen-agent-tui.git"
+  },
+  "homepage": "https://github.com/leeno7786-coder/qwen-agent-tui#readme",
+  "bugs": {
+    "url": "https://github.com/leeno7786-coder/qwen-agent-tui/issues"
+  },
+  "keywords": [
+    "agent",
+    "ai",
+    "cli",
+    "tui",
+    "llm",
+    "coding",
+    "assistant",
+    "qwen",
+    "small-models",
+    "local-ai"
+  ],
+  "author": "leeno7786-coder",
+  "license": "MIT",
   "private": false,
   "engines": {
     "node": ">=18"
