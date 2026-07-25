@@ -1,15 +1,15 @@
-# qwen-agent-tui v1.1.0-alpha.1 - Prerelease
+# ⚡ NanoAgent v1.1.0-alpha.1 - Prerelease
 
 ## Overview
 
-This is a prerelease package of qwen-agent-tui with comprehensive security hardening and self-testing capabilities.
+This is a prerelease package of NanoAgent with comprehensive security hardening and self-testing capabilities.
 
 ---
 
 ## Package Contents
 
 ```
-qwen-agent-tui-1.1.0-alpha.1.tgz
+nanoagent-1.1.0-alpha.1.tgz
 ├── package.json          # Package metadata (version 1.1.0-alpha.1)
 ├── main.js               # Built main entry point (2.0 MB)
 ├── opentui/
@@ -28,7 +28,7 @@ qwen-agent-tui-1.1.0-alpha.1.tgz
 1. Download the tarball:
    ```bash
    # From GitHub (after uploading)
-   wget https://github.com/leeno7786-coder/qwen-agent-tui/releases/download/v1.1.0-alpha.1/qwen-agent-tui-1.1.0-alpha.1.tgz
+   wget https://github.com/leeno7786-coder/qwen-agent-tui/releases/download/v1.1.0-alpha.1/nanoagent-1.1.0-alpha.1.tgz
    
    # Or from local build
    # The file is in the prerelease/ directory
@@ -36,7 +36,7 @@ qwen-agent-tui-1.1.0-alpha.1.tgz
 
 2. Extract the tarball:
    ```bash
-   tar -xzf qwen-agent-tui-1.1.0-alpha.1.tgz
+   tar -xzf nanoagent-1.1.0-alpha.1.tgz
    cd package
    ```
 
@@ -99,7 +99,7 @@ bun run agent --prompt "List files" --json
 - **Command Validation**: Blocks dangerous commands (rm -rf, dd, sudo, etc.)
 - **File Access Control**: Restricts access to workspace, blocks sensitive paths
 - **Output Sanitization**: Automatically redacts API keys, tokens, secrets
-- **Configuration**: Enable/disable via `~/.qwen-agent.json` or environment variables
+- **Configuration**: Enable/disable via `~/.nanogent.json` or environment variables
 
 ### 2. Context Window Management ✅
 - Dynamic context size management
@@ -129,7 +129,7 @@ For optimal performance with local models:
 
 ```json
 {
-  "model": "Jackrong\\Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
+  "model": "Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
   "baseURL": "http://127.0.0.1:1234/v1",
   "workspace": "/path/to/project"
 }
@@ -258,7 +258,7 @@ bun install
 | `opentui/index.js` | 2.0 MB | Built TUI entry point |
 | `highlights-*.scm` | ~3-35 KB | Syntax highlighting themes |
 | `tree-sitter-*.wasm` | ~400-1400 KB | Tree-sitter parsers |
-| `qwen-agent-tui-1.1.0-alpha.1.tgz` | ~1.4 MB | Complete prerelease package |
+| `nanoagent-1.1.0-alpha.1.tgz` | ~1.4 MB | Complete prerelease package |
 
 ---
 
