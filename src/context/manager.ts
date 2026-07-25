@@ -321,8 +321,11 @@ export class ContextManager {
         messagesToRemove.push(msg);
         removedTokens += msgTokens;
         removedCount++;
-      } else {
-        // Remove part of this message if needed
+      } else if (removedTokens === 0 && messagesToRemove.length === 0) {
+        // First message is too large — remove it anyway to make progress
+        messagesToRemove.push(msg);
+        removedTokens += msgTokens;
+        removedCount++;
         break;
       }
     }

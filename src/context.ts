@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolve } from 'path';
 
@@ -9,6 +9,37 @@ export interface RepoContext {
   readme?: string;
   projectType: string;
   primaryLanguage: string;
+}
+
+function walkTopFiles(dir: string, maxFiles: number): string[] {
+  const result: string[] = [];
+  const SKIP = new Set(['node_modules', '.git', 'dist', '.next', '__pycache__']);
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      if (result.length >= maxFiles) break;
+      if (SKIP.has(e.name)) continue;
+      if (e.isFile()) {
+        result.push(e.name);
+      } else if (e.isDirectory()) {
+        result.push(e.name + '/');
+        try {
+          const sub = readdirSync(resolve(dir, e.name), { withFileTypes: true });
+          for (const se of sub) {
+            if (result.length >= maxFiles) break;
+            if (se.isFile() && !SKIP.has(se.name)) {
+              result.push(e.name + '/' + se.name);
+            }
+          }
+        } catch {
+          /* skip unreadable subdirs */
+        }
+      }
+    }
+  } catch {
+    /* workspace may not be readable */
+  }
+  return result;
 }
 
 export function detectContext(workspace: string): RepoContext {
@@ -30,13 +61,7 @@ export function detectContext(workspace: string): RepoContext {
     /* not git */
   }
 
-  try {
-    ctx.files = readdirSync(workspace, { recursive: true, encoding: 'utf-8' })
-      .filter((f) => typeof f === 'string' && !f.includes('node_modules') && !f.includes('.git'))
-      .slice(0, 50) as string[];
-  } catch {
-    /* workspace may not be readable */
-  }
+  ctx.files = walkTopFiles(workspace, 50);
 
   // Detect project type and primary language — prioritize manifest files over extensions
   const hasPackageJson = ctx.files.some((f) => f === 'package.json' || f.endsWith('/package.json'));

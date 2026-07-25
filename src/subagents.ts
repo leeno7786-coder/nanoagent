@@ -424,7 +424,7 @@ async function runSingleSubAgent(
     task,
   });
 
-  const maxIter = Math.min(wctx.cfg.maxIterations ?? 12, 12);
+  const maxIter = Math.min(wctx.cfg.maxIterations ?? 12, 24);
 
   for (let i = 0; i < maxIter; i++) {
     if (signal?.aborted) {
@@ -726,22 +726,30 @@ async function runSingleSubAgent(
     };
   }
 
+  // Budget exhausted — return partial output if any was accumulated
+  const partial = messages
+    .filter((m) => m.role === 'assistant')
+    .map((m) => m.content)
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+
   emit({
     type: 'subagent_done',
     agent: wctx.endpoint.name,
     model: wctx.cfg.model,
-    ok: false,
-    output: '',
+    ok: partial.length > 0,
+    output: partial,
     toolCalls: toolCallCount,
   });
   return {
     name: wctx.endpoint.name,
     model: wctx.cfg.model,
     baseURL: wctx.cfg.baseURL,
-    ok: false,
-    output: '',
+    ok: partial.length > 0,
+    output: partial,
     durationMs: Math.round(performance.now() - start),
-    error: 'max iterations reached without a final answer',
+    error: partial ? undefined : 'max iterations reached without a final answer',
     toolCalls: toolCallCount,
   };
 }

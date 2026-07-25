@@ -105,17 +105,20 @@ export function isSmallModel(
   const lower = modelId.toLowerCase();
 
   // Explicit parameter counts in id (1b–8b, nano, etc.)
-  if (/\b(0\.5|1\.5|1|2|3|4|7|8)[-.]?b\b/.test(lower)) return true;
+  if (
+    /\b(0\.5|1\b(?!\d)|1\.5|2\b(?!\d)|3\b(?!\d)|4\b(?!\d)|7\b(?!\d)|8\b(?!\d))[-.]?b\b/.test(lower)
+  )
+    return true;
   if (lower.includes('4b') || lower.includes('nano')) return true;
 
   // Families commonly run locally at ≤8B
   if (lower.includes('nemotron') && (lower.includes('4b') || lower.includes('nano'))) return true;
   if (lower.includes('phi')) return true;
-  if (lower.includes('gemma') && /\b(1|2|4|7|8)[-.]?b\b/.test(lower)) return true;
-  if (lower.includes('qwen') && /\b(0\.5|1\.5|1|2|3|4|7|8)[-.]?b\b/.test(lower)) return true;
-  if (lower.includes('llama') && /\b(1|3|7|8)[-.]?b\b/.test(lower)) return true;
+  if (lower.includes('gemma') && /\b(1\b(?!\d)|2\b(?!\d)|4\b(?!\d)|7\b(?!\d)|8\b(?!\d))[-.]?b\b/.test(lower)) return true;
+  if (lower.includes('qwen') && /\b(0\.5|1\b(?!\d)|1\.5|2\b(?!\d)|3\b(?!\d)|4\b(?!\d)|7\b(?!\d)|8\b(?!\d))[-.]?b\b/.test(lower)) return true;
+  if (lower.includes('llama') && /\b(1\b(?!\d)|3\b(?!\d)|7\b(?!\d)|8\b(?!\d))[-.]?b\b/.test(lower)) return true;
   if (lower.includes('mistral') && lower.includes('7b')) return true;
-  if (lower.includes('deepseek') && (lower.includes('1.5b') || lower.includes('7b'))) return true;
+  if (lower.includes('deepseek') && /\b(1\.5b|7b|8b)\b/.test(lower)) return true;
 
   return false;
 }

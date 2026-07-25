@@ -9,22 +9,29 @@ import type {
   McpRemoteServerConfig,
 } from '../types.js';
 import type { Tool } from '../tools/index.js';
+import { readFileSync } from 'fs';
+import { resolve, normalize } from 'path';
 
 /**
  * Interpolates {env:VAR} and {file:path} placeholders in a string value.
+ * {file:path} is restricted to files within the workspace for security.
  */
-function interpolateEnv(value: string): string {
+function interpolateEnv(value: string, workspace?: string): string {
   return value
     .replace(/\{env:([^}]+)\}/g, (_, varName) => {
       return process.env[varName] ?? '';
     })
     .replace(/\{file:([^}]+)\}/g, (_, filePath) => {
+      if (!workspace) return '';
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { readFileSync } = require('fs');
-        return readFileSync(filePath, 'utf-8').trim();
+        const resolved = resolve(workspace, normalize(filePath));
+        const normResolved = resolved.replace(/\\/g, '/');
+        const normWorkspace = workspace.replace(/\\/g, '/');
+        if (!normResolved.startsWith(normWorkspace + '/') && normResolved !== normWorkspace) {
+          return '';
+        }
+        return readFileSync(resolved, 'utf-8').trim();
       } catch {
-        /* file not found or not readable */
         return '';
       }
     });
@@ -52,9 +59,11 @@ interface McpServerConnection {
 export class McpManager {
   private connections: Map<string, McpServerConnection> = new Map();
   private configs: Record<string, McpServerConfig>;
+  private workspace: string;
 
-  constructor(configs?: Record<string, McpServerConfig>) {
+  constructor(configs?: Record<string, McpServerConfig>, workspace?: string) {
     this.configs = configs ?? {};
+    this.workspace = workspace || process.cwd();
   }
 
   /**
@@ -158,7 +167,7 @@ export class McpManager {
     const env: Record<string, string> = { ...(process.env as Record<string, string>) };
     if (config.env) {
       for (const [k, v] of Object.entries(config.env)) {
-        env[k] = interpolateEnv(v);
+        env[k] = interpolateEnv(v, this.workspace);
       }
     }
 
@@ -184,7 +193,7 @@ export class McpManager {
     const headers: Record<string, string> = {};
     if (config.headers) {
       for (const [k, v] of Object.entries(config.headers)) {
-        headers[k] = interpolateEnv(v);
+        headers[k] = interpolateEnv(v, this.workspace);
       }
     }
 
@@ -357,6 +366,6 @@ export class McpManager {
 /**
  * Create an McpManager from config.
  */
-export function createMcpManager(mcpConfigs?: Record<string, McpServerConfig>): McpManager {
-  return new McpManager(mcpConfigs);
+export function createMcpManager(mcpConfigs?: Record<string, McpServerConfig>, workspace?: string): McpManager {
+  return new McpManager(mcpConfigs, workspace);
 }

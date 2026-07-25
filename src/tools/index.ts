@@ -183,23 +183,29 @@ function parseCommand(cmd: string): { command: string; args: string[]; useShell:
 
   // Parse the command into executable and arguments
   // Simple parsing - split on whitespace, respecting quotes
+  // On Windows, backslash is a path separator, NOT an escape character.
   const args: string[] = [];
   let current = '';
   let inSingleQuote = false;
   let inDoubleQuote = false;
-  let escapeNext = false;
+  const isWin = process.platform === 'win32';
+  // On Windows, only treat \ as escape before " or '
+  // On Unix, treat \ as escape before \, ", ', and space
+  const ESCAPE_CHARS = isWin ? new Set(['"', "'"]) : new Set(['"', "'", ' ', '\\']);
 
   for (let i = 0; i < trimmed.length; i++) {
     const char = trimmed[i];
 
-    if (escapeNext) {
-      current += char;
-      escapeNext = false;
+    if (char === '\\' && i + 1 < trimmed.length && ESCAPE_CHARS.has(trimmed[i + 1])) {
+      // Skip the backslash, the next char is literal
+      i++;
+      current += trimmed[i];
       continue;
     }
 
-    if (char === '\\') {
-      escapeNext = true;
+    // On Windows, a bare \ before non-special chars is kept as a path separator
+    if (isWin && char === '\\') {
+      current += char;
       continue;
     }
 
@@ -312,7 +318,14 @@ const ALLOWED_COMMANDS = new Set([
 
 /** Validate a command string against dangerous patterns. Permission policy is handled by PermissionManager. */
 function validateCommand(cmd: string): boolean {
-  return !isDangerous(cmd);
+  if (isDangerous(cmd)) return false;
+  // Check the allowlist: allow known commands, reject unknown ones
+  const cmdName = cmd.trim().split(/\s+/)[0]?.toLowerCase();
+  if (!cmdName) return false;
+  for (const allowed of ALLOWED_COMMANDS) {
+    if (cmd.trim().toLowerCase().startsWith(allowed)) return true;
+  }
+  return false;
 }
 
 /** Shorter tool descriptions for ≤8B models (full params stay in JSON schema). */
@@ -769,10 +782,14 @@ export const tools: Tool[] = [
             const isSmall = checkSmallModel(cfg);
             const text = readFileSync(p, 'utf-8');
             const sliced = truncate(text, isSmall ? SMALL_MODEL_READ_LIMIT : DEFAULT_READ_LIMIT);
+            const finalContent =
+              sliced.content.length > MAX_READ_CHARS
+                ? sliced.content.slice(0, MAX_READ_CHARS) + `\n... [truncated: ${sliced.content.length - MAX_READ_CHARS} characters omitted]`
+                : sliced.content;
             results[rawPath] = {
               ok: true,
-              content: sliced.content,
-              truncated: sliced.truncated,
+              content: finalContent,
+              truncated: sliced.truncated || finalContent.length < sliced.content.length,
               originalLength: sliced.originalLength,
             };
           } catch (e: unknown) {
@@ -867,7 +884,9 @@ export const tools: Tool[] = [
               .join('\n')
           : sliced.join('\n');
         const safeContent =
-          content.length > MAX_READ_CHARS ? content.slice(0, MAX_READ_CHARS) : content;
+          content.length > MAX_READ_CHARS
+            ? content.slice(0, MAX_READ_CHARS) + `\n... [truncated: ${content.length - MAX_READ_CHARS} characters omitted]`
+            : content;
         return JSON.stringify({
           ok: true,
           path: rel(p, ws),

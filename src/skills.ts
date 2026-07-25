@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join, basename, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
@@ -419,16 +419,19 @@ export function deleteSkill(name: string): boolean {
     if (!existsSync(dir)) continue;
     if (skill.sourcePath) {
       try {
-        writeFileSync(skill.sourcePath, ''); // clear it
+        const normSrc = skill.sourcePath.replace(/\\/g, '/');
+        const normDir = dir.replace(/\\/g, '/');
+        if (!normSrc.startsWith(normDir)) continue;
+        rmSync(skill.sourcePath, { force: true });
         return true;
       } catch {
-        /* skill not writable */
+        /* skill not deletable */
       }
     }
     const filename = `${skill.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
     const path = join(dir, filename);
     try {
-      writeFileSync(path, '');
+      rmSync(path, { force: true });
       return true;
     } catch {
       /* skill dir not writable */

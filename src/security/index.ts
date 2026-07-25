@@ -571,10 +571,10 @@ export class SecurityManager {
       return match;
     });
 
-    // File paths that might contain secrets
-    sanitized = sanitized.replace(/\.env(\.\w+)?/g, '.env[REDACTED]');
-    sanitized = sanitized.replace(/config\.json/g, 'config.json[REDACTED]');
-    sanitized = sanitized.replace(/secrets?\.\w+/g, 'secrets[REDACTED]');
+    // File paths that might contain secrets — only match standalone .env paths
+    sanitized = sanitized.replace(/\.env(?:\.\w+)?(?=\s|$|"|')/g, '.env[REDACTED]');
+    sanitized = sanitized.replace(/\bconfig\.json(?=\s|$|"|')/g, 'config.json[REDACTED]');
+    sanitized = sanitized.replace(/\bsecrets?\.\w+/g, 'secrets[REDACTED]');
 
     return sanitized;
   }

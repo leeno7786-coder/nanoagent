@@ -163,7 +163,7 @@ export class AgentCore {
       },
       cfg.workspace
     );
-    this.mcpManager = createMcpManager(cfg.mcp);
+    this.mcpManager = createMcpManager(cfg.mcp, cfg.workspace);
   }
 
   /**
@@ -802,8 +802,8 @@ export class AgentCore {
           } else {
             assistantMsg.content = `API error (${status || 'unknown'}): ${msg}`;
           }
-          // Add the error message to history so it's visible
-          this.messages.push(assistantMsg);
+          // assistantMsg is already in this.messages (pushed before try block),
+          // so we update it in-place and only add to contextManager.
           this.contextManager.addMessage(assistantMsg);
           this.setState('error');
           this.onUpdate?.();
@@ -1636,7 +1636,7 @@ export class AgentCore {
   /**
    * Handle special tool results that require agent state updates.
    */
-  private handleSpecialToolResults(toolName: string, output: string, _toolCallId: string): void {
+  private handleSpecialToolResults(toolName: string, output: string, toolCallId: string): void {
     // Intercept change_workspace results to sync agent state
     if (toolName === 'change_workspace') {
       try {
@@ -1663,11 +1663,13 @@ export class AgentCore {
     }
 
     // Intercept manage_todos results to sync agent state
+    // NOTE: We do NOT mutate any existing message content — the tool result
+    // message already contains the raw output. We only sync the in-memory
+    // todo list state so the todo system message stays correct.
     if (toolName === 'manage_todos') {
       try {
         const result = JSON.parse(output);
         if (result.ok) {
-          const lastMsg = this.messages[this.messages.length - 1];
           if (result.action === 'add' && result.text) {
             if (result.id) {
               this.todos.push({
@@ -1679,68 +1681,20 @@ export class AgentCore {
             } else {
               this.addTodo(result.text);
             }
-            const newTodo = this.todos[this.todos.length - 1];
-            if (lastMsg && newTodo) {
-              lastMsg.content = JSON.stringify({
-                ok: true,
-                action: 'add',
-                id: newTodo.id,
-                text: newTodo.text,
-              });
-            }
             this.syncTodoMessage();
             this.onUpdate?.();
           } else if (result.action === 'complete') {
             const target = this.todos.find((t) => t.id === result.id);
             if (target) {
               this.toggleTodo(result.id);
-              if (lastMsg) {
-                lastMsg.content = JSON.stringify({
-                  ok: true,
-                  action: 'complete',
-                  id: result.id,
-                  text: target.text,
-                });
-              }
-            } else {
-              if (lastMsg) {
-                lastMsg.content = JSON.stringify({
-                  ok: false,
-                  action: 'complete',
-                  error: `Todo id=${result.id} not found`,
-                });
-              }
             }
           } else if (result.action === 'remove') {
             const target = this.todos.find((t) => t.id === result.id);
             if (target) {
               this.removeTodo(result.id);
-              if (lastMsg) {
-                lastMsg.content = JSON.stringify({
-                  ok: true,
-                  action: 'remove',
-                  id: result.id,
-                  text: target.text,
-                });
-              }
-            } else {
-              if (lastMsg) {
-                lastMsg.content = JSON.stringify({
-                  ok: false,
-                  action: 'remove',
-                  error: `Todo id=${result.id} not found`,
-                });
-              }
             }
           } else if (result.action === 'list') {
-            if (lastMsg) {
-              lastMsg.content = JSON.stringify({
-                ok: true,
-                action: 'list',
-                count: this.todos.length,
-                todos: this.todos.map((t) => ({ id: t.id, text: t.text, done: t.done })),
-              });
-            }
+            this.onUpdate?.();
           }
         }
       } catch {
