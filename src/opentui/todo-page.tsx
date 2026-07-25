@@ -87,9 +87,7 @@ export function TodoPage({ theme, onClose }: TodoPageProps) {
     >
       {/* Header */}
       <box flexDirection="row" height={1}>
-        <text fg={theme.headerFg}>
-          Todo App
-        </text>
+        <text fg={theme.headerFg}>Todo App</text>
         <box flexGrow={1} />
         <text fg={theme.mutedFg}>q/Esc: Close</text>
       </box>
@@ -103,17 +101,11 @@ export function TodoPage({ theme, onClose }: TodoPageProps) {
 
       {/* Filter bar */}
       <box flexDirection="row" height={1} marginBottom={0}>
-        <text fg={filter === 'all' ? theme.headerFg : theme.mutedFg}>
-          [All]
-        </text>
+        <text fg={filter === 'all' ? theme.headerFg : theme.mutedFg}>[All]</text>
         <text> </text>
-        <text fg={filter === 'active' ? theme.headerFg : theme.mutedFg}>
-          [Active]
-        </text>
+        <text fg={filter === 'active' ? theme.headerFg : theme.mutedFg}>[Active]</text>
         <text> </text>
-        <text fg={filter === 'done' ? theme.headerFg : theme.mutedFg}>
-          [Done]
-        </text>
+        <text fg={filter === 'done' ? theme.headerFg : theme.mutedFg}>[Done]</text>
       </box>
 
       {/* Input area */}
@@ -138,9 +130,7 @@ export function TodoPage({ theme, onClose }: TodoPageProps) {
             height={1}
             backgroundColor={i === selectedIndex ? theme.bgSelected : undefined}
           >
-            <text fg={t.done ? theme.mutedFg : theme.headerFg}>
-              {t.done ? '[x]' : '[ ]'}
-            </text>
+            <text fg={t.done ? theme.mutedFg : theme.headerFg}>{t.done ? '[x]' : '[ ]'}</text>
             <text fg={t.done ? theme.mutedFg : theme.headerFg}>
               {t.text.length > 40 ? t.text.slice(0, 37) + '…' : t.text}
             </text>

@@ -119,8 +119,7 @@ function loadEnv(workspace: string) {
 export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   const invocationCwd = process.cwd();
   const explicitWorkspace =
-    (typeof pathOrConfig === 'object' && pathOrConfig?.workspace) ||
-    process.env.QWEN_WORKSPACE;
+    (typeof pathOrConfig === 'object' && pathOrConfig?.workspace) || process.env.QWEN_WORKSPACE;
 
   const cfg: Config = {
     ...getDefault(),

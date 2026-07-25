@@ -57,7 +57,9 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
   // Permission state
   const [pendingPermissionReq, setPendingPermissionReq] = useState<PermissionRequest | null>(null);
-  const permissionResolverRef = useRef<((choice: 'allow' | 'always_allow' | 'deny') => void) | null>(null);
+  const permissionResolverRef = useRef<
+    ((choice: 'allow' | 'always_allow' | 'deny') => void) | null
+  >(null);
 
   const handlePermissionDecision = useCallback((decision: 'allow' | 'always_allow' | 'deny') => {
     const resolve = permissionResolverRef.current;
@@ -259,7 +261,9 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   // Auto-enable pagination when messages exceed threshold
   const PAGINATION_THRESHOLD = 100;
   const MESSAGES_PER_PAGE = 50;
-  const totalPages = paginated ? Math.max(1, Math.ceil(displayMessageCount / MESSAGES_PER_PAGE)) : 1;
+  const totalPages = paginated
+    ? Math.max(1, Math.ceil(displayMessageCount / MESSAGES_PER_PAGE))
+    : 1;
 
   useEffect(() => {
     const shouldPaginate = messages.length > PAGINATION_THRESHOLD;

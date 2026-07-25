@@ -496,7 +496,10 @@ export function markEndpointRateLimited(baseURL?: string, delayMs?: number): voi
 /**
  * Wait if the endpoint is currently in a rate-limit backoff window.
  */
-export async function awaitEndpointRateLimit(baseURL?: string, signal?: AbortSignal): Promise<void> {
+export async function awaitEndpointRateLimit(
+  baseURL?: string,
+  signal?: AbortSignal
+): Promise<void> {
   if (!baseURL) return;
   cleanExpiredRateLimits();
   const key = baseURL.toLowerCase().replace(/\/+$/, '');
@@ -518,7 +521,8 @@ export function extractRetryAfterDelayMs(err: unknown): number | undefined {
 
   // 1. Inspect response headers if available on error object
   let headerVal: string | undefined;
-  const headers = (e.headers || (e.response as Record<string, unknown> | undefined)?.headers) as Record<string, unknown> | undefined;
+  const headers = (e.headers || (e.response as Record<string, unknown> | undefined)?.headers) as
+    Record<string, unknown> | undefined;
   if (headers) {
     if (typeof (headers as { get?: unknown }).get === 'function') {
       const getFn = (headers as { get: (name: string) => string | null }).get.bind(headers);
@@ -555,7 +559,9 @@ export function extractRetryAfterDelayMs(err: unknown): number | undefined {
 
   // 2. Parse text pattern from error message
   const msg = extractApiMessage(err) || (e.message as string) || '';
-  const matchSec = msg.match(/(?:try again in|retry after|wait|reset in|in)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:s|sec|seconds?)\b/i);
+  const matchSec = msg.match(
+    /(?:try again in|retry after|wait|reset in|in)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:s|sec|seconds?)\b/i
+  );
   if (matchSec && matchSec[1]) {
     const sec = parseFloat(matchSec[1]);
     if (!isNaN(sec) && sec > 0) {
@@ -680,17 +686,14 @@ function shouldRetry(status?: number, attempt?: number, err?: unknown): boolean 
  * Calculate backoff delay with exponential scaling and full jitter.
  * Rate limit (429/503/529) errors start with a higher base delay (2s) vs 1s for general errors.
  */
-export function calculateBackoffDelay(
-  attempt: number,
-  status: number,
-  err?: unknown
-): number {
+export function calculateBackoffDelay(attempt: number, status: number, err?: unknown): number {
   const explicitDelay = extractRetryAfterDelayMs(err);
   if (explicitDelay !== undefined) {
     return explicitDelay + Math.floor(Math.random() * 600) + 200;
   }
 
-  const isRateLimitOrOverload = status === 429 || status === 503 || status === 529 || status === 504;
+  const isRateLimitOrOverload =
+    status === 429 || status === 503 || status === 529 || status === 504;
   const baseMs = isRateLimitOrOverload ? 2000 : 1000;
   const capMs = isRateLimitOrOverload ? 60000 : 30000;
 
@@ -735,7 +738,13 @@ export interface ChatRequestOptions {
   /** Qwen thinking mode — off for sub-agents (tools may land in reasoning as XML). */
   enableThinking?: boolean;
   /** Optional callback invoked when retrying requests (e.g. rate limit backoffs). */
-  onRetry?: (info: { attempt: number; maxAttempts: number; delayMs: number; status: number; message: string }) => void;
+  onRetry?: (info: {
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+    status: number;
+    message: string;
+  }) => void;
 }
 
 export async function chat(
@@ -839,7 +848,8 @@ export async function chat(
       }
       const errStatus = e.status || e.status_code || e.response?.status || 0;
 
-      const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
+      const isRateLimit =
+        errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
 
       if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
@@ -852,7 +862,13 @@ export async function chat(
       }
 
       const msgStr = errorMessage(errStatus, attempt, err, effectiveMaxRetries, delayMs);
-      options?.onRetry?.({ attempt, maxAttempts: effectiveMaxRetries, delayMs, status: errStatus, message: msgStr });
+      options?.onRetry?.({
+        attempt,
+        maxAttempts: effectiveMaxRetries,
+        delayMs,
+        status: errStatus,
+        message: msgStr,
+      });
 
       if (process.env.QWEN_DEBUG_LLM || isRateLimit) {
         logError(`[LLM Retry] ${msgStr}`);
@@ -981,8 +997,7 @@ export async function* streamChat(
                   }
                 }
                 idx =
-                  found ??
-                  (toolCallBuffers.size > 0 ? Math.max(...toolCallBuffers.keys()) + 1 : 0);
+                  found ?? (toolCallBuffers.size > 0 ? Math.max(...toolCallBuffers.keys()) + 1 : 0);
               } else {
                 idx = 0;
               }
@@ -1067,7 +1082,8 @@ export async function* streamChat(
       const errStatus = e.status || e.status_code || e.response?.status || 0;
       lastError = err as Error;
 
-      const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
+      const isRateLimit =
+        errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
 
       if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
@@ -1080,7 +1096,13 @@ export async function* streamChat(
       }
 
       const msgStr = errorMessage(errStatus, attempt, err, effectiveMaxRetries, delayMs);
-      options?.onRetry?.({ attempt, maxAttempts: effectiveMaxRetries, delayMs, status: errStatus, message: msgStr });
+      options?.onRetry?.({
+        attempt,
+        maxAttempts: effectiveMaxRetries,
+        delayMs,
+        status: errStatus,
+        message: msgStr,
+      });
 
       if (process.env.QWEN_DEBUG_LLM || isRateLimit) {
         logError(`[LLM Retry] ${msgStr}`);

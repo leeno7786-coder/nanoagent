@@ -362,10 +362,7 @@ export class ContextManager {
 
     // Remove the messages (system prefix is preserved)
     if (messagesToRemove.length > 0) {
-      this.messages = [
-        ...this.messages.slice(0, firstRemovable),
-        ...this.messages.slice(cut),
-      ];
+      this.messages = [...this.messages.slice(0, firstRemovable), ...this.messages.slice(cut)];
       // Update cached totals and remove stale cache entries
       for (const msg of messagesToRemove) {
         const tokens = this.messageTokenCache.get(msg.id);

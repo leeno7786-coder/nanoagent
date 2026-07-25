@@ -154,8 +154,6 @@ export function listSessions(): string[] {
   }
 }
 
-
-
 /**
  * Get the most recent session (excluding autosave).
  */

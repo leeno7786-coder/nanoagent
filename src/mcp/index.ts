@@ -299,14 +299,22 @@ export class McpManager {
         }
         if (filtered.length > 1) {
           return JSON.stringify(
-            isError ? { ok: false, error: filtered.join('\n') } : { ok: true, output: filtered.join('\n') }
+            isError
+              ? { ok: false, error: filtered.join('\n') }
+              : { ok: true, output: filtered.join('\n') }
           );
         }
         // Non-text content (images, etc.)
-        return JSON.stringify(isError ? { ok: false, error: 'MCP tool error', content } : { ok: true, content });
+        return JSON.stringify(
+          isError ? { ok: false, error: 'MCP tool error', content } : { ok: true, content }
+        );
       }
 
-      return JSON.stringify(isError ? { ok: false, error: 'MCP tool error', result: content } : { ok: true, result: content });
+      return JSON.stringify(
+        isError
+          ? { ok: false, error: 'MCP tool error', result: content }
+          : { ok: true, result: content }
+      );
     } catch (err: unknown) {
       return JSON.stringify({
         ok: false,
@@ -392,6 +400,9 @@ export class McpManager {
 /**
  * Create an McpManager from config.
  */
-export function createMcpManager(mcpConfigs?: Record<string, McpServerConfig>, workspace?: string): McpManager {
+export function createMcpManager(
+  mcpConfigs?: Record<string, McpServerConfig>,
+  workspace?: string
+): McpManager {
   return new McpManager(mcpConfigs, workspace);
 }

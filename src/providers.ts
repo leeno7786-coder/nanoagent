@@ -1,5 +1,9 @@
 import type { RuntimeProvider, ModelInfo } from './types.js';
-import { fetchLMStudioModels, isLMStudioURL, parseParamBillionsFromModelId } from './model-runtime.js';
+import {
+  fetchLMStudioModels,
+  isLMStudioURL,
+  parseParamBillionsFromModelId,
+} from './model-runtime.js';
 import { isLocalProvider } from './llm.js';
 import { logError, logInfo } from './log.js';
 
@@ -994,7 +998,11 @@ export async function fetchLocalModels(baseURL: string): Promise<ModelInfo[]> {
           return modelResponse.data.map((m: Record<string, unknown>) => {
             const id = (m.id as string) || (m.name as string) || 'unknown';
             const params = parseParamBillionsFromModelId(id);
-            const paramsStr = params ? (params < 1 ? `${Math.round(params * 1000)}M` : `${params}B`) : '';
+            const paramsStr = params
+              ? params < 1
+                ? `${Math.round(params * 1000)}M`
+                : `${params}B`
+              : '';
             return {
               id,
               name: (m.name as string) || id,
@@ -1008,7 +1016,11 @@ export async function fetchLocalModels(baseURL: string): Promise<ModelInfo[]> {
           return body.map((m: Record<string, unknown>) => {
             const id = (m.id as string) || (m.name as string) || 'unknown';
             const params = parseParamBillionsFromModelId(id);
-            const paramsStr = params ? (params < 1 ? `${Math.round(params * 1000)}M` : `${params}B`) : '';
+            const paramsStr = params
+              ? params < 1
+                ? `${Math.round(params * 1000)}M`
+                : `${params}B`
+              : '';
             return {
               id,
               name: (m.name as string) || id,
@@ -1032,13 +1044,19 @@ export async function fetchLocalModels(baseURL: string): Promise<ModelInfo[]> {
       });
 
       if (ollamaRes.ok) {
-        const body = (await ollamaRes.json()) as { models?: Array<{ name: string; size?: number }> };
+        const body = (await ollamaRes.json()) as {
+          models?: Array<{ name: string; size?: number }>;
+        };
         if (body?.models && Array.isArray(body.models)) {
           return body.models.map((m) => {
             const id = m.name;
             const params = parseParamBillionsFromModelId(id);
             const sizeGb = m.size ? `${(m.size / (1024 * 1024 * 1024)).toFixed(1)}GB` : '';
-            const paramsStr = params ? (params < 1 ? `${Math.round(params * 1000)}M` : `${params}B`) : '';
+            const paramsStr = params
+              ? params < 1
+                ? `${Math.round(params * 1000)}M`
+                : `${params}B`
+              : '';
             return {
               id,
               name: id,

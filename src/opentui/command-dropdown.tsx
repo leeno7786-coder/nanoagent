@@ -39,7 +39,10 @@ const BUILTIN_COMMANDS: Command[] = [
   { name: '/mcp', description: 'List connected MCP servers' },
   { name: '/mcp-add', description: 'Add an MCP server' },
   { name: '/mcp-remove', description: 'Remove an MCP server' },
-  { name: '/permissions', description: 'Tool & command permissions (read_only, ask, allow_edits, always_allow)' },
+  {
+    name: '/permissions',
+    description: 'Tool & command permissions (read_only, ask, allow_edits, always_allow)',
+  },
   { name: '/exit', description: 'Quit (F10)' },
 ];
 

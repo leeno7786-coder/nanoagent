@@ -112,9 +112,7 @@ export function checkAndCompactContext(agent: AgentCore): boolean {
     // Preserve non-base system messages (todo context, transient notices)
     // that live only in AgentCore.messages, then re-sync from the pruned
     // context manager (which holds system-base + conversation history).
-    const extraSystem = agent.messages.filter(
-      (m) => m.role === 'system' && m.id !== 'system-base'
-    );
+    const extraSystem = agent.messages.filter((m) => m.role === 'system' && m.id !== 'system-base');
     const synced = agent.contextManager.getMessages();
     const firstNonSystem = synced.findIndex((m) => m.role !== 'system');
     const insertAt = firstNonSystem === -1 ? synced.length : firstNonSystem;

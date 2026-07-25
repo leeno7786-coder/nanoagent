@@ -1,4 +1,9 @@
-import type { SecurityManager, PermissionManager, PermissionMode, PermissionLevel } from './security/index.js';
+import type {
+  SecurityManager,
+  PermissionManager,
+  PermissionMode,
+  PermissionLevel,
+} from './security/index.js';
 
 /**
  * Application configuration shape.

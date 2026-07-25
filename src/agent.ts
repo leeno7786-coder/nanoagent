@@ -12,7 +12,11 @@ import { SkillManager } from './skill-manager.js';
 import type { Config, Message, ToolResult, AgentState, Todo } from './types.js';
 import { resolveSubAgentPool } from './subagents.js';
 import { ContextManager, createContextManager } from './context/manager.js';
-import { SecurityManager, createSecurityManager, type PermissionRequest } from './security/index.js';
+import {
+  SecurityManager,
+  createSecurityManager,
+  type PermissionRequest,
+} from './security/index.js';
 import { McpManager, createMcpManager } from './mcp/index.js';
 import type { McpServerState } from './types.js';
 import { rnd, now } from './agent-utils.js';
@@ -41,7 +45,6 @@ import {
 import { logError } from './log.js';
 
 const MAX_REASONING_ONLY = 5;
-
 
 /**
  * Core agent orchestrator: manages conversation state, tool execution,
@@ -118,7 +121,9 @@ export class AgentCore {
   /** Called after a tool finishes executing. */
   public onToolResult?: (r: ToolResult) => void;
   /** Permission request callback for interactive user confirmation. */
-  public onPermissionRequest?: (req: PermissionRequest) => Promise<'allow' | 'always_allow' | 'deny'>;
+  public onPermissionRequest?: (
+    req: PermissionRequest
+  ) => Promise<'allow' | 'always_allow' | 'deny'>;
   /** Enable streaming mode â€” assistant content updates in real-time. */
   public streaming = true;
   /** Round counter and maximum rounds before stopping. */
@@ -239,7 +244,9 @@ export class AgentCore {
       );
       if (autoLoaded.length > 0) {
         const names = autoLoaded.map((s) => s.name).join(', ');
-        this.addAssistantMessage(`Auto-loaded skills: ${names} â€” these are now active in context.`);
+        this.addAssistantMessage(
+          `Auto-loaded skills: ${names} â€” these are now active in context.`
+        );
       }
     }
 
@@ -447,7 +454,9 @@ export class AgentCore {
 
       // Check optional maxIterations limit if explicitly configured
       if (this.cfg.maxIterations > 0 && iterationCount >= this.cfg.maxIterations) {
-        this.addAssistantMessage(`Turn limit reached (${this.cfg.maxIterations} iterations). Resuming on your next prompt.`);
+        this.addAssistantMessage(
+          `Turn limit reached (${this.cfg.maxIterations} iterations). Resuming on your next prompt.`
+        );
         this.setState('idle');
         this.onUpdate?.();
         return;
@@ -455,7 +464,9 @@ export class AgentCore {
 
       // Enforce the maxRounds knob (CLI --max-rounds / agent.maxRounds)
       if (this.maxRounds > 0 && iterationCount >= this.maxRounds) {
-        this.addAssistantMessage(`Round limit reached (${this.maxRounds} rounds). Resuming on your next prompt.`);
+        this.addAssistantMessage(
+          `Round limit reached (${this.maxRounds} rounds). Resuming on your next prompt.`
+        );
         this.setState('idle');
         this.onUpdate?.();
         return;
@@ -662,7 +673,12 @@ export class AgentCore {
             return;
           }
         } catch (err: unknown) {
-          const e = err as { status?: number; status_code?: number; message?: string; name?: string };
+          const e = err as {
+            status?: number;
+            status_code?: number;
+            message?: string;
+            name?: string;
+          };
           const isAborted =
             signal?.aborted ||
             e.name === 'AbortError' ||
@@ -719,7 +735,12 @@ export class AgentCore {
             signal
           );
         } catch (err: unknown) {
-          const e = err as { status?: number; status_code?: number; message?: string; name?: string };
+          const e = err as {
+            status?: number;
+            status_code?: number;
+            message?: string;
+            name?: string;
+          };
           const isAborted =
             signal?.aborted ||
             e.name === 'AbortError' ||
@@ -858,7 +879,6 @@ export class AgentCore {
     return spawnBackgroundSubAgent(this, prompt, focusPath);
   }
 
-
   /**
    * Block until every launched background sub-agent has finished, then collect
    * their results into the conversation as a single `explore_subagent` result
@@ -871,7 +891,6 @@ export class AgentCore {
   /** Whether the user has consented to remote sub-agent dispatch this session. */
   /** @internal Session consent flag used by the agent-tools module. */
   subAgentSessionApproved = false;
-
 
   /**
    * Execute a tool directly by name (used by slash commands).
@@ -903,7 +922,6 @@ export class AgentCore {
     return executeToolsParallel(this, parallelTools, signal);
   }
 
-
   /** Convert internal messages to the format expected by the LLM layer. */
   private toChatMessages(): ChatMessage[] {
     return toChatMessages(this);
@@ -920,7 +938,6 @@ export class AgentCore {
   private addUserMessage(content: string): void {
     addUserMessage(this, content);
   }
-
 
   /**
    * Check if context needs compaction and perform it if necessary.

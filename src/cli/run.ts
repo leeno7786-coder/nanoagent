@@ -43,8 +43,7 @@ export async function cmdRun(argv: string[]): Promise<number> {
     const chunks: Buffer[] = [];
     // Bun exposes Bun.stdin.stream(); on Node we read process.stdin instead.
     const bunGlobal = (globalThis as Record<string, unknown>).Bun as
-      | { stdin?: { stream?: () => AsyncIterable<Uint8Array> } }
-      | undefined;
+      { stdin?: { stream?: () => AsyncIterable<Uint8Array> } } | undefined;
     if (bunGlobal?.stdin?.stream) {
       for await (const chunk of bunGlobal.stdin.stream()) {
         chunks.push(Buffer.from(chunk));

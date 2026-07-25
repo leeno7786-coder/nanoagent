@@ -47,10 +47,14 @@ export class MemoryGraph {
   private graphDir: string;
   private options: GraphBuildOptions;
   /** Per-file import map: fileId -> (localName -> module specifier + exported name). */
-  private fileImports: Map<string, Map<string, { module: string; exported: string }>> =
-    new Map();
+  private fileImports: Map<string, Map<string, { module: string; exported: string }>> = new Map();
   /** Call sites whose callee wasn't found in the same file (resolved post-build). */
-  private pendingCalls: Array<{ callerId: string; calledName: string; line: number; fileId: string }> = [];
+  private pendingCalls: Array<{
+    callerId: string;
+    calledName: string;
+    line: number;
+    fileId: string;
+  }> = [];
 
   constructor(workspace: string, options: GraphBuildOptions = {}) {
     this.workspace = workspace;

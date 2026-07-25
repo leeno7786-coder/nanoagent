@@ -320,7 +320,9 @@ export class SecurityManager {
     // Check against custom allowed commands if specified
     if (this.config.allowedCommands.size > 0) {
       const isAllowed = Array.from(this.config.allowedCommands).some(
-        (allowed) => trimmed.toLowerCase() === allowed.toLowerCase() || trimmed.toLowerCase().startsWith(allowed.toLowerCase() + ' ')
+        (allowed) =>
+          trimmed.toLowerCase() === allowed.toLowerCase() ||
+          trimmed.toLowerCase().startsWith(allowed.toLowerCase() + ' ')
       );
       if (!isAllowed) {
         return { ok: false, error: `Command not in allowed list` };

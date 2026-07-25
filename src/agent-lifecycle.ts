@@ -5,11 +5,7 @@
  * thin delegate methods so the public API is unchanged.
  */
 import { createClient, isLocalProvider } from './llm.js';
-import {
-  createToolCacheManager,
-  registerExternalTools,
-  subAgentAvailable,
-} from './tools/index.js';
+import { createToolCacheManager, registerExternalTools, subAgentAvailable } from './tools/index.js';
 import { detectContext } from './context.js';
 import { SkillManager } from './skill-manager.js';
 import { loadSkills } from './skills.js';
@@ -157,7 +153,8 @@ export async function initAgent(agent: AgentCore) {
         name,
         status: 'disabled' as const,
         toolCount: 0,
-        error: 'blocked: MCP servers from project configs are not auto-connected (untrusted source)',
+        error:
+          'blocked: MCP servers from project configs are not auto-connected (untrusted source)',
       }));
       logWarn(
         `[security] Skipped auto-connecting ${agent.mcpStates.length} MCP server(s) from project config ${source}. ` +

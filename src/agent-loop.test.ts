@@ -211,7 +211,12 @@ describe('AgentCore run loop (behavioral)', () => {
   it('keeps the system prompt through context compaction', () => {
     const agent = newAgent(makeConfig(ws, { modelContextLength: 2000 }));
 
-    const sys: Message = { id: 'system-base', role: 'system', content: 'SYS-PROMPT', timestamp: Date.now() };
+    const sys: Message = {
+      id: 'system-base',
+      role: 'system',
+      content: 'SYS-PROMPT',
+      timestamp: Date.now(),
+    };
     agent.messages = [sys];
     agent.contextManager.setMessages([sys]);
 
@@ -245,7 +250,12 @@ describe('AgentCore run loop (behavioral)', () => {
   it('never splits assistant tool_calls from their tool results during compaction', () => {
     const agent = newAgent(makeConfig(ws, { modelContextLength: 1200 }));
 
-    const sys: Message = { id: 'system-base', role: 'system', content: 'SYS', timestamp: Date.now() };
+    const sys: Message = {
+      id: 'system-base',
+      role: 'system',
+      content: 'SYS',
+      timestamp: Date.now(),
+    };
     agent.messages = [sys];
     agent.contextManager.setMessages([sys]);
 
@@ -264,7 +274,13 @@ describe('AgentCore run loop (behavioral)', () => {
         toolCalls: [{ id: `c${i}`, name: 'read_file', arguments: '{}' }],
         timestamp: Date.now(),
       });
-      push({ id: `t${i}`, role: 'tool', content: '{}', toolCallId: `c${i}`, timestamp: Date.now() });
+      push({
+        id: `t${i}`,
+        role: 'tool',
+        content: '{}',
+        toolCallId: `c${i}`,
+        timestamp: Date.now(),
+      });
     }
 
     agent.checkAndCompactContext();
@@ -292,7 +308,11 @@ describe('AgentCore run loop (behavioral)', () => {
     const dispatch = [
       {
         toolCalls: [
-          { id: 'sa-1', name: 'explore_subagent', arguments: JSON.stringify({ prompt: 'look at src' }) },
+          {
+            id: 'sa-1',
+            name: 'explore_subagent',
+            arguments: JSON.stringify({ prompt: 'look at src' }),
+          },
         ],
       },
     ];

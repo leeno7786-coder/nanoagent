@@ -58,7 +58,9 @@ export function StatusBar({
   const s = cfg[state];
   const toolLabel = currentTool ? ` ${currentTool.name}` : '';
   const displayModel = model.length > 28 ? model.slice(0, 27) + '…' : model;
-  const workspaceName = workspace ? (workspace.split(/[/\\]/).filter(Boolean).pop() || workspace) : '';
+  const workspaceName = workspace
+    ? workspace.split(/[/\\]/).filter(Boolean).pop() || workspace
+    : '';
 
   const lastTokens = lastUsage
     ? `${fmt(lastUsage.input_tokens)}↑${fmt(lastUsage.output_tokens)}↓`

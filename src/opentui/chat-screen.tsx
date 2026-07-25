@@ -73,7 +73,8 @@ function renderLinesSafely(text: string, maxLines = 40, fgColor: string, prefix 
   if (allLines.length <= maxLines) {
     return allLines.map((line, idx) => (
       <text key={idx} fg={fgColor}>
-        {prefix}{line || ' '}
+        {prefix}
+        {line || ' '}
       </text>
     ));
   }
@@ -86,7 +87,8 @@ function renderLinesSafely(text: string, maxLines = 40, fgColor: string, prefix 
   return [
     ...head.map((line, idx) => (
       <text key={`h-${idx}`} fg={fgColor}>
-        {prefix}{line || ' '}
+        {prefix}
+        {line || ' '}
       </text>
     )),
     <text key="trunc" fg={fgColor}>
@@ -94,7 +96,8 @@ function renderLinesSafely(text: string, maxLines = 40, fgColor: string, prefix 
     </text>,
     ...tail.map((line, idx) => (
       <text key={`t-${idx}`} fg={fgColor}>
-        {prefix}{line || ' '}
+        {prefix}
+        {line || ' '}
       </text>
     )),
   ];
@@ -585,134 +588,141 @@ type MessageItemProps = {
  * new identity). Tool-result bindings are compared per call id so the
  * rebuilt Maps don't defeat the memo.
  */
-const MessageItem = memo(function MessageItem({
-  message,
-  theme,
-  toolMap,
-  toolResultByCallId,
-  lastUsage,
-  state,
-  currentTool,
-  highlighted = false,
-}: MessageItemProps) {
-  if (message.role === 'system') return null;
+const MessageItem = memo(
+  function MessageItem({
+    message,
+    theme,
+    toolMap,
+    toolResultByCallId,
+    lastUsage,
+    state,
+    currentTool,
+    highlighted = false,
+  }: MessageItemProps) {
+    if (message.role === 'system') return null;
 
-  if (message.role === 'user') {
+    if (message.role === 'user') {
+      return (
+        <box flexDirection="column" marginY={1}>
+          <text fg={theme.userFg} bg={highlighted ? theme.bgSelected : undefined}>
+            ▸ You
+          </text>
+          {renderLinesSafely(message.content, 40, theme.headerFg)}
+        </box>
+      );
+    }
+
+    const displayContent = message.content || '';
+    const segments = parseCodeBlocks(displayContent);
+    const hasReasoning = message.reasoningContent && message.reasoningContent.trim() !== '';
+    const isThinking = message.role === 'assistant' && state === 'thinking';
+    const toolCalls = message.toolCalls ?? [];
+
     return (
       <box flexDirection="column" marginY={1}>
-        <text fg={theme.userFg} bg={highlighted ? theme.bgSelected : undefined}>
-          ▸ You
-        </text>
-        {renderLinesSafely(message.content, 40, theme.headerFg)}
-      </box>
-    );
-  }
-
-  const displayContent = message.content || '';
-  const segments = parseCodeBlocks(displayContent);
-  const hasReasoning = message.reasoningContent && message.reasoningContent.trim() !== '';
-  const isThinking = message.role === 'assistant' && state === 'thinking';
-  const toolCalls = message.toolCalls ?? [];
-
-  return (
-    <box flexDirection="column" marginY={1}>
-      {(hasReasoning || isThinking) && (
-        <box flexDirection="column" marginY={0} marginBottom={1}>
-          <text fg={theme.statusThinking}>
-            {isThinking ? `${spinnerFrame(Date.now())} Thinking…` : '🧠 Thought'}
-          </text>
-          {hasReasoning && (
-            <box flexDirection="column" marginLeft={2} marginTop={0}>
-              {renderLinesSafely(message.reasoningContent || '', 35, theme.mutedFg)}
-            </box>
-          )}
-        </box>
-      )}
-
-      {displayContent.trim() !== '' &&
-        segments.map((seg, si) => {
-          if (seg.type === 'text') {
-            return (
-              <box key={si} flexDirection="column">
-                {renderLinesSafely(seg.text, 60, theme.headerFg)}
+        {(hasReasoning || isThinking) && (
+          <box flexDirection="column" marginY={0} marginBottom={1}>
+            <text fg={theme.statusThinking}>
+              {isThinking ? `${spinnerFrame(Date.now())} Thinking…` : '🧠 Thought'}
+            </text>
+            {hasReasoning && (
+              <box flexDirection="column" marginLeft={2} marginTop={0}>
+                {renderLinesSafely(message.reasoningContent || '', 35, theme.mutedFg)}
               </box>
-            );
-          }
-          if (seg.lang === 'diff') {
+            )}
+          </box>
+        )}
+
+        {displayContent.trim() !== '' &&
+          segments.map((seg, si) => {
+            if (seg.type === 'text') {
+              return (
+                <box key={si} flexDirection="column">
+                  {renderLinesSafely(seg.text, 60, theme.headerFg)}
+                </box>
+              );
+            }
+            if (seg.lang === 'diff') {
+              return (
+                <box key={si} flexDirection="column" marginY={1}>
+                  <diff diff={seg.code} {...DIFF_PROPS} />
+                </box>
+              );
+            }
+            const safeCode =
+              seg.code.split('\n').length > 120
+                ? seg.code.split('\n').slice(0, 120).join('\n') + '\n… [truncated]'
+                : seg.code;
             return (
               <box key={si} flexDirection="column" marginY={1}>
-                <diff diff={seg.code} {...DIFF_PROPS} />
+                {seg.lang && <text fg={theme.mutedFg}>{seg.lang}</text>}
+                <code content={safeCode} filetype={seg.lang || 'text'} syntaxStyle={syntaxStyle} />
               </box>
             );
-          }
-          const safeCode =
-            seg.code.split('\n').length > 120
-              ? seg.code.split('\n').slice(0, 120).join('\n') + '\n… [truncated]'
-              : seg.code;
-          return (
-            <box key={si} flexDirection="column" marginY={1}>
-              {seg.lang && <text fg={theme.mutedFg}>{seg.lang}</text>}
-              <code content={safeCode} filetype={seg.lang || 'text'} syntaxStyle={syntaxStyle} />
-            </box>
-          );
-        })}
+          })}
 
-      {toolCalls
-        .filter((tc) => tc.name !== 'explore_subagent')
-        .map((tc) => renderToolCall(tc, toolMap, toolResultByCallId, theme))}
+        {toolCalls
+          .filter((tc) => tc.name !== 'explore_subagent')
+          .map((tc) => renderToolCall(tc, toolMap, toolResultByCallId, theme))}
 
-      {message.role === 'assistant' &&
-        state === 'executing_tool' &&
-        currentTool &&
-        currentTool.name !== 'explore_subagent' &&
-        (() => {
-          const pending = buildToolDisplayBlock(currentTool.name, currentTool.args, '', undefined);
-          return (
-            <box flexDirection="column">
-              <text fg={theme.statusTool}>
-                {'  '}
-                {spinnerFrame(Date.now())} {pending.action}({pending.target})…
-              </text>
-            </box>
-          );
-        })()}
+        {message.role === 'assistant' &&
+          state === 'executing_tool' &&
+          currentTool &&
+          currentTool.name !== 'explore_subagent' &&
+          (() => {
+            const pending = buildToolDisplayBlock(
+              currentTool.name,
+              currentTool.args,
+              '',
+              undefined
+            );
+            return (
+              <box flexDirection="column">
+                <text fg={theme.statusTool}>
+                  {'  '}
+                  {spinnerFrame(Date.now())} {pending.action}({pending.target})…
+                </text>
+              </box>
+            );
+          })()}
 
-      {message.role === 'assistant' && lastUsage && (
-        <text fg={theme.mutedFg}>
-          {' '}
-          {formatTokens(lastUsage.input_tokens)}↑ {formatTokens(lastUsage.output_tokens)}↓
-        </text>
-      )}
-    </box>
-  );
-},
-(prev, next) => {
-  if (
-    prev.theme !== next.theme ||
-    prev.state !== next.state ||
-    prev.highlighted !== next.highlighted ||
-    prev.lastUsage !== next.lastUsage ||
-    prev.currentTool !== next.currentTool
-  ) {
-    return false;
-  }
-  const pm = prev.message;
-  const nm = next.message;
-  if (pm !== nm) {
+        {message.role === 'assistant' && lastUsage && (
+          <text fg={theme.mutedFg}>
+            {' '}
+            {formatTokens(lastUsage.input_tokens)}↑ {formatTokens(lastUsage.output_tokens)}↓
+          </text>
+        )}
+      </box>
+    );
+  },
+  (prev, next) => {
     if (
-      pm.id !== nm.id ||
-      pm.content !== nm.content ||
-      pm.reasoningContent !== nm.reasoningContent ||
-      (pm.toolCalls?.length ?? 0) !== (nm.toolCalls?.length ?? 0)
+      prev.theme !== next.theme ||
+      prev.state !== next.state ||
+      prev.highlighted !== next.highlighted ||
+      prev.lastUsage !== next.lastUsage ||
+      prev.currentTool !== next.currentTool
     ) {
       return false;
     }
+    const pm = prev.message;
+    const nm = next.message;
+    if (pm !== nm) {
+      if (
+        pm.id !== nm.id ||
+        pm.content !== nm.content ||
+        pm.reasoningContent !== nm.reasoningContent ||
+        (pm.toolCalls?.length ?? 0) !== (nm.toolCalls?.length ?? 0)
+      ) {
+        return false;
+      }
+    }
+    // Compare tool-result bindings per call id (the Maps are rebuilt per update)
+    const tcs = nm.toolCalls ?? [];
+    for (const tc of tcs) {
+      if (prev.toolResultByCallId.get(tc.id) !== next.toolResultByCallId.get(tc.id)) return false;
+      if (prev.toolMap.get(tc.id) !== next.toolMap.get(tc.id)) return false;
+    }
+    return true;
   }
-  // Compare tool-result bindings per call id (the Maps are rebuilt per update)
-  const tcs = nm.toolCalls ?? [];
-  for (const tc of tcs) {
-    if (prev.toolResultByCallId.get(tc.id) !== next.toolResultByCallId.get(tc.id)) return false;
-    if (prev.toolMap.get(tc.id) !== next.toolMap.get(tc.id)) return false;
-  }
-  return true;
-});
+);

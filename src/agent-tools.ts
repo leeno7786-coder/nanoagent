@@ -16,7 +16,10 @@ import { logDebug, logError } from './log.js';
  * One-time per-session confirmation before explore_subagent ships workspace
  * file contents to remote endpoints (which may be plaintext HTTP).
  */
-export async function checkSubAgentConsent(agent: AgentCore, tcId: string): Promise<'allow' | 'deny'> {
+export async function checkSubAgentConsent(
+  agent: AgentCore,
+  tcId: string
+): Promise<'allow' | 'deny'> {
   if (agent.subAgentSessionApproved) return 'allow';
   if (
     agent.securityManager.permissionManager.getMode() === 'always_allow' ||
@@ -77,7 +80,11 @@ export function parseToolArgs(tc: { name: string; arguments: string }): Record<s
  * Execute a tool directly by name (used by slash commands).
  * Returns the tool output string.
  */
-export async function executeToolDirect(agent: AgentCore, toolName: string, args: Record<string, unknown>): Promise<string> {
+export async function executeToolDirect(
+  agent: AgentCore,
+  toolName: string,
+  args: Record<string, unknown>
+): Promise<string> {
   const tool = findTool(toolName);
   if (!tool) return JSON.stringify({ ok: false, error: `Unknown tool: ${toolName}` });
 
@@ -404,7 +411,13 @@ export async function executeToolsParallel(
           ok: false,
           error: `Permission denied by user for ${tc.name}`,
         });
-        return { index: tc.index, id: tc.id, output, duration: performance.now() - toolStart, wasCached: false };
+        return {
+          index: tc.index,
+          id: tc.id,
+          output,
+          duration: performance.now() - toolStart,
+          wasCached: false,
+        };
       }
 
       // Fallback policy check for tools that do not require interactive confirmation
@@ -415,7 +428,13 @@ export async function executeToolsParallel(
             ok: false,
             error: `Permission denied by policy (${perm.reason || 'restricted'})`,
           });
-          return { index: tc.index, id: tc.id, output, duration: performance.now() - toolStart, wasCached: false };
+          return {
+            index: tc.index,
+            id: tc.id,
+            output,
+            duration: performance.now() - toolStart,
+            wasCached: false,
+          };
         }
       }
 
@@ -572,7 +591,12 @@ export async function executeToolsParallel(
 /**
  * Handle special tool results that require agent state updates.
  */
-export function handleSpecialToolResults(agent: AgentCore, toolName: string, output: string, _toolCallId: string): void {
+export function handleSpecialToolResults(
+  agent: AgentCore,
+  toolName: string,
+  output: string,
+  _toolCallId: string
+): void {
   // Intercept change_workspace results to sync agent state
   if (toolName === 'change_workspace') {
     try {

@@ -244,11 +244,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           return;
         }
       } catch {
-        pushAssistant(
-          agent,
-          `Failed to parse workspace change result: ${toolResult}`,
-          setMessages
-        );
+        pushAssistant(agent, `Failed to parse workspace change result: ${toolResult}`, setMessages);
         return;
       }
     }
@@ -302,7 +298,11 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
         const list = sessions
           .map((s) => `${new Date(s.updatedAt).toLocaleDateString()} - ${s.id}`)
           .join('\n');
-        pushAssistant(agent, `Available sessions:\n${list}\n\nTo resume: /resume [id]`, setMessages);
+        pushAssistant(
+          agent,
+          `Available sessions:\n${list}\n\nTo resume: /resume [id]`,
+          setMessages
+        );
       } else {
         pushAssistant(
           agent,
@@ -325,7 +325,11 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       // Delete a saved session
       const id = args?.trim();
       if (!id) {
-        pushAssistant(agent, 'Usage: /delete-session [id]. List sessions with /sessions.', setMessages);
+        pushAssistant(
+          agent,
+          'Usage: /delete-session [id]. List sessions with /sessions.',
+          setMessages
+        );
         return;
       }
       const sessions = loadSessions();
@@ -433,10 +437,17 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       }
       const unloaded =
         agent.skillManager.unload(unloadName, agent.messages, agent.isSmallModel, undefined) ||
-        agent.skillManager.unload(`skill:${unloadName}`, agent.messages, agent.isSmallModel, undefined);
+        agent.skillManager.unload(
+          `skill:${unloadName}`,
+          agent.messages,
+          agent.isSmallModel,
+          undefined
+        );
       pushAssistant(
         agent,
-        unloaded ? `Skill "${unloadName}" unloaded.` : `Skill "${unloadName}" not found in active skills.`,
+        unloaded
+          ? `Skill "${unloadName}" unloaded.`
+          : `Skill "${unloadName}" not found in active skills.`,
         setMessages
       );
       return;
@@ -454,7 +465,12 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       }
       const skill = getSkill(loadName) || skills.get(loadName);
       if (skill) {
-        const loaded = agent.skillManager.load(skill, agent.messages, agent.isSmallModel, undefined);
+        const loaded = agent.skillManager.load(
+          skill,
+          agent.messages,
+          agent.isSmallModel,
+          undefined
+        );
         if (loaded) {
           const skillDesc = skill.description || '';
           pushAssistant(

@@ -53,7 +53,13 @@ describe('SecurityManager', () => {
     });
 
     it('should allow uv and uvx commands', () => {
-      const uvCommands = ['uv --version', 'uv run main.py', 'uv sync', 'uvx ruff check', 'uvx ty check'];
+      const uvCommands = [
+        'uv --version',
+        'uv run main.py',
+        'uv sync',
+        'uvx ruff check',
+        'uvx ty check',
+      ];
       for (const cmd of uvCommands) {
         const result = securityManager.validateCommand(cmd);
         expect(result.ok).toBe(true);

@@ -5,11 +5,7 @@
  * methods so the public API is unchanged.
  */
 import type { ToolExecutionHooks, SubAgentProgressEvent } from './tools/index.js';
-import {
-  exploreWithSubAgent,
-  formatSubAgentResults,
-  type SubAgentResult,
-} from './subagents.js';
+import { exploreWithSubAgent, formatSubAgentResults, type SubAgentResult } from './subagents.js';
 import type { Message } from './types.js';
 import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';
@@ -24,16 +20,16 @@ import { logError } from './log.js';
  * resolves before it synthesises the results.
  */
 export interface BackgroundSubAgent {
-id: string;
-prompt: string;
-focusPath?: string;
-status: 'running' | 'done' | 'error';
-/** Accumulated streamed progress events (full live transcript). */
-log?: SubAgentProgressEvent[];
-result?: SubAgentResult;
-promise: Promise<void>;
-resolve: (value: void) => void;
-reject: (reason?: unknown) => void;
+  id: string;
+  prompt: string;
+  focusPath?: string;
+  status: 'running' | 'done' | 'error';
+  /** Accumulated streamed progress events (full live transcript). */
+  log?: SubAgentProgressEvent[];
+  result?: SubAgentResult;
+  promise: Promise<void>;
+  resolve: (value: void) => void;
+  reject: (reason?: unknown) => void;
 }
 
 /** Snapshot of a live background sub-agent handle (plain object for the TUI). */
@@ -70,7 +66,11 @@ export function getSubAgentSnapshot(agent: AgentCore): SubAgentSnapshot[] {
  * progress through `onSubAgentProgress`. The run loop later blocks in
  * `awaitAllBackgroundSubAgents` until every task resolves.
  */
-export function spawnBackgroundSubAgent(agent: AgentCore, prompt: string, focusPath?: string): string {
+export function spawnBackgroundSubAgent(
+  agent: AgentCore,
+  prompt: string,
+  focusPath?: string
+): string {
   if (agent.backgroundSubAgents.size >= agent.maxBackgroundSubAgents) {
     return JSON.stringify({
       ok: false,
@@ -194,7 +194,10 @@ export function buildSubAgentHooks(agent: AgentCore, id: string): ToolExecutionH
  * their results into the conversation as a single `explore_subagent` result
  * block. Called from the run loop after tool execution when any are pending.
  */
-export async function awaitAllBackgroundSubAgents(agent: AgentCore, _signal?: AbortSignal): Promise<void> {
+export async function awaitAllBackgroundSubAgents(
+  agent: AgentCore,
+  _signal?: AbortSignal
+): Promise<void> {
   if (agent.backgroundSubAgents.size === 0) return;
 
   const handles = [...agent.backgroundSubAgents.values()];
