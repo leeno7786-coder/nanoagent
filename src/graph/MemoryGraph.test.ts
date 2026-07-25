@@ -203,6 +203,20 @@ describe('MemoryGraph', () => {
       expect(calls[0].source).toBe('function:class:file:src/utils.ts:Greeter:greet');
     });
 
+    it('creates calls edges for cross-file calls via imports (ESM .js -> .ts)', async () => {
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      // main.ts imports { add } from './utils.js' (utils.ts on disk) and calls it
+      const calls = graph.query({
+        type: 'edge',
+        query: { type: 'calls', target: 'function:file:src/utils.ts:add' },
+      }).edges;
+      const crossFile = calls.find((e) => e.source === 'function:file:src/main.ts:main');
+      expect(crossFile).toBeDefined();
+      expect(crossFile!.metadata?.crossFile).toBe(true);
+    });
+
     it('extracts config concept nodes from JSON files', async () => {
       const graph = new MemoryGraph(ws);
       await graph.build();

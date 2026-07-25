@@ -46,6 +46,11 @@ export class MemoryGraph {
   private workspace: string;
   private graphDir: string;
   private options: GraphBuildOptions;
+  /** Per-file import map: fileId -> (localName -> module specifier + exported name). */
+  private fileImports: Map<string, Map<string, { module: string; exported: string }>> =
+    new Map();
+  /** Call sites whose callee wasn't found in the same file (resolved post-build). */
+  private pendingCalls: Array<{ callerId: string; calledName: string; line: number; fileId: string }> = [];
 
   constructor(workspace: string, options: GraphBuildOptions = {}) {
     this.workspace = workspace;
@@ -56,8 +61,22 @@ export class MemoryGraph {
       includeDependencies: true,
       includeCode: false,
       maxFileSize: 1024 * 1024, // 1MB
-      excludedPaths: ['node_modules', 'dist', 'build', '.git', '.qwen-graph', '*.lock', '*.log'],
-      includedPaths: ['src', 'tests', 'lib'],
+      excludedPaths: [
+        'node_modules',
+        'dist',
+        'build',
+        '.git',
+        '.qwen-graph',
+        '.next',
+        '.turbo',
+        '.cache',
+        'coverage',
+        '*.lock',
+        '*.log',
+      ],
+      // NOTE: no default includedPaths — index the whole workspace (minus
+      // excludedPaths) unless the caller explicitly scopes it. A default of
+      // ['src','tests','lib'] silently skipped code in other directories.
       ...options,
     };
 
@@ -125,8 +144,9 @@ export class MemoryGraph {
       return existingGraph;
     }
 
-    // Create new graph
+    // Create new graph and build it so callers get a usable graph
     const graph = new MemoryGraph(workspace, options);
+    await graph.build();
     return graph;
   }
 
@@ -284,6 +304,9 @@ export class MemoryGraph {
       }
     }
 
+    // Resolve queued call sites against imported files (cross-file edges)
+    this.linkCrossFileCalls();
+
     // Build indexes
     this.buildIndexes();
 
@@ -427,17 +450,28 @@ export class MemoryGraph {
     const clause = node.importClause;
     if (!clause) return;
 
+    // Record the import map for cross-file call resolution
+    let importMap = this.fileImports.get(fileNode.id);
+    if (!importMap) {
+      importMap = new Map();
+      this.fileImports.set(fileNode.id, importMap);
+    }
+
     if (clause.name) {
+      importMap.set(clause.name.text, { module: modulePath, exported: 'default' });
       this.addImportNode(clause.name.text, modulePath, fileNode, node, sf);
     }
 
     if (clause.namedBindings) {
       if (ts.isNamedImports(clause.namedBindings)) {
         for (const elem of clause.namedBindings.elements) {
-          const name = (elem.propertyName || elem.name).text;
-          this.addImportNode(name, modulePath, fileNode, node, sf);
+          const exported = (elem.propertyName || elem.name).text;
+          // elem.name is the LOCAL binding (handles `import { add as plus }`)
+          importMap.set(elem.name.text, { module: modulePath, exported });
+          this.addImportNode(exported, modulePath, fileNode, node, sf);
         }
       } else if (ts.isNamespaceImport(clause.namedBindings)) {
+        importMap.set(clause.namedBindings.name.text, { module: modulePath, exported: '*' });
         this.addImportNode(clause.namedBindings.name.text, modulePath, fileNode, node, sf);
       }
     }
@@ -848,11 +882,94 @@ export class MemoryGraph {
               metadata: { line: this.tsLine(child, sf) },
               createdAt: Date.now(),
             });
+          } else {
+            // Not a local symbol — queue for cross-file resolution after all
+            // files have been processed
+            this.pendingCalls.push({
+              callerId: parentNode.id,
+              calledName,
+              line: this.tsLine(child, sf),
+              fileId: fileNode.id,
+            });
           }
         }
       }
       this.extractCalls(child, parentNode, fileNode, sf);
     });
+  }
+
+  /**
+   * Resolve a relative module specifier to a file node id, trying common
+   * extensions and index files.
+   */
+  private resolveModuleToFileId(modulePath: string, importerFileId: string): string | undefined {
+    if (!modulePath.startsWith('.')) return undefined;
+    const importerPath = importerFileId.slice('file:'.length);
+    const importerDir = importerPath.includes('/')
+      ? importerPath.slice(0, importerPath.lastIndexOf('/'))
+      : '';
+    const joined = `${importerDir}/${modulePath}`;
+    // Normalize ./ and ../ segments
+    const parts: string[] = [];
+    for (const seg of joined.split('/')) {
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') parts.pop();
+      else parts.push(seg);
+    }
+    const base = parts.join('/');
+    const candidates = [
+      base,
+      `${base}.ts`,
+      `${base}.tsx`,
+      `${base}.js`,
+      `${base}.jsx`,
+      `${base}/index.ts`,
+      `${base}/index.tsx`,
+      `${base}/index.js`,
+      `${base}/index.jsx`,
+    ];
+    // ESM convention: `import './utils.js'` often refers to `utils.ts` on disk
+    if (/\.[cm]?jsx?$/.test(base)) {
+      const noExt = base.replace(/\.[cm]?jsx?$/, '');
+      candidates.push(`${noExt}.ts`, `${noExt}.tsx`);
+    }
+    for (const cand of candidates) {
+      const id = `file:${cand}`;
+      if (this.nodes.has(id)) return id;
+    }
+    return undefined;
+  }
+
+  /**
+   * Create `calls` edges for call sites whose callee lives in an imported file.
+   */
+  private linkCrossFileCalls(): void {
+    for (const pc of this.pendingCalls) {
+      const imports = this.fileImports.get(pc.fileId);
+      if (!imports) continue;
+      const imp = imports.get(pc.calledName);
+      if (!imp) continue;
+      const exported = imp.exported === '*' ? pc.calledName : imp.exported;
+      const targetFileId = this.resolveModuleToFileId(imp.module, pc.fileId);
+      if (!targetFileId) continue;
+      const candidates = [
+        `function:${targetFileId}:${exported}`,
+        `variable:${targetFileId}:${exported}`,
+        `class:${targetFileId}:${exported}`,
+      ];
+      const target = candidates.find((c) => this.nodes.has(c));
+      if (target) {
+        this.addEdge({
+          id: `edge:${pc.callerId}:calls:${exported}@${targetFileId}`,
+          source: pc.callerId,
+          target,
+          type: 'calls',
+          metadata: { line: pc.line, crossFile: true },
+          createdAt: Date.now(),
+        });
+      }
+    }
+    this.pendingCalls = [];
   }
 
   /**

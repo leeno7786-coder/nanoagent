@@ -17,6 +17,20 @@ import type {
 // Global graph instance cache
 const graphCache: Map<string, MemoryGraph> = new Map();
 
+/** Max cached graph instances (LRU-ish: oldest insertion evicted). */
+const GRAPH_CACHE_MAX = 8;
+
+function cacheGraph(workspace: string, graph: MemoryGraph): void {
+  // Refresh insertion order on hit
+  graphCache.delete(workspace);
+  graphCache.set(workspace, graph);
+  while (graphCache.size > GRAPH_CACHE_MAX) {
+    const oldest = graphCache.keys().next().value;
+    if (oldest === undefined) break;
+    graphCache.delete(oldest);
+  }
+}
+
 /**
  * Get or create a memory graph for a workspace.
  * Always checks staleness; rebuilds automatically when the graph is outdated.
@@ -28,6 +42,7 @@ export async function getMemoryGraph(workspace: string, autoRebuild = true): Pro
   if (cached) {
     const upToDate = await cached.isUpToDate().catch(() => false);
     if (upToDate) {
+      cacheGraph(workspace, cached); // refresh LRU position
       return cached;
     }
     // Stale — fall through to load/rebuild
@@ -38,16 +53,16 @@ export async function getMemoryGraph(workspace: string, autoRebuild = true): Pro
   if (existingGraph) {
     const upToDate = await existingGraph.isUpToDate().catch(() => false);
     if (upToDate) {
-      graphCache.set(workspace, existingGraph);
+      cacheGraph(workspace, existingGraph);
       return existingGraph;
     }
     // Loaded but stale — rebuild if auto-rebuild is enabled
     if (autoRebuild) {
       await existingGraph.build();
-      graphCache.set(workspace, existingGraph);
+      cacheGraph(workspace, existingGraph);
       return existingGraph;
     }
-    graphCache.set(workspace, existingGraph);
+    cacheGraph(workspace, existingGraph);
     return existingGraph;
   }
 
@@ -56,7 +71,7 @@ export async function getMemoryGraph(workspace: string, autoRebuild = true): Pro
   if (autoRebuild) {
     await graph.build();
   }
-  graphCache.set(workspace, graph);
+  cacheGraph(workspace, graph);
   return graph;
 }
 
