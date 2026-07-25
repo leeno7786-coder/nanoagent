@@ -1,0 +1,54 @@
+# Development dependencies
+node_modules/
+src/
+*.test.ts
+*.test.tsx
+.test/
+bun.lockb
+package-lock.json
+
+# Build artifacts & caches
+*.tsbuildinfo
+.cache/
+.eslintcache
+.turbo/
+
+# Version control
+.git
+.gitignore
+.gitattributes
+.github/
+
+# IDE & editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.env
+.env.local
+.env.*.local
+
+# Build/packaging
+prerelease/
+scripts/
+*.tgz
+dist/
+
+# CI/CD
+.github/
+.npmrc
+*.yml
+*.yaml
+
+# Documentation (source only)
+docs/
+.md.bak
+
+# Other
+CODEOWNERS
+CONTRIBUTING.md
+.prettierignore
+.eslintignore
+Makefile
