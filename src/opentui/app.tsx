@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/react */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useKeyboard } from '@opentui/react';
 import type { CliRenderer } from '@opentui/core';
 import { AgentCore } from '../agent.js';
@@ -104,18 +104,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [selectedMessageIndex, setSelectedMessageIndex] = useState<number | null>(null);
-  const [page, setPage] = useState(1);
-  const [paginated, setPaginated] = useState(false);
-  const displayMessageCount = useMemo(
-    () =>
-      messages.filter(
-        (msg) =>
-          msg.role !== 'system' &&
-          msg.role !== 'tool' &&
-          !(msg.role === 'assistant' && !msg.toolCalls?.length && msg.content.trim() === '')
-      ).length,
-    [messages]
-  );
   const [skills, setSkills] = useState<Map<string, Skill>>(new Map());
   const [, setSkillCommands] = useState<SkillCommand[]>([]);
 
@@ -257,42 +245,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       }
     };
   }, []);
-
-  // Auto-enable pagination when messages exceed threshold
-  const PAGINATION_THRESHOLD = 100;
-  const MESSAGES_PER_PAGE = 50;
-  const totalPages = paginated
-    ? Math.max(1, Math.ceil(displayMessageCount / MESSAGES_PER_PAGE))
-    : 1;
-
-  useEffect(() => {
-    const shouldPaginate = messages.length > PAGINATION_THRESHOLD;
-    setPaginated(shouldPaginate);
-    if (!shouldPaginate) {
-      setPage(1);
-    }
-  }, [messages.length]);
-
-  // Clamp page if totalPages shrinks
-  useEffect(() => {
-    if (page > totalPages) {
-      setPage(Math.max(1, totalPages));
-    }
-  }, [totalPages, page]);
-
-  // Auto-advance to latest page when new messages arrive or when agent is active
-  useEffect(() => {
-    if (paginated && state !== 'idle') {
-      setPage(totalPages);
-    }
-  }, [displayMessageCount, totalPages, paginated, state]);
-
-  // Auto-enable pagination when message count exceeds 30 to prevent terminal layout overflow
-  useEffect(() => {
-    if (displayMessageCount > 30 && !paginated) {
-      setPaginated(true);
-    }
-  }, [displayMessageCount, paginated]);
 
   // Auto-save session periodically
   useEffect(() => {
@@ -861,10 +813,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               totalUsage={totalUsage}
               subAgents={subAgents}
               onSubmit={handleSubmit}
-              paginated={paginated}
-              page={page}
-              totalPages={paginated ? Math.ceil(displayMessageCount / MESSAGES_PER_PAGE) : 1}
-              onPageChange={setPage}
               selectedMessageIndex={selectedMessageIndex}
             />
           </box>

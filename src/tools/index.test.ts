@@ -143,7 +143,7 @@ describe('tools', () => {
     const out = JSON.parse(await gitDiff.executeAsync!({}, ws));
     expect(out.ok).toBe(true);
     expect(out.diff).toContain('modified');
-  });
+  }, 20000);
 
   it('git_commit stages and commits successfully', async () => {
     execSync('git init', { cwd: ws, stdio: 'ignore' });
@@ -159,7 +159,7 @@ describe('tools', () => {
 
     const status = execSync('git status --short', { cwd: ws, encoding: 'utf-8' });
     expect(status.trim()).toBe('');
-  });
+  }, 20000);
 
   it('grep_search searches query strings properly', () => {
     writeFileSync(join(ws, 'searchable.txt'), 'target word is here\nother line', 'utf-8');

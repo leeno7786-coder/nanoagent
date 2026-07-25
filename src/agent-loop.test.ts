@@ -296,7 +296,14 @@ describe('AgentCore run loop (behavioral)', () => {
   });
 
   it('asks for consent once per session before explore_subagent dispatch', async () => {
-    const agent = newAgent();
+    const agent = newAgent(
+      makeConfig(ws, {
+        // Pool explicitly disabled: resolveSubAgentPool returns undefined
+        // instantly instead of probing the real local LM Studio (slow).
+        // Consent is still requested BEFORE the pool check fails.
+        subagents: { enabled: false, endpoints: [] },
+      } as Partial<Config>)
+    );
     await agent.init();
 
     let promptCount = 0;
@@ -325,7 +332,7 @@ describe('AgentCore run loop (behavioral)', () => {
     // Prompted on the first dispatch only
     expect(promptCount).toBe(1);
     expect(agent.state).toBe('idle');
-  });
+  }, 15000);
 
   it('respects a denied explore_subagent consent', async () => {
     const agent = newAgent();

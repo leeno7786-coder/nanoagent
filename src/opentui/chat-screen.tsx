@@ -36,10 +36,6 @@ interface ChatScreenProps {
   }>;
   onSubmit: (text: string) => void;
   selectedMessageIndex?: number | null;
-  page?: number;
-  totalPages?: number;
-  paginated?: boolean;
-  onPageChange?: (page: number) => void;
 }
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -123,7 +119,6 @@ const ARG_BEARING = new Set([
   '/skill',
   '/skills',
 ]);
-const MESSAGES_PER_PAGE = 50;
 const DIFF_PROPS = {
   view: 'unified' as const,
   syntaxStyle,
@@ -150,10 +145,6 @@ export function ChatScreen({
   onSubmit,
   subAgents = [],
   selectedMessageIndex = null,
-  page = 1,
-  totalPages = 1,
-  paginated = false,
-  onPageChange,
 }: ChatScreenProps) {
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef<ScrollBoxRenderable>(null);
@@ -186,6 +177,17 @@ export function ChatScreen({
       const scrollbox = scrollRef.current;
       if (!scrollbox) return;
 
+      if (keyEvent.name === 'pageup' || keyEvent.name === 'PageUp') {
+        scrollbox.scrollBy(-0.5, 'viewport');
+        keyEvent.preventDefault?.();
+        return;
+      }
+      if (keyEvent.name === 'pagedown' || keyEvent.name === 'PageDown') {
+        scrollbox.scrollBy(0.5, 'viewport');
+        keyEvent.preventDefault?.();
+        return;
+      }
+
       if (keyEvent.shift) {
         if (keyEvent.name === 'up' || keyEvent.name === 'ArrowUp') {
           scrollbox.scrollBy(-1, 'content');
@@ -201,16 +203,6 @@ export function ChatScreen({
           keyEvent.preventDefault?.();
         }
         return;
-      }
-
-      if (paginated && onPageChange && totalPages > 1) {
-        if (keyEvent.name === 'pageup' || keyEvent.name === 'PageUp') {
-          onPageChange(Math.max(1, page - 1));
-          keyEvent.preventDefault?.();
-        } else if (keyEvent.name === 'pagedown' || keyEvent.name === 'PageDown') {
-          onPageChange(Math.min(totalPages, page + 1));
-          keyEvent.preventDefault?.();
-        }
       }
     },
     { release: false }
@@ -248,21 +240,14 @@ export function ChatScreen({
     [messages, state]
   );
 
-  const visibleMessages = useMemo(() => {
-    if (!paginated) {
-      if (filteredMessages.length > 25) {
-        return filteredMessages.slice(-25);
-      }
-      return filteredMessages;
-    }
-    const safePage = Math.min(Math.max(1, page), totalPages);
-    const start = (safePage - 1) * MESSAGES_PER_PAGE;
-    const slice = filteredMessages.slice(start, start + MESSAGES_PER_PAGE);
-    if (slice.length === 0 && filteredMessages.length > 0) {
-      return filteredMessages.slice(-MESSAGES_PER_PAGE);
-    }
-    return slice;
-  }, [filteredMessages, paginated, page, totalPages]);
+  const visibleMessages = useMemo(
+    // Continuous feed: render the full history. The scrollbox uses
+    // stickyScroll (follows the stream, releases when the user scrolls up)
+    // and viewportCulling (only visible children render), so long sessions
+    // stay fast without any pagination/windowing.
+    () => filteredMessages,
+    [filteredMessages]
+  );
 
   const showBusy = busy && !(state === 'executing_tool' && currentTool);
 
@@ -275,16 +260,6 @@ export function ChatScreen({
       }
     }
   }, [selectedMessageIndex]);
-
-  useEffect(() => {
-    if (scrollRef.current && busy) {
-      try {
-        (scrollRef.current as { scrollToBottom?: () => void }).scrollToBottom?.();
-      } catch {
-        /* scroll target may not exist yet */
-      }
-    }
-  }, [filteredMessages.length, page, currentTool, busy]);
 
   return (
     <box
@@ -308,15 +283,15 @@ export function ChatScreen({
         paddingY={1}
         stickyScroll={true}
         stickyStart="bottom"
+        viewportCulling={true}
         wrapperOptions={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0 }}
         viewportOptions={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, minHeight: 0 }}
       >
         {visibleMessages.map((msg, index) => {
-          const globalIndex = paginated ? (page - 1) * MESSAGES_PER_PAGE + index : index;
-          const isSelected = selectedMessageIndex === globalIndex;
+          const isSelected = selectedMessageIndex === index;
           return (
             <ErrorBoundary key={msg.id} theme={theme}>
-              <box id={`msg-${globalIndex}`} flexDirection="column">
+              <box id={`msg-${index}`} flexDirection="column">
                 <MessageItem
                   message={msg}
                   theme={theme}
@@ -337,20 +312,6 @@ export function ChatScreen({
           <SubAgentPanel subAgents={subAgents} theme={theme} elapsedMs={elapsedMs} />
         </ErrorBoundary>
       </scrollbox>
-
-      {paginated && totalPages > 1 && (
-        <box
-          flexDirection="row"
-          height={1}
-          flexShrink={0}
-          paddingX={2}
-          backgroundColor={theme.bgPanel}
-        >
-          <text fg={theme.mutedFg}>
-            Page {page}/{totalPages} · PgUp/PgDn to change page · Shift+↑/↓ to scroll
-          </text>
-        </box>
-      )}
 
       <CommandDropdown
         inputValue={inputValue}
