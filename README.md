@@ -28,31 +28,48 @@ An ultra-lightweight, scalable CLI/TUI coding agent built from the ground up to 
 
 ## 🚀 Quick Start & Installation
 
-### Option 1: Global Install via Local Repo / Tarball (Recommended)
+### Option 1: Install Globally via NPM (Recommended)
+Run this single command on any machine:
 ```bash
-# In your repo folder:
-npm install -g .
+npm install -g @omega3_0/nanoagent
+```
 
-# Or install from release tarball:
-wget https://github.com/leeno7786-coder/nanoagent/raw/main/nanoagent-1.1.0-alpha.1.tgz
-npm install -g ./nanoagent-1.1.0-alpha.1.tgz
+### Option 2: Direct GitHub One-Liner Install
+Install directly from the GitHub repository on any PC:
+```bash
+npm install -g https://github.com/leeno7786-coder/nanoagent.git
+```
 
-# Launch instantly:
+### Option 3: Zero-Install via `npx`
+```bash
+npx @omega3_0/nanoagent
+```
+
+### Option 4: Build & Link from Source
+```bash
+git clone https://github.com/leeno7786-coder/nanoagent.git
+cd qwen-agent-tui
+npm install
+npm run build
+npm link --force
+```
+
+---
+
+## ⚡ Launch Command (`nanoagent`)
+
+Once installed, launch NanoAgent from **any directory or terminal window** on your machine using the single command word:
+
+```bash
 nanoagent
 ```
 
-### Option 2: Run via `npx`
-```bash
-npx nanoagent
-```
-
-### Option 3: Build from Source (Bun)
-```bash
-git clone https://github.com/leeno7786-coder/nanoagent.git
-cd nanoagent
-bun install
-bun run start
-```
+### CLI Command Options
+- **`nanoagent`** — Launch interactive TUI coding session in your current directory
+- **`nanoagent tui`** — Force interactive TUI mode
+- **`nanoagent run --prompt "your task"`** — Run headless non-interactive task
+- **`nanoagent models`** — List available local & remote LLM models
+- **`nanoagent doctor`** — Run environment & runtime health check
 
 ---
 
