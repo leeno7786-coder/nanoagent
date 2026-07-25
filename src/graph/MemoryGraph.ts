@@ -25,6 +25,7 @@ import {
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import * as ts from 'typescript';
+import { logError, logInfo, logWarn } from '../log.js';
 
 const GRAPH_VERSION = '1.0.0';
 const GRAPH_DIRECTORY = '.qwen-graph';
@@ -109,7 +110,7 @@ export class MemoryGraph {
 
       return graph;
     } catch (error) {
-      console.error('Error loading memory graph:', error);
+      logError('Error loading memory graph:', error);
       return null;
     }
   }
@@ -258,7 +259,7 @@ export class MemoryGraph {
    * Build the graph from source code
    */
   async build(): Promise<void> {
-    console.log('Building memory graph...');
+    logInfo('Building memory graph...');
     const startTime = Date.now();
 
     // Clear existing graph
@@ -273,13 +274,13 @@ export class MemoryGraph {
 
     // Find and process all files
     const files = this.findFiles(this.workspace);
-    console.log(`Found ${files.length} files to index`);
+    logInfo(`Found ${files.length} files to index`);
 
     for (const file of files) {
       try {
         await this.processFile(file);
       } catch (err: unknown) {
-        console.warn(`Error processing file ${file}:`, (err as { message?: string }).message);
+        logWarn(`Error processing file ${file}:`, (err as { message?: string }).message);
       }
     }
 
@@ -289,8 +290,8 @@ export class MemoryGraph {
     // Save the graph
     await this.save();
 
-    console.log(`Memory graph built in ${Date.now() - startTime}ms`);
-    console.log(`Nodes: ${this.nodes.size}, Edges: ${this.edges.size}`);
+    logInfo(`Memory graph built in ${Date.now() - startTime}ms`);
+    logInfo(`Nodes: ${this.nodes.size}, Edges: ${this.edges.size}`);
   }
 
   /**
@@ -1074,7 +1075,7 @@ export class MemoryGraph {
     const hashes = await this.computeFileHashes();
     writeFileSync(join(this.graphDir, HASH_FILE), JSON.stringify(hashes, null, 2));
 
-    console.log(`Memory graph saved to ${this.graphDir}`);
+    logInfo(`Memory graph saved to ${this.graphDir}`);
   }
 
   /**

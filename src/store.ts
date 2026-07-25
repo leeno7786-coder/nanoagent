@@ -3,6 +3,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'module';
 import type { Todo, Session, Message, Config } from './types.js';
+import { logError } from './log.js';
 
 export function buildConfigSnapshot(cfg: Config): Partial<Config> {
   return {
@@ -51,7 +52,7 @@ export function autoSaveSession(
   try {
     writeFileSync(join(SESSION_DIR, `${id}.json`), JSON.stringify(session, null, 2), 'utf-8');
   } catch (error) {
-    console.error('Failed to auto-save session:', error);
+    logError('Failed to auto-save session:', error);
   }
   return id;
 }
@@ -94,7 +95,7 @@ export function saveSession(session: Session): string {
       'utf-8'
     );
   } catch (error) {
-    console.error('Failed to save session:', error);
+    logError('Failed to save session:', error);
   }
   return session.id;
 }

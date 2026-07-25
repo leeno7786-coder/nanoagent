@@ -2,11 +2,46 @@ import type { Config } from '../types.js';
 
 import type { Tool } from './shared.js';
 import { checkSmallModel } from './shared.js';
-import { changeWorkspaceTool, batchReadFilesTool, readFileTool, writeFileTool, editFileTool, editFileLinesTool, listDirTool, statPathTool } from './file-tools.js';
-import { mapProjectTreeTool, searchAndViewTool, findFilesTool, grepSearchTool } from './search-tools.js';
+import {
+  changeWorkspaceTool,
+  batchReadFilesTool,
+  readFileTool,
+  writeFileTool,
+  editFileTool,
+  editFileLinesTool,
+  listDirTool,
+  statPathTool,
+} from './file-tools.js';
+import {
+  mapProjectTreeTool,
+  searchAndViewTool,
+  findFilesTool,
+  grepSearchTool,
+} from './search-tools.js';
 import { gitDiffTool, gitStatusTool, gitCommitTool } from './git-tools.js';
-import { executeCommandTool, runTestsTool, installDependenciesTool, runCommandTool, typecheckTool } from './exec-tools.js';
-import { buildMemoryGraphTool, queryMemoryGraphTool, getGraphStatsTool, searchNodesByTypeTool, searchNodesByNameTool, searchNodesByPathTool, findDependenciesTool, findPathTool, patternSearchTool, getFileInfoTool, getCommunitiesTool, getGodNodesTool, getSurprisingConnectionsTool, getAnalysisReportTool } from './graph-tools.js';
+import {
+  executeCommandTool,
+  runTestsTool,
+  installDependenciesTool,
+  runCommandTool,
+  typecheckTool,
+} from './exec-tools.js';
+import {
+  buildMemoryGraphTool,
+  queryMemoryGraphTool,
+  getGraphStatsTool,
+  searchNodesByTypeTool,
+  searchNodesByNameTool,
+  searchNodesByPathTool,
+  findDependenciesTool,
+  findPathTool,
+  patternSearchTool,
+  getFileInfoTool,
+  getCommunitiesTool,
+  getGodNodesTool,
+  getSurprisingConnectionsTool,
+  getAnalysisReportTool,
+} from './graph-tools.js';
 import { manageTodosTool, exploreSubagentTool } from './misc-tools.js';
 
 /** Shorter tool descriptions for ≤8B models (full params stay in JSON schema). */

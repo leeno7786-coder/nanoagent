@@ -1,11 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from 'fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 
 import { fileChangeDiff } from '../lib/file-diff.js';
@@ -99,7 +92,8 @@ export const batchReadFilesTool: Tool = {
           const sliced = truncate(text, isSmall ? SMALL_MODEL_READ_LIMIT : DEFAULT_READ_LIMIT);
           const finalContent =
             sliced.content.length > MAX_READ_CHARS
-              ? sliced.content.slice(0, MAX_READ_CHARS) + `\n... [truncated: ${sliced.content.length - MAX_READ_CHARS} characters omitted]`
+              ? sliced.content.slice(0, MAX_READ_CHARS) +
+                `\n... [truncated: ${sliced.content.length - MAX_READ_CHARS} characters omitted]`
               : sliced.content;
           results[rawPath] = {
             ok: true,
@@ -132,8 +126,7 @@ export const readFileTool: Tool = {
       },
       end_line: {
         type: 'number',
-        description:
-          'Line to stop reading at (1-indexed, optional, defaults to start_line + 100)',
+        description: 'Line to stop reading at (1-indexed, optional, defaults to start_line + 100)',
       },
       numbered: {
         type: 'boolean',
@@ -175,7 +168,8 @@ export const readFileTool: Tool = {
         : sliced.join('\n');
       const safeContent =
         content.length > MAX_READ_CHARS
-          ? content.slice(0, MAX_READ_CHARS) + `\n... [truncated: ${content.length - MAX_READ_CHARS} characters omitted]`
+          ? content.slice(0, MAX_READ_CHARS) +
+            `\n... [truncated: ${content.length - MAX_READ_CHARS} characters omitted]`
           : content;
       return JSON.stringify({
         ok: true,

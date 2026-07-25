@@ -1,65 +1,55 @@
-import { createClient, chat, streamChat, isLocalProvider } from './llm.js';
+import { createClient, chat, streamChat } from './llm.js';
 import type { ChatMessage } from './llm.js';
 import {
   toOpenAI,
-  type ToolExecutionHooks,
   ToolCacheManager,
   createToolCacheManager,
   groupToolsForParallelExecution,
-  registerExternalTools,
   getAllTools,
-  findTool,
 } from './tools/index.js';
 import type { SubAgentProgressEvent } from './tools/index.js';
-import { detectContext } from './context.js';
 import { SkillManager } from './skill-manager.js';
-import { loadSkills } from './skills.js';
-import { buildSystemPrompt } from './prompt.js';
-import { enrichConfigWithRuntime, isSmallModelFromConfig } from './model-runtime.js';
-import { loadConfig, applySubAgentDefaults } from './config.js';
 import type { Config, Message, ToolResult, AgentState, Todo } from './types.js';
-import { subAgentAvailable } from './tools/index.js';
-import {
-  resolveSubAgentPool,
-  exploreWithSubAgent,
-  formatSubAgentResults,
-  type SubAgentResult,
-} from './subagents.js';
+import { resolveSubAgentPool } from './subagents.js';
 import { ContextManager, createContextManager } from './context/manager.js';
 import { SecurityManager, createSecurityManager, type PermissionRequest } from './security/index.js';
 import { McpManager, createMcpManager } from './mcp/index.js';
-import { autoSaveSession } from './store.js';
 import type { McpServerState } from './types.js';
+import { rnd, now } from './agent-utils.js';
+import {
+  reconfigureAgent,
+  applyRuntimeProfile,
+  reloadAgentFromDisk,
+  initAgent,
+  shutdownAgent,
+} from './agent-lifecycle.js';
+import {
+  spawnBackgroundSubAgent,
+  awaitAllBackgroundSubAgents,
+  getSubAgentSnapshot,
+  type BackgroundSubAgent,
+  type SubAgentSnapshot,
+} from './agent-subagents.js';
+import { executeToolDirect, executeToolSequential, executeToolsParallel } from './agent-tools.js';
+import { addTodo, toggleTodo, removeTodo } from './agent-todos.js';
+import {
+  toChatMessages,
+  addAssistantMessage,
+  addUserMessage,
+  checkAndCompactContext,
+} from './agent-messages.js';
+import { logError } from './log.js';
 
 const MAX_REASONING_ONLY = 5;
 
-/**
- * Detached background sub-agent handle.
- *
- * Each `explore_subagent` call launches one of these as a fire-and-forget
- * task. Progress streams through `ToolExecutionHooks.onSubAgentProgress`.
- * The run loop blocks in `awaitAllBackgroundSubAgents` until every handle
- * resolves before it synthesises the results.
- */
-interface BackgroundSubAgent {
-  id: string;
-  prompt: string;
-  focusPath?: string;
-  status: 'running' | 'done' | 'error';
-  /** Accumulated streamed progress events (full live transcript). */
-  log?: SubAgentProgressEvent[];
-  result?: SubAgentResult;
-  promise: Promise<void>;
-  resolve: (value: void) => void;
-  reject: (reason?: unknown) => void;
-}
 
 /**
  * Core agent orchestrator: manages conversation state, tool execution,
  * and the agent lifecycle.
  */
 export class AgentCore {
-  private client: ReturnType<typeof createClient>;
+  /** @internal Mutated by agent-lifecycle module functions. */
+  client: ReturnType<typeof createClient>;
   cfg: Config;
   public messages: Message[] = [];
   public state: AgentState = 'idle';
@@ -112,7 +102,8 @@ export class AgentCore {
   }
 
   /** Resolve the remote sub-agent pool, memoized against the relevant config. */
-  private async getSubAgentPool() {
+  /** @internal Used by the agent-subagents module. */
+  async getSubAgentPool() {
     const key = JSON.stringify({
       s: this.cfg.subagents,
       sb: this.cfg.subAgentBaseURL,
@@ -128,18 +119,19 @@ export class AgentCore {
   public onToolResult?: (r: ToolResult) => void;
   /** Permission request callback for interactive user confirmation. */
   public onPermissionRequest?: (req: PermissionRequest) => Promise<'allow' | 'always_allow' | 'deny'>;
-  /** Enable streaming mode — assistant content updates in real-time. */
+  /** Enable streaming mode â€” assistant content updates in real-time. */
   public streaming = true;
   /** Round counter and maximum rounds before stopping. */
   public roundCounter: number = 0;
   public maxRounds: number = 30;
   /** Whether the current model is a small/quantized model (stored from init). */
-  private _smallModel: boolean = false;
+  /** @internal Written by agent-lifecycle; read publicly via isSmallModel. */
+  _smallModel: boolean = false;
   /** Public accessor for small model flag (used by TUI skill operations). */
   get isSmallModel(): boolean {
     return this._smallModel;
   }
-  /** Skills manager — load, unload, and sync skill prompts. */
+  /** Skills manager â€” load, unload, and sync skill prompts. */
   public skillManager: SkillManager = new SkillManager();
   /** Tool execution cache manager. */
   public toolCache: ToolCacheManager;
@@ -163,22 +155,8 @@ export class AgentCore {
    * Snapshot of the live background sub-agent handles for the TUI. Returns a
    * plain array (not the internal Map) so React state updates correctly.
    */
-  getSubAgentSnapshot(): Array<{
-    id: string;
-    prompt: string;
-    focusPath?: string;
-    status: 'running' | 'done' | 'error';
-    log?: SubAgentProgressEvent[];
-    result?: SubAgentResult;
-  }> {
-    return [...this.backgroundSubAgents.values()].map((h) => ({
-      id: h.id,
-      prompt: h.prompt,
-      focusPath: h.focusPath,
-      status: h.status,
-      log: h.log || [],
-      result: h.result,
-    }));
+  getSubAgentSnapshot(): SubAgentSnapshot[] {
+    return getSubAgentSnapshot(this);
   }
 
   getBackgroundSubAgents() {
@@ -216,73 +194,14 @@ export class AgentCore {
    * Reconfigure the agent (refreshes LM Studio model metadata when model/URL changes).
    */
   async reconfigure(newCfg: Partial<Config>) {
-    const modelChanged = newCfg.model !== undefined || newCfg.baseURL !== undefined;
-    const workspaceChanged = newCfg.workspace !== undefined;
-
-    this.cfg = { ...this.cfg, ...newCfg };
-    applySubAgentDefaults(this.cfg);
-
-    // Update cache configuration if relevant options changed
-    if (
-      newCfg.toolCacheEnabled !== undefined ||
-      newCfg.toolCacheTtlMs !== undefined ||
-      newCfg.toolCacheMaxSize !== undefined ||
-      workspaceChanged
-    ) {
-      this.toolCache.stopAllWatchers();
-      this.toolCache = createToolCacheManager(this.cfg, this.cfg.workspace);
-    }
-
-    // Clear cache if workspace changed
-    if (workspaceChanged) {
-      this.toolCache.clear();
-    }
-
-    // Update context manager if model changed
-    if (modelChanged) {
-      this.contextManager.updateModel(this.cfg);
-      await this.applyRuntimeProfile();
-    } else {
-      this.client = createClient(this.cfg);
-    }
-
-    // Update security manager if workspace changed
-    if (workspaceChanged) {
-      this.securityManager.setWorkspace(this.cfg.workspace);
-    }
-
-    // Always preserve security manager reference on config
-    this.cfg.securityManager = this.securityManager;
-
-    // Update security config if relevant options changed
-    if (
-      newCfg.securityEnabled !== undefined ||
-      newCfg.securityValidateCommands !== undefined ||
-      newCfg.securityValidateFileAccess !== undefined ||
-      newCfg.securitySanitizeOutput !== undefined ||
-      newCfg.securityMaxFileSize !== undefined ||
-      newCfg.securityMaxBatchFiles !== undefined
-    ) {
-      this.securityManager.updateConfig({
-        enabled: this.cfg.securityEnabled,
-        validateCommands: this.cfg.securityValidateCommands,
-        validateFileAccess: this.cfg.securityValidateFileAccess,
-        sanitizeOutput: this.cfg.securitySanitizeOutput,
-        maxFileSize: this.cfg.securityMaxFileSize,
-        maxBatchFiles: this.cfg.securityMaxBatchFiles,
-        allowedPaths: this.cfg.securityAllowedPaths,
-        blockedPaths: this.cfg.securityBlockedPaths,
-      });
-    }
+    return reconfigureAgent(this, newCfg);
   }
 
   /**
    * Query LM Studio (or other local runtime) for loaded context and parameter count.
    */
   async applyRuntimeProfile() {
-    this.cfg = await enrichConfigWithRuntime(this.cfg);
-    this._smallModel = isSmallModelFromConfig(this.cfg);
-    this.client = createClient(this.cfg);
+    return applyRuntimeProfile(this);
   }
 
   /**
@@ -290,36 +209,7 @@ export class AgentCore {
    * Keeps the current in-session workspace (e.g. after /cd).
    */
   async reloadFromDisk() {
-    const fresh = loadConfig();
-    const workspace = this.cfg.workspace;
-    this.cfg = {
-      ...this.cfg,
-      baseURL: fresh.baseURL,
-      model: fresh.model,
-      apiKey: fresh.apiKey,
-      maxIterations: fresh.maxIterations,
-      maxTokens: fresh.maxTokens,
-      temperature: fresh.temperature,
-      smallModelMode: fresh.smallModelMode,
-      subAgentModel: fresh.subAgentModel,
-      subAgentBaseURL: fresh.subAgentBaseURL,
-      subAgentApiKey: fresh.subAgentApiKey,
-      subAgentEnabled: fresh.subAgentEnabled,
-      toolCacheEnabled: fresh.toolCacheEnabled,
-      toolCacheTtlMs: fresh.toolCacheTtlMs,
-      toolCacheMaxSize: fresh.toolCacheMaxSize,
-      workspace,
-    };
-    applySubAgentDefaults(this.cfg);
-
-    // Recreate cache manager with new config
-    this.toolCache.stopAllWatchers();
-    this.toolCache = createToolCacheManager(this.cfg);
-
-    // Preserve security manager across config reload
-    this.cfg.securityManager = this.securityManager;
-
-    await this.applyRuntimeProfile();
+    return reloadAgentFromDisk(this);
   }
 
   /**
@@ -327,121 +217,7 @@ export class AgentCore {
    * and push the system message.
    */
   async init() {
-    await this.applyRuntimeProfile();
-
-    // Connect to MCP servers if configured.
-    // SECURITY: MCP servers defined in a PROJECT-LOCAL config (a repo the user
-    // just opened) are NOT auto-connected — a malicious repo could spawn
-    // arbitrary processes or exfiltrate env vars via {env:...} headers.
-    // Trusted sources: global (home-dir) configs, an explicit config path, or
-    // NANOGENT_TRUST_PROJECT_MCP=1.
-    if (this.cfg.mcp && Object.keys(this.cfg.mcp).length > 0) {
-      const { homedir } = await import('os');
-      const source = this.cfg.configFilePath;
-      const isProjectConfig = !!source && !source.startsWith(homedir());
-      const trustOverride = process.env.NANOGENT_TRUST_PROJECT_MCP === '1';
-
-      if (isProjectConfig && !trustOverride) {
-        this.mcpStates = Object.keys(this.cfg.mcp).map((name) => ({
-          name,
-          status: 'disabled' as const,
-          toolCount: 0,
-          error: 'blocked: MCP servers from project configs are not auto-connected (untrusted source)',
-        }));
-        console.warn(
-          `[security] Skipped auto-connecting ${this.mcpStates.length} MCP server(s) from project config ${source}. ` +
-            `Move the "mcp" block to your global config (~/.nanogent.json) or set NANOGENT_TRUST_PROJECT_MCP=1 to allow it.`
-        );
-      } else {
-        this.mcpStates = await this.mcpManager.connectAll();
-        const mcpTools = this.mcpManager.getTools();
-        registerExternalTools(mcpTools);
-        if (process.env.QWEN_DEBUG_LLM) {
-          console.error(
-            '[QWEN_DEBUG] MCP:',
-            this.mcpManager.connectedCount,
-            'servers,',
-            this.mcpManager.totalTools,
-            'tools'
-          );
-        }
-      }
-    }
-
-    const ctx = detectContext(this.cfg.workspace);
-    const allSkills = loadSkills();
-    this.skillManager = new SkillManager();
-
-    // Populate activeSkills with enabled skills (always-active from config)
-    for (const [name, skill] of allSkills) {
-      if (skill.enabled === true || this.cfg.systemPrompt?.includes(`skill:${name}`)) {
-        this.skillManager.activeSkills.set(name, skill);
-      }
-    }
-
-    const skillInfos =
-      allSkills.size > 0
-        ? Array.from(allSkills.values()).map((s) => ({
-            name: s.name,
-            desc: (s.description || '').slice(0, 120),
-          }))
-        : undefined;
-
-    let system = buildSystemPrompt(this.cfg, {
-      workspace: this.cfg.workspace,
-      branch: ctx.isGit ? ctx.branch : undefined,
-      skillNames: allSkills.size > 0 ? Array.from(allSkills.keys()) : undefined,
-      skillInfos,
-      allowedPaths: this.cfg.allowedPaths,
-    });
-    if (this.cfg.modelContextLength) {
-      const ctxK = Math.round(this.cfg.modelContextLength / 1000);
-      const param =
-        this.cfg.modelParamBillions !== undefined
-          ? ` · ~${this.cfg.modelParamBillions}B params`
-          : '';
-      system += `\n\n## Runtime\n${ctxK}k context loaded${param}.`;
-    }
-    if (subAgentAvailable(this.cfg) && !this._smallModel) {
-      const subBase = this.cfg.subAgentBaseURL ?? this.cfg.baseURL;
-      const providerName = subBase.toLowerCase().includes('mistral.ai')
-        ? 'Mistral'
-        : subBase.toLowerCase().includes('openrouter.ai')
-          ? 'OpenRouter'
-          : isLocalProvider(subBase)
-            ? 'Local'
-            : 'Cloud';
-      system += `\nSub-agents: ${providerName} \`${this.cfg.subAgentModel}\` — explore_subagent (emit up to 4 in one message for parallel dispatch). Give each a NARROW task with specific file paths. They batch-read files and report structured findings. Sub-agent dispatches are synchronous — when explore_subagent returns, the batch is done. Synthesize immediately.`;
-    }
-    if (this.mcpManager.totalTools > 0) {
-      const serverNames = this.mcpStates
-        .filter((s) => s.status === 'connected')
-        .map((s) => `${s.name} (${s.toolCount} tools)`)
-        .join(', ');
-      system += `\nMCP tools connected: ${serverNames}. MCP tool names are prefixed with "mcp_<server>_".`;
-    }
-    this.messages = [{ id: 'system-base', role: 'system', content: system, timestamp: now() }];
-    this.syncTodoMessage();
-    this.skillManager.syncSkillMessages(this.messages, this._smallModel);
-
-    // Seed the context manager with the system prompt (which includes active
-    // skill prompts) so token accounting and post-compaction sync keep it.
-    // Compaction preserves leading system messages.
-    const baseMsg = this.messages.find((m) => m.id === 'system-base');
-    if (baseMsg) {
-      this.contextManager.setMessages([baseMsg]);
-    }
-
-    // Debug: log model detection info
-    if (process.env.QWEN_DEBUG_LLM) {
-      console.error('[QWEN_DEBUG] agent init:', {
-        model: this.cfg.model,
-        smallModelMode: this.cfg.smallModelMode,
-        modelParamBillions: this.cfg.modelParamBillions,
-        _smallModel: this._smallModel,
-        promptPreview: system.substring(0, 100) + '...',
-      });
-    }
+    return initAgent(this);
   }
 
   /**
@@ -463,7 +239,7 @@ export class AgentCore {
       );
       if (autoLoaded.length > 0) {
         const names = autoLoaded.map((s) => s.name).join(', ');
-        this.addAssistantMessage(`Auto-loaded skills: ${names} — these are now active in context.`);
+        this.addAssistantMessage(`Auto-loaded skills: ${names} â€” these are now active in context.`);
       }
     }
 
@@ -472,7 +248,7 @@ export class AgentCore {
       this.addAssistantMessage(
         this._smallModel
           ? "Let's create a custom skill. Provide:\n1. What the skill does\n2. Slash command (e.g. /py-format)\n3. Which tools it needs\n4. Description and prompt"
-          : "🔧 Let's create a custom skill together.\n" +
+          : "ðŸ”§ Let's create a custom skill together.\n" +
               "1. What should the skill do? (e.g., 'format Python code', 'review PRs')\n" +
               '2. What slash command should users type? (e.g., `/py-format`, `/pr-review`)\n' +
               '3. Which tools does it need? (e.g., `write_file`, `bash`, `grep_search`)\n' +
@@ -525,7 +301,7 @@ export class AgentCore {
       const all = sm.getAllWithStatus();
       const lines = ['## Available Skills', ''];
       for (const s of all) {
-        lines.push(`- /skill:${s.name} — ${s.description}${s.active ? ' (active)' : ''}`);
+        lines.push(`- /skill:${s.name} â€” ${s.description}${s.active ? ' (active)' : ''}`);
       }
       this.addAssistantMessage(lines.join('\n'));
       return;
@@ -563,7 +339,7 @@ export class AgentCore {
       if (this.mcpStates.length === 0) {
         this.addAssistantMessage(
           'No MCP servers configured. Add `mcp` to ~/.nanogent.json.\n\n' +
-            'Example:\n```json\n"mcp": {\n  "filesystem": {\n    "type": "local",\n    "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]\n  },\n  "remote": {\n    "type": "remote",\n    "url": "https://mcp.example.com/sse"\n  }\n}\n```\n\nYou can also ask me to add an MCP server — just describe what you need and I\'ll use manage_mcp to configure it.'
+            'Example:\n```json\n"mcp": {\n  "filesystem": {\n    "type": "local",\n    "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]\n  },\n  "remote": {\n    "type": "remote",\n    "url": "https://mcp.example.com/sse"\n  }\n}\n```\n\nYou can also ask me to add an MCP server â€” just describe what you need and I\'ll use manage_mcp to configure it.'
         );
       } else {
         const lines = [
@@ -645,7 +421,7 @@ export class AgentCore {
       const name = trimmed.slice('/mcp-remove'.length).trim();
       if (!name) {
         this.addAssistantMessage(
-          'Usage: `/mcp-remove <server-name>` — e.g. `/mcp-remove filesystem`'
+          'Usage: `/mcp-remove <server-name>` â€” e.g. `/mcp-remove filesystem`'
         );
       } else {
         const toolResult = await this.executeToolDirect('manage_mcp', { action: 'remove', name });
@@ -734,7 +510,7 @@ export class AgentCore {
 
             // DEBUG: trace every chunk
             if (process.env.QWEN_DEBUG_LLM) {
-              console.error(
+              logError(
                 '[QWEN_DEBUG] agent chunk:',
                 JSON.stringify(chunk.content),
                 'reasoning:',
@@ -1041,7 +817,7 @@ export class AgentCore {
                 this.todos.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n')
               : '';
           this.addAssistantMessage(
-            `🤝 **Check-in with User** (${checkinLimit} continuous tool rounds completed):\n` +
+            `ðŸ¤ **Check-in with User** (${checkinLimit} continuous tool rounds completed):\n` +
               `I've completed several execution steps on your request.${todoSummary}\n\n` +
               `Pausing to confer with you before continuing. Would you like me to keep going, or do you have any feedback/adjustments?`
           );
@@ -1079,123 +855,9 @@ export class AgentCore {
    * `awaitAllBackgroundSubAgents` until every task resolves.
    */
   spawnBackgroundSubAgent(prompt: string, focusPath?: string): string {
-    if (this.backgroundSubAgents.size >= this.maxBackgroundSubAgents) {
-      return JSON.stringify({
-        ok: false,
-        error: `Sub-agent pool busy (${this.backgroundSubAgents.size}/${this.maxBackgroundSubAgents}). Wait for the current batch to finish.`,
-      });
-    }
-
-    const id = `sa-${rnd()}`;
-    let resolveFn!: (value: void) => void;
-    let rejectFn!: (reason?: unknown) => void;
-    const promise = new Promise<void>((res, rej) => {
-      resolveFn = res;
-      rejectFn = rej;
-    });
-
-    const handle: BackgroundSubAgent = {
-      id,
-      // Store the ORIGINAL prompt for display in the live TUI stream. The
-      // shared-context block is injected only into the worker task below, so it
-      // never shows up in the chat.
-      prompt,
-      focusPath,
-      status: 'running',
-      promise,
-      resolve: resolveFn,
-      reject: rejectFn,
-    };
-    this.backgroundSubAgents.set(id, handle);
-
-    // Fire-and-forget: run detached, never block the calling turn.
-    // Add .catch() to prevent unhandled promise rejections
-    void (async () => {
-      try {
-        const pool = await this.getSubAgentPool();
-        if (!pool) {
-          handle.status = 'error';
-          handle.result = {
-            name: id,
-            model: '',
-            baseURL: '',
-            ok: false,
-            output: '',
-            durationMs: 0,
-            error:
-              'No remote sub-agent pool configured. Set subagents in ~/.nanogent.json or REMOTE_LMSTUDIO_URL.',
-            toolCalls: 0,
-          };
-          return;
-        }
-        // Enrich only the worker task with shared context (workspace root +
-        // listing). The model sees it; the TUI stream shows `handle.prompt`.
-        const { enrichTaskWithContext } = await import('./subagents.js');
-        const task = await enrichTaskWithContext(prompt, this.cfg, focusPath);
-        handle.result = await exploreWithSubAgent(
-          this.cfg,
-          pool,
-          undefined,
-          task,
-          undefined,
-          this.buildSubAgentHooks(id)
-        );
-        handle.status = handle.result.ok ? 'done' : 'error';
-      } catch (e: unknown) {
-        const err = e as { message?: string };
-        handle.status = 'error';
-        handle.result = {
-          name: id,
-          model: '',
-          baseURL: '',
-          ok: false,
-          output: '',
-          durationMs: 0,
-          error: err.message || String(e),
-          toolCalls: 0,
-        };
-      } finally {
-        handle.resolve();
-      }
-    })().catch((err) => {
-      // Catch any errors that escape the async IIFE
-      console.error('Background sub-agent error:', err);
-      handle.status = 'error';
-      handle.result = {
-        name: id,
-        model: '',
-        baseURL: '',
-        ok: false,
-        output: '',
-        durationMs: 0,
-        error: err instanceof Error ? err.message : String(err),
-        toolCalls: 0,
-      };
-      handle.resolve();
-    });
-
-    return JSON.stringify({
-      ok: true,
-      launched: true,
-      id,
-      note: 'Sub-agent running in background. Its result will be collected automatically before the next synthesis turn.',
-    });
+    return spawnBackgroundSubAgent(this, prompt, focusPath);
   }
 
-  /** Build a `ToolExecutionHooks` that routes sub-agent progress to the TUI. */
-  private buildSubAgentHooks(id: string): ToolExecutionHooks {
-    return {
-      onSubAgentProgress: (event) => {
-        const handle = this.backgroundSubAgents.get(id);
-        if (handle) {
-          handle.log = handle.log ?? [];
-          // Keep the transcript bounded so the TUI doesn't overflow.
-          if (handle.log.length < 200) handle.log.push(event);
-        }
-        this.onUpdate?.();
-      },
-    };
-  }
 
   /**
    * Block until every launched background sub-agent has finished, then collect
@@ -1203,369 +865,30 @@ export class AgentCore {
    * block. Called from the run loop after tool execution when any are pending.
    */
   async awaitAllBackgroundSubAgents(_signal?: AbortSignal): Promise<void> {
-    if (this.backgroundSubAgents.size === 0) return;
-
-    const handles = [...this.backgroundSubAgents.values()];
-
-    // Use Promise.allSettled to handle rejections gracefully
-    const settledResults = await Promise.allSettled(handles.map((h) => h.promise));
-
-    // Extract results from settled promises
-    const results = settledResults
-      .map((result, index) => {
-        if (result.status === 'fulfilled') {
-          return handles[index].result;
-        } else {
-          // For rejected promises, create an error result
-          console.error('Background sub-agent failed:', result.reason);
-          return {
-            ok: false,
-            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-            output: '',
-            durationMs: 0,
-          } as SubAgentResult;
-        }
-      })
-      .filter((r): r is SubAgentResult => !!r);
-
-    const formatted = formatSubAgentResults(results);
-
-    // Emit one consolidated assistant message per batch (a `tool` message
-    // here would reference a tool_call id that does not exist and break the
-    // OpenAI tool-calling protocol on strict providers).
-    const consolidated: Message = {
-      id: rnd(),
-      role: 'assistant',
-      content: formatted,
-      timestamp: now(),
-    };
-    this.messages.push(consolidated);
-    this.contextManager.addMessage(consolidated);
-
-    // Always clear the background sub-agents map, even on errors
-    this.backgroundSubAgents.clear();
-    this.currentTool = undefined;
-    this.onUpdate?.();
+    return awaitAllBackgroundSubAgents(this, _signal);
   }
 
   /** Whether the user has consented to remote sub-agent dispatch this session. */
-  private subAgentSessionApproved = false;
+  /** @internal Session consent flag used by the agent-tools module. */
+  subAgentSessionApproved = false;
 
-  /**
-   * One-time per-session confirmation before explore_subagent ships workspace
-   * file contents to remote endpoints (which may be plaintext HTTP).
-   */
-  private async checkSubAgentConsent(tcId: string): Promise<'allow' | 'deny'> {
-    if (this.subAgentSessionApproved) return 'allow';
-    if (
-      this.securityManager.permissionManager.getMode() === 'always_allow' ||
-      !this.onPermissionRequest
-    ) {
-      // Non-interactive (headless) or permissive mode: no one to ask
-      this.subAgentSessionApproved = true;
-      return 'allow';
-    }
-    this.setState('waiting_for_user');
-    const decision = await this.onPermissionRequest({
-      id: tcId,
-      tool: 'explore_subagent',
-      category: 'read',
-      args: {
-        note: 'First sub-agent dispatch this session: workspace file contents will be sent to the configured remote sub-agent endpoint(s).',
-      },
-    });
-    this.setState('executing_tool');
-    if (decision === 'deny') return 'deny';
-    if (decision === 'always_allow') {
-      this.securityManager.permissionManager.setRule('explore_subagent', 'allow');
-    }
-    this.subAgentSessionApproved = true;
-    return 'allow';
-  }
 
-  /**
-   * Parse tool arguments from a tool call.
-   */
-  private parseToolArgs(tc: { name: string; arguments: string }): Record<string, unknown> {
-    let args: unknown;
-    if (typeof tc.arguments === 'string') {
-      try {
-        args = JSON.parse(tc.arguments);
-      } catch {
-        const jsonMatch = tc.arguments.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          try {
-            args = JSON.parse(jsonMatch[0]);
-          } catch {
-            args = { raw_input: tc.arguments };
-          }
-        } else {
-          args = { raw_input: tc.arguments };
-        }
-      }
-    } else {
-      args = tc.arguments;
-    }
-    return args as Record<string, unknown>;
-  }
-
-  /**
-   * Execute a single tool sequentially.
-   */
   /**
    * Execute a tool directly by name (used by slash commands).
    * Returns the tool output string.
    */
   async executeToolDirect(toolName: string, args: Record<string, unknown>): Promise<string> {
-    const tool = findTool(toolName);
-    if (!tool) return JSON.stringify({ ok: false, error: `Unknown tool: ${toolName}` });
-
-    const perm = this.securityManager.permissionManager.checkPermission(toolName, args);
-    if (!perm.allowed) {
-      if (perm.requiresConfirmation && this.onPermissionRequest) {
-        const userDecision = await this.onPermissionRequest({
-          id: Math.random().toString(36).slice(2, 10),
-          tool: toolName,
-          category: perm.category,
-          command: perm.command,
-          args,
-        });
-        if (userDecision === 'deny') {
-          return JSON.stringify({
-            ok: false,
-            error: `Permission denied by user for ${perm.command ? `command "${perm.command}"` : `tool "${toolName}"`}`,
-          });
-        } else if (userDecision === 'always_allow') {
-          const target = perm.command || toolName;
-          this.securityManager.permissionManager.setRule(target, 'allow');
-        }
-      } else {
-        return JSON.stringify({
-          ok: false,
-          error: `Permission denied by policy (${perm.reason || 'restricted'})`,
-        });
-      }
-    }
-
-    const configWithSecurity = { ...this.cfg, securityManager: this.securityManager };
-    if (tool.executeAsync) {
-      return tool.executeAsync(args, this.cfg.workspace, configWithSecurity);
-    }
-    return tool.execute(args, this.cfg.workspace, configWithSecurity);
+    return executeToolDirect(this, toolName, args);
   }
 
+  /**
+   * Execute a single tool sequentially.
+   */
   private async executeToolSequential(
     tc: { name: string; arguments: string; id: string },
     signal?: AbortSignal
   ): Promise<void> {
-    const tool = findTool(tc.name);
-
-    this.currentTool = { name: tc.name, args: tc.arguments };
-    this.setState('executing_tool');
-
-    const start = performance.now();
-    let output: string;
-    let wasCached = false;
-
-    try {
-      const args = this.parseToolArgs(tc);
-
-      // Permission check
-      const perm = this.securityManager.permissionManager.checkPermission(tc.name, args);
-      if (!perm.allowed) {
-        if (perm.requiresConfirmation) {
-          if (this.onPermissionRequest) {
-            this.setState('waiting_for_user');
-            const userDecision = await this.onPermissionRequest({
-              id: tc.id,
-              tool: tc.name,
-              category: perm.category,
-              command: perm.command,
-              args,
-            });
-            this.setState('executing_tool');
-            if (userDecision === 'deny') {
-              output = JSON.stringify({
-                ok: false,
-                error: `Permission denied by user for ${perm.command ? `command "${perm.command}"` : `tool "${tc.name}"`}`,
-              });
-              this.addToolMessage(output, tc.id);
-              this.currentTool = undefined;
-              return;
-            } else if (userDecision === 'always_allow') {
-              const target = perm.command || tc.name;
-              this.securityManager.permissionManager.setRule(target, 'allow');
-            }
-          } else {
-            output = JSON.stringify({
-              ok: false,
-              error: `Permission confirmation required for ${perm.command ? `command "${perm.command}"` : `tool "${tc.name}"`}`,
-            });
-            this.addToolMessage(output, tc.id);
-            this.currentTool = undefined;
-            return;
-          }
-        } else {
-          output = JSON.stringify({
-            ok: false,
-            error: `Permission denied by policy (${perm.reason || 'read_only mode'})`,
-          });
-          this.addToolMessage(output, tc.id);
-          this.currentTool = undefined;
-          return;
-        }
-      }
-
-      // One-time consent for remote sub-agent dispatch
-      if (tc.name === 'explore_subagent') {
-        const consent = await this.checkSubAgentConsent(tc.id);
-        if (consent === 'deny') {
-          output = JSON.stringify({
-            ok: false,
-            error: 'Sub-agent dispatch denied by user',
-          });
-          this.addToolMessage(output, tc.id);
-          this.currentTool = undefined;
-          return;
-        }
-      }
-
-      // Check cache first
-      const cached = this.toolCache.get(tc.name, args, this.cfg.workspace);
-      if (cached) {
-        output = cached.result;
-        wasCached = true;
-        const duration = cached.duration;
-
-        this.addToolMessage(output, tc.id);
-
-        // Handle special tool results even for cached responses
-        this.handleSpecialToolResults(tc.name, output, tc.id);
-
-        const finalOutput = output;
-        this.onToolResult?.({
-          toolCallId: tc.id,
-          name: tc.name,
-          output: finalOutput,
-          duration,
-          cached: true,
-        });
-        this.currentTool = undefined;
-        return;
-      }
-
-      // Create config with security manager
-      const configWithSecurity = {
-        ...this.cfg,
-        securityManager: this.securityManager,
-      };
-
-      if (tool?.executeAsync) {
-        const subHooks: ToolExecutionHooks | undefined =
-          tc.name === 'explore_subagent'
-            ? {
-                onSubAgentProgress: (progress) => {
-                  const saId = progress.agent || `sa-sync-${tc.id}`;
-                  let handle = this.backgroundSubAgents.get(saId);
-                  if (!handle) {
-                    let pPrompt = tc.arguments;
-                    try {
-                      pPrompt = JSON.parse(tc.arguments).prompt || tc.arguments;
-                    } catch {
-                      /* not JSON */
-                    }
-                    handle = {
-                      id: saId,
-                      prompt: progress.task || pPrompt,
-                      status: 'running',
-                      promise: Promise.resolve(),
-                      resolve: () => {},
-                      reject: () => {},
-                    };
-                    this.backgroundSubAgents.set(saId, handle);
-                  }
-                  handle.log = handle.log ?? [];
-                  if (handle.log.length < 200) handle.log.push(progress);
-                  if (progress.type === 'subagent_done') {
-                    handle.status = progress.ok ? 'done' : 'error';
-                    handle.result = {
-                      name: saId,
-                      model: progress.model,
-                      baseURL: '',
-                      ok: progress.ok ?? false,
-                      output: progress.output ?? '',
-                      durationMs: 0,
-                      toolCalls: progress.toolCalls ?? 0,
-                      error: progress.ok ? undefined : progress.output || 'sub-agent failed',
-                    };
-                  }
-                  this.currentTool = {
-                    name: tc.name,
-                    args: tc.arguments,
-                    subAgentProgress: progress,
-                  };
-                  this.onUpdate?.();
-                },
-              }
-            : undefined;
-        output = await tool.executeAsync(
-          args,
-          this.cfg.workspace,
-          configWithSecurity,
-          signal,
-          subHooks
-        );
-      } else {
-        output = tool
-          ? tool.execute(args, this.cfg.workspace, configWithSecurity)
-          : JSON.stringify({ ok: false, error: `Unknown tool: ${tc.name}`, tool: tc.name });
-      }
-    } catch (e: unknown) {
-      const err = e as { message?: string; stack?: string };
-      const errMsg = err.message || String(e);
-      output = JSON.stringify({
-        ok: false,
-        error: errMsg,
-        tool: tc.name,
-        ...(process.env.QWEN_DEBUG_LLM ? { stack: err.stack } : {}),
-      });
-    }
-    const duration = performance.now() - start;
-
-    // Cache successful results
-    if (!wasCached && tool) {
-      try {
-        const args = this.parseToolArgs(tc);
-        const resultObj = JSON.parse(output);
-        // Only cache if output is valid and represents a successful execution
-        if (resultObj && typeof resultObj === 'object' && resultObj.ok === true) {
-          this.toolCache.set(tc.name, args, this.cfg.workspace, output, duration, true);
-        }
-      } catch (e) {
-        // If we can't parse the output or it's not a valid success, don't cache it
-        console.debug('Tool output not cached due to invalid format:', e);
-      }
-    }
-
-    this.messages.push({
-      id: rnd(),
-      role: 'tool',
-      content: output,
-      timestamp: now(),
-      toolCallId: tc.id,
-    });
-
-    // Handle special tool results
-    this.handleSpecialToolResults(tc.name, output, tc.id);
-
-    const finalOutput = this.messages[this.messages.length - 1]?.content || output;
-    this.onToolResult?.({
-      toolCallId: tc.id,
-      name: tc.name,
-      output: finalOutput,
-      duration,
-    });
-    this.currentTool = undefined;
+    return executeToolSequential(this, tc, signal);
   }
 
   /**
@@ -1577,466 +900,34 @@ export class AgentCore {
     parallelTools: Array<{ name: string; arguments: string; index: number; id: string }>,
     signal?: AbortSignal
   ): Promise<void> {
-    this.setState('executing_tool');
-
-    // Resolve all permission checks sequentially first to avoid
-    // overlapping pendingPermissionReq state in the TUI.
-    const permissionResults = new Map<string, 'allow' | 'always_allow' | 'deny'>();
-    for (const tc of parallelTools) {
-      const args = this.parseToolArgs(tc);
-      const perm = this.securityManager.permissionManager.checkPermission(tc.name, args);
-      if (!perm.allowed) {
-        if (perm.requiresConfirmation && this.onPermissionRequest) {
-          this.setState('waiting_for_user');
-          const decision = await this.onPermissionRequest({
-            id: tc.id,
-            tool: tc.name,
-            category: perm.category,
-            command: perm.command,
-            args,
-          });
-          this.setState('executing_tool');
-          permissionResults.set(tc.id, decision);
-          if (decision === 'always_allow') {
-            const target = perm.command || tc.name;
-            this.securityManager.permissionManager.setRule(target, 'allow');
-          }
-        } else {
-          // Requires confirmation but no interactive handler, or hard deny
-          permissionResults.set(tc.id, 'deny');
-        }
-      }
-
-      // One-time consent for remote sub-agent dispatch
-      if (tc.name === 'explore_subagent' && !permissionResults.has(tc.id)) {
-        const consent = await this.checkSubAgentConsent(tc.id);
-        if (consent === 'deny') {
-          permissionResults.set(tc.id, 'deny');
-        }
-      }
-    }
-
-    const results: Array<{
-      index: number;
-      id: string;
-      output: string;
-      duration: number;
-      wasCached: boolean;
-    }> = [];
-
-    // Execute all parallel tools concurrently (permission already resolved)
-    const promises = parallelTools.map(async (tc) => {
-      const tool = findTool(tc.name);
-      const toolStart = performance.now();
-      let output: string;
-      let wasCached = false;
-
-      try {
-        const args = this.parseToolArgs(tc);
-
-        // Check if permission was denied during sequential resolution
-        const decision = permissionResults.get(tc.id);
-        if (decision === 'deny') {
-          output = JSON.stringify({
-            ok: false,
-            error: `Permission denied by user for ${tc.name}`,
-          });
-          return { index: tc.index, id: tc.id, output, duration: performance.now() - toolStart, wasCached: false };
-        }
-
-        // Fallback policy check for tools that do not require interactive confirmation
-        if (decision === undefined) {
-          const perm = this.securityManager.permissionManager.checkPermission(tc.name, args);
-          if (!perm.allowed) {
-            output = JSON.stringify({
-              ok: false,
-              error: `Permission denied by policy (${perm.reason || 'restricted'})`,
-            });
-            return { index: tc.index, id: tc.id, output, duration: performance.now() - toolStart, wasCached: false };
-          }
-        }
-
-        // Check cache first
-        const cached = this.toolCache.get(tc.name, args, this.cfg.workspace);
-        if (cached) {
-          output = cached.result;
-          wasCached = true;
-          return { index: tc.index, id: tc.id, output, duration: cached.duration, wasCached };
-        }
-
-        // Execute the tool
-        // Create config with security manager
-        const configWithSecurity = {
-          ...this.cfg,
-          securityManager: this.securityManager,
-        };
-
-        if (tool?.executeAsync) {
-          const subHooks: ToolExecutionHooks | undefined =
-            tc.name === 'explore_subagent'
-              ? {
-                  onSubAgentProgress: (progress) => {
-                    const saId = progress.agent || `sa-sync-${tc.id}`;
-                    let handle = this.backgroundSubAgents.get(saId);
-                    if (!handle) {
-                      let pPrompt = tc.arguments;
-                      try {
-                        pPrompt = JSON.parse(tc.arguments).prompt || tc.arguments;
-                      } catch {
-                        /* not JSON */
-                      }
-                      handle = {
-                        id: saId,
-                        prompt: progress.task || pPrompt,
-                        status: 'running',
-                        promise: Promise.resolve(),
-                        resolve: () => {},
-                        reject: () => {},
-                        log: [],
-                      };
-                      this.backgroundSubAgents.set(saId, handle);
-                    }
-                    handle.log = handle.log ?? [];
-                    if (handle.log.length < 200) handle.log.push(progress);
-                    if (progress.type === 'subagent_done') {
-                      handle.status = progress.ok ? 'done' : 'error';
-                    }
-                    this.currentTool = {
-                      name: tc.name,
-                      args: tc.arguments,
-                      subAgentProgress: progress,
-                    };
-                    this.onUpdate?.();
-                  },
-                }
-              : undefined;
-          output = await tool.executeAsync(
-            args,
-            this.cfg.workspace,
-            configWithSecurity,
-            signal,
-            subHooks
-          );
-        } else {
-          output = tool
-            ? tool.execute(args, this.cfg.workspace, configWithSecurity)
-            : JSON.stringify({ ok: false, error: 'Unknown tool' });
-        }
-
-        // Cache successful results
-        if (tool) {
-          try {
-            const resultObj = JSON.parse(output);
-            // Only cache if output is valid and represents a successful execution
-            if (resultObj && typeof resultObj === 'object' && resultObj.ok === true) {
-              const duration = performance.now() - toolStart;
-              this.toolCache.set(tc.name, args, this.cfg.workspace, output, duration, true);
-            }
-          } catch (e) {
-            // If we can't parse the output or it's not a valid success, don't cache it
-            console.debug('Parallel tool output not cached due to invalid format:', e);
-          }
-        }
-
-        return {
-          index: tc.index,
-          id: tc.id,
-          output,
-          duration: performance.now() - toolStart,
-          wasCached,
-        };
-      } catch (e: unknown) {
-        // Log the full error including stack trace for debugging
-        const pErr = e as { message?: string };
-        console.error(`Parallel tool execution error [${tc.name}]:`, e);
-        return {
-          index: tc.index,
-          id: tc.id,
-          output: JSON.stringify({ ok: false, error: pErr.message || String(e) }),
-          duration: performance.now() - toolStart,
-          wasCached: false,
-        };
-      }
-    });
-
-    // Wait for all parallel tools to complete
-    const settledResults = await Promise.allSettled(promises);
-
-    // Process results in original order
-    for (const index of settledResults.keys()) {
-      const result = settledResults[index];
-      if (result.status === 'fulfilled') {
-        results.push(result.value);
-      } else {
-        // Handle rejected promises — use the actual index from the loop
-        // to maintain correct ordering
-        const originalTc = parallelTools[index];
-        results.push({
-          index: originalTc?.index ?? index,
-          id: originalTc?.id ?? '',
-          output: JSON.stringify({ ok: false, error: result.reason?.message || 'Unknown error' }),
-          duration: 0,
-          wasCached: false,
-        });
-      }
-    }
-
-    // Sort by original index to maintain order
-    results.sort((a, b) => a.index - b.index);
-
-    // Add messages in order
-    for (const result of results) {
-      this.addToolMessage(result.output, result.id);
-
-      // Handle special tool results
-      const tc = parallelTools.find((t) => t.id === result.id);
-      if (tc) {
-        this.handleSpecialToolResults(tc.name, result.output, tc.id);
-      }
-
-      this.onToolResult?.({
-        toolCallId: result.id,
-        name: parallelTools.find((t) => t.id === result.id)?.name || '',
-        output: result.output,
-        duration: result.duration,
-        cached: result.wasCached,
-      });
-    }
-
-    this.currentTool = undefined;
+    return executeToolsParallel(this, parallelTools, signal);
   }
 
-  /**
-   * Handle special tool results that require agent state updates.
-   */
-  private handleSpecialToolResults(toolName: string, output: string, _toolCallId: string): void {
-    // Intercept change_workspace results to sync agent state
-    if (toolName === 'change_workspace') {
-      try {
-        const result = JSON.parse(output);
-        if (result.ok && result.workspace) {
-          void this.reconfigure({ workspace: result.workspace });
-          this.todos = [];
-          this.syncTodoMessage();
-          this.onUpdate?.();
-        }
-      } catch {
-        // ignore parse errors
-      }
-    }
-
-    // Invalidate cache for file modification tools
-    if (['write_file', 'edit_file', 'edit_file_lines'].includes(toolName)) {
-      this.toolCache.clear();
-    }
-
-    // Invalidate cache for git operations that change files
-    if (toolName === 'git_commit') {
-      this.toolCache.clear();
-    }
-
-    // Intercept manage_todos results to sync agent state
-    // NOTE: We do NOT mutate any existing message content — the tool result
-    // message already contains the raw output. We only sync the in-memory
-    // todo list state so the todo system message stays correct.
-    if (toolName === 'manage_todos') {
-      try {
-        const result = JSON.parse(output);
-        if (result.ok) {
-          if (result.action === 'add' && result.text) {
-            if (result.id) {
-              this.todos.push({
-                id: result.id,
-                text: result.text,
-                done: result.done !== undefined ? result.done : false,
-                createdAt: result.createdAt || now(),
-              });
-            } else {
-              this.addTodo(result.text);
-            }
-            this.syncTodoMessage();
-            this.onUpdate?.();
-          } else if (result.action === 'complete') {
-            const target = this.todos.find((t) => t.id === result.id);
-            if (target) {
-              this.toggleTodo(result.id);
-            }
-          } else if (result.action === 'remove') {
-            const target = this.todos.find((t) => t.id === result.id);
-            if (target) {
-              this.removeTodo(result.id);
-            }
-          } else if (result.action === 'list') {
-            this.onUpdate?.();
-          }
-        }
-      } catch {
-        // ignore parse errors
-      }
-    }
-  }
-
-  /** Build a short todo context string for the todo system message. */
-  private buildTodoContext(): string {
-    const pending = this.todos.filter((t) => !t.done);
-    const done = this.todos.filter((t) => t.done);
-    if (pending.length === 0 && done.length === 0) {
-      return 'Current todo list: (empty — no todos yet)';
-    }
-    let text = 'Current todo list (use the id in manage_todos):\n';
-    for (const t of pending) {
-      text += `  - [ ] id=${t.id} | ${t.text}\n`;
-    }
-    for (const t of done) {
-      text += `  - [x] id=${t.id} | ${t.text}\n`;
-    }
-    return text.trim();
-  }
-
-  /** Sync the dedicated todo system message (kept right after system-base). */
-  private syncTodoMessage() {
-    const idx = this.messages.findIndex((m) => m.role === 'system' && m.id === 'system-todos');
-    const content = this.buildTodoContext();
-    if (idx >= 0) {
-      this.messages[idx].content = content;
-    } else {
-      const todoMsg: Message = {
-        id: 'system-todos',
-        role: 'system',
-        content,
-        timestamp: now(),
-      };
-      const baseIdx = this.messages.findIndex((m) => m.id === 'system-base');
-      if (baseIdx >= 0) {
-        this.messages.splice(baseIdx + 1, 0, todoMsg);
-      } else {
-        this.messages.unshift(todoMsg);
-      }
-    }
-  }
 
   /** Convert internal messages to the format expected by the LLM layer. */
   private toChatMessages(): ChatMessage[] {
-    // Ensure todo message is fresh before sending to LLM
-    this.syncTodoMessage();
-
-    // Filter out internal/empty messages that can poison the next chat template turn.
-    // Keep the main system prompt and the todo system message (the model needs
-    // todo ids for manage_todos). Other transient system notices are filtered
-    // out because Qwen's Jinja template requires system messages at the beginning.
-    const messagesToSend = this.messages.filter(
-      (m) =>
-        !(m.role === 'system' && m.id !== 'system-base' && m.id !== 'system-todos') &&
-        !(m.role === 'assistant' && !m.toolCalls && !m.reasoningContent && m.content.trim() === '')
-    );
-
-    return messagesToSend.map((m) => {
-      if (m.role === 'tool') {
-        return {
-          role: 'tool' as const,
-          content: m.content,
-          tool_call_id: m.toolCallId!,
-        };
-      }
-      if (m.role === 'assistant' && m.toolCalls) {
-        return {
-          role: 'assistant' as const,
-          content: m.content,
-          tool_calls: m.toolCalls.map((tc) => ({
-            id: tc.id,
-            type: 'function' as const,
-            function: { name: tc.name, arguments: tc.arguments },
-          })),
-        };
-      }
-      if (m.role === 'assistant' && m.reasoningContent) {
-        return {
-          role: 'assistant' as const,
-          content: m.content,
-        };
-      }
-      return { role: m.role, content: m.content };
-    });
+    return toChatMessages(this);
   }
 
   /** Append an assistant message and trigger an update. */
   private addAssistantMessage(content: string) {
-    const msg: Message = {
-      id: rnd(),
-      role: 'assistant',
-      content,
-      timestamp: now(),
-    };
-    this.messages.push(msg);
-    this.contextManager.addMessage(msg);
-    this.onUpdate?.();
+    addAssistantMessage(this, content);
   }
 
   /**
    * Add a user message to the conversation.
    */
   private addUserMessage(content: string): void {
-    const msg: Message = {
-      id: rnd(),
-      role: 'user',
-      content,
-      timestamp: now(),
-    };
-    this.messages.push(msg);
-    this.contextManager.addMessage(msg);
-    this.onUpdate?.();
+    addUserMessage(this, content);
   }
 
-  /**
-   * Add a tool message to the conversation.
-   */
-  private addToolMessage(content: string, toolCallId?: string): void {
-    const msg: Message = {
-      id: rnd(),
-      role: 'tool',
-      content,
-      timestamp: now(),
-      toolCallId,
-    };
-    this.messages.push(msg);
-    this.contextManager.addMessage(msg);
-    this.onUpdate?.();
-  }
 
   /**
    * Check if context needs compaction and perform it if necessary.
    * Returns true if compaction was performed.
    */
   public checkAndCompactContext(): boolean {
-    if (!this.contextManager.needsCompaction()) {
-      return false;
-    }
-
-    const result = this.contextManager.compact();
-
-    if (result.removedCount > 0) {
-      // Preserve non-base system messages (todo context, transient notices)
-      // that live only in AgentCore.messages, then re-sync from the pruned
-      // context manager (which holds system-base + conversation history).
-      const extraSystem = this.messages.filter(
-        (m) => m.role === 'system' && m.id !== 'system-base'
-      );
-      const synced = this.contextManager.getMessages();
-      const firstNonSystem = synced.findIndex((m) => m.role !== 'system');
-      const insertAt = firstNonSystem === -1 ? synced.length : firstNonSystem;
-      synced.splice(insertAt, 0, ...extraSystem);
-      this.messages = synced;
-      this.syncTodoMessage();
-
-      // Add a system notification about compaction
-      if (result.summary) {
-        this.addAssistantMessage(result.summary);
-      }
-      this.onUpdate?.();
-      return true;
-    }
-
-    return false;
+    return checkAndCompactContext(this);
   }
 
   public compactContextIfNeeded(): boolean {
@@ -2051,52 +942,21 @@ export class AgentCore {
 
   /** Add a new todo item. */
   addTodo(text: string) {
-    this.todos.push({ id: rnd(), text, done: false, createdAt: now() });
-    this.syncTodoMessage();
-    this.onUpdate?.();
+    addTodo(this, text);
   }
 
   /** Toggle the done state of a todo. */
   toggleTodo(id: string) {
-    const t = this.todos.find((x) => x.id === id);
-    if (t) {
-      t.done = !t.done;
-      this.syncTodoMessage();
-      this.onUpdate?.();
-    }
+    toggleTodo(this, id);
   }
 
   /** Remove a todo by id. */
   removeTodo(id: string) {
-    this.todos = this.todos.filter((x) => x.id !== id);
-    this.syncTodoMessage();
-    this.onUpdate?.();
+    removeTodo(this, id);
   }
 
   /** Graceful shutdown: cancel sub-agents, disconnect MCP, save state. */
   async shutdown(): Promise<void> {
-    const ws = this.cfg.workspace;
-    if (this.messages.length > 0 && ws) {
-      autoSaveSession(this.messages, this.todos, ws);
-    }
-    try {
-      this.mcpManager?.disconnectAll();
-    } catch (err) {
-      console.warn('MCP disconnect error during shutdown:', err);
-    }
-    try {
-      this.toolCache?.stopAllWatchers();
-    } catch {
-      // ignore watcher cleanup errors
-    }
-    this.backgroundSubAgents.clear();
+    return shutdownAgent(this);
   }
-}
-
-function rnd() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-function now() {
-  return Date.now();
 }

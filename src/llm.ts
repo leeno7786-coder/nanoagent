@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { createRequire } from 'module';
 import type { Config } from './types.js';
 import type { StreamChunk } from './streaming.js';
+import { logError } from './log.js';
 
 /**
  * Custom error that preserves the HTTP status code through retry re-throws.
@@ -854,7 +855,7 @@ export async function chat(
       options?.onRetry?.({ attempt, maxAttempts: effectiveMaxRetries, delayMs, status: errStatus, message: msgStr });
 
       if (process.env.QWEN_DEBUG_LLM || isRateLimit) {
-        console.error(`[LLM Retry] ${msgStr}`);
+        logError(`[LLM Retry] ${msgStr}`);
       }
 
       await sleepWithSignal(delayMs, signal);
@@ -948,7 +949,7 @@ export async function* streamChat(
 
         // Debug: log first few chunks to diagnose empty responses
         if (process.env.QWEN_DEBUG_LLM) {
-          console.error('[QWEN_DEBUG] llm chunk:', JSON.stringify(delta));
+          logError('[QWEN_DEBUG] llm chunk:', JSON.stringify(delta));
         }
 
         if (!delta) continue;
@@ -1082,7 +1083,7 @@ export async function* streamChat(
       options?.onRetry?.({ attempt, maxAttempts: effectiveMaxRetries, delayMs, status: errStatus, message: msgStr });
 
       if (process.env.QWEN_DEBUG_LLM || isRateLimit) {
-        console.error(`[LLM Retry] ${msgStr}`);
+        logError(`[LLM Retry] ${msgStr}`);
       }
 
       await sleepWithSignal(delayMs, signal);

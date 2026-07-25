@@ -23,8 +23,7 @@ export const manageTodosTool: Tool = {
         done: false,
         createdAt: Date.now(),
       });
-    if (args.action === 'list')
-      return JSON.stringify({ ok: true, action: args.action, todos: [] });
+    if (args.action === 'list') return JSON.stringify({ ok: true, action: args.action, todos: [] });
     return JSON.stringify({ ok: true, action: args.action, text: args.text, id: args.id });
   },
 };

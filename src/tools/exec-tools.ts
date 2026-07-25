@@ -407,11 +407,13 @@ export const executeCommandTool: Tool = {
     properties: {
       command: {
         type: 'string',
-        description: "Shell command to execute (e.g., 'dir', 'git status', 'curl -O <url>', 'pip install <pkg>')",
+        description:
+          "Shell command to execute (e.g., 'dir', 'git status', 'curl -O <url>', 'pip install <pkg>')",
       },
       timeout: {
         type: 'number',
-        description: "Optional custom timeout in seconds (default 60s, extended up to 600s for downloads)",
+        description:
+          'Optional custom timeout in seconds (default 60s, extended up to 600s for downloads)',
       },
     },
     required: ['command'],
@@ -457,7 +459,10 @@ export const executeCommandTool: Tool = {
       return JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
     }
 
-    const isDownloadOrBuild = /^(?:curl|wget|git\s+clone|npm|bun|pnpm|pip|pip3|uv|cargo|docker|huggingface-cli)\b/i.test(cmd);
+    const isDownloadOrBuild =
+      /^(?:curl|wget|git\s+clone|npm|bun|pnpm|pip|pip3|uv|cargo|docker|huggingface-cli)\b/i.test(
+        cmd
+      );
     const defaultTimeout = isDownloadOrBuild ? 600 : 60;
     const userTimeout =
       typeof args.timeout === 'number' && args.timeout > 0

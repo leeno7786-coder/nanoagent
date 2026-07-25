@@ -3,6 +3,7 @@
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { loadConfig, getApiKey } from '../config.js';
+import { setTuiActive } from '../log.js';
 import { App } from './app.js';
 
 /**
@@ -10,6 +11,7 @@ import { App } from './app.js';
  * Headless commands (run, doctor, models) live in src/main.ts and share src/cli/reports.ts.
  */
 export async function runTui() {
+  setTuiActive(true);
   let cfg;
   try {
     cfg = loadConfig();

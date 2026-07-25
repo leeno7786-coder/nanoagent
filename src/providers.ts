@@ -1,6 +1,7 @@
 import type { RuntimeProvider, ModelInfo } from './types.js';
 import { fetchLMStudioModels, isLMStudioURL, parseParamBillionsFromModelId } from './model-runtime.js';
 import { isLocalProvider } from './llm.js';
+import { logError, logInfo } from './log.js';
 
 /**
  * Default list of runtime providers (connectors) with their available models.
@@ -963,7 +964,7 @@ export function getApiKeyEnvVar(providerId: string): string | undefined {
 export async function fetchLocalModels(baseURL: string): Promise<ModelInfo[]> {
   // Only fetch from local providers - cloud APIs don't support /models endpoint
   if (!isLocalProvider(baseURL)) {
-    console.log('Skipping model fetch for non-local provider:', baseURL);
+    logInfo('Skipping model fetch for non-local provider:', baseURL);
     return [];
   }
 
@@ -1053,7 +1054,7 @@ export async function fetchLocalModels(baseURL: string): Promise<ModelInfo[]> {
 
     return [];
   } catch (error) {
-    console.error('Error fetching local models:', error);
+    logError('Error fetching local models:', error);
     return [];
   }
 }
@@ -1127,7 +1128,7 @@ export async function fetchOpenRouterModels(apiKey?: string): Promise<ModelInfo[
     });
 
     if (!response.ok) {
-      console.error('Failed to fetch OpenRouter models:', response.status, response.statusText);
+      logError('Failed to fetch OpenRouter models:', response.status, response.statusText);
       return [];
     }
 
@@ -1156,7 +1157,7 @@ export async function fetchOpenRouterModels(apiKey?: string): Promise<ModelInfo[
 
     return [];
   } catch (error) {
-    console.error('Error fetching OpenRouter models:', error);
+    logError('Error fetching OpenRouter models:', error);
     return [];
   }
 }

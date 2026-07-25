@@ -6,6 +6,7 @@
 import { countTokens, effectiveContextSize } from '../llm.js';
 import type { Config, Message } from '../types.js';
 import { getModelCompactionSettings } from '../llm.js';
+import { logWarn } from '../log.js';
 
 /**
  * Configuration for context management.
@@ -183,7 +184,7 @@ export class ContextManager {
       this.config.maxHistoryTokens > 0 &&
       this.cachedTotalTokens > this.config.maxHistoryTokens * thresholdPercent
     ) {
-      console.warn(
+      logWarn(
         `[ContextManager] Context approaching limit: ` +
           `${this.cachedTotalTokens}/${this.config.maxHistoryTokens} tokens ` +
           `(${Math.round((this.cachedTotalTokens / this.config.maxHistoryTokens) * 100)}%)`

@@ -4,6 +4,7 @@ import { join, resolve } from 'path';
 import { config as dotenvConfig } from 'dotenv';
 import type { Config, SkillConfig } from './types.js';
 import { isSmallModel } from './llm.js';
+import { logError, logWarn } from './log.js';
 
 /**
  * Derive sub-agent availability and defaults from the resolved config.
@@ -164,7 +165,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
         Object.assign(cfg, parsed);
         cfg.configFilePath = p;
       } catch (err) {
-        console.warn(
+        logWarn(
           `Warning: failed to parse config file ${p}:`,
           err instanceof Error ? err.message : String(err)
         );
@@ -362,7 +363,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     // Warn if user explicitly disabled small model mode for a small model
     const detected = isSmallModel(cfg.model);
     if (detected) {
-      console.warn(
+      logWarn(
         `Config warning: smallModelMode is set to false, but "${cfg.model}" appears to be a small model (≤8B). ` +
           `Remove "smallModelMode": false from your config to enable auto-detection.`
       );
@@ -371,10 +372,10 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
 
   const validation = validateConfig(cfg);
   if (validation.warnings.length > 0) {
-    console.warn('Config warnings:', validation.warnings.join('; '));
+    logWarn('Config warnings:', validation.warnings.join('; '));
   }
   if (validation.errors.length > 0) {
-    console.error('Config errors:', validation.errors.join('; '));
+    logError('Config errors:', validation.errors.join('; '));
   }
 
   return cfg;
@@ -577,7 +578,7 @@ function ensureEnvFile(): string {
     try {
       mkdirSync(envDir, { recursive: true });
     } catch (err) {
-      console.warn('Warning: failed to create env directory:', err);
+      logWarn('Warning: failed to create env directory:', err);
     }
   }
 
@@ -586,7 +587,7 @@ function ensureEnvFile(): string {
     try {
       writeFileSync(envPath, '# Qwen Agent TUI Environment Variables\n', 'utf-8');
     } catch (err) {
-      console.warn('Warning: failed to create .env file:', err);
+      logWarn('Warning: failed to create .env file:', err);
     }
   }
 
@@ -647,7 +648,7 @@ export function saveApiKeyToEnv(envVarName: string, apiKey: string, envPath?: st
 
     return true;
   } catch (error) {
-    console.error('Error saving API key:', error);
+    logError('Error saving API key:', error);
     return false;
   }
 }
@@ -721,7 +722,7 @@ export function removeApiKeyFromEnv(envVarName: string): boolean {
 
     return false;
   } catch (error) {
-    console.error('Error removing API key:', error);
+    logError('Error removing API key:', error);
     return false;
   }
 }
@@ -737,7 +738,7 @@ function ensureSkillConfigDir(): string {
     try {
       mkdirSync(skillConfigDir, { recursive: true });
     } catch (err) {
-      console.warn('Warning: failed to create skill config directory:', err);
+      logWarn('Warning: failed to create skill config directory:', err);
     }
   }
 
@@ -759,7 +760,7 @@ export function loadSkillConfig(): SkillConfig {
   try {
     return JSON.parse(readFileSync(configPath, 'utf-8'));
   } catch (err) {
-    console.warn(
+    logWarn(
       `Warning: failed to parse skill config ${configPath}:`,
       err instanceof Error ? err.message : String(err)
     );
@@ -786,7 +787,7 @@ export function saveSkillConfig(config: SkillConfig): boolean {
 
     return true;
   } catch (error) {
-    console.error('Error saving skill configuration:', error);
+    logError('Error saving skill configuration:', error);
     return false;
   }
 }
@@ -816,7 +817,7 @@ export function toggleSkillInConfig(name: string): boolean {
     saveSkillConfig(config);
     return true;
   } catch (error) {
-    console.error('Error toggling skill in config:', error);
+    logError('Error toggling skill in config:', error);
     return false;
   }
 }
