@@ -34,7 +34,7 @@ An ultra-lightweight, scalable CLI/TUI coding agent built from the ground up to 
 npm install -g .
 
 # Or install from release tarball:
-wget https://github.com/leeno7786-coder/qwen-agent-tui/raw/main/nanoagent-1.1.0-alpha.1.tgz
+wget https://github.com/leeno7786-coder/nanoagent/raw/main/nanoagent-1.1.0-alpha.1.tgz
 npm install -g ./nanoagent-1.1.0-alpha.1.tgz
 
 # Launch instantly:
@@ -48,8 +48,8 @@ npx nanoagent
 
 ### Option 3: Build from Source (Bun)
 ```bash
-git clone https://github.com/leeno7786-coder/qwen-agent-tui.git
-cd qwen-agent-tui
+git clone https://github.com/leeno7786-coder/nanoagent.git
+cd nanoagent
 bun install
 bun run start
 ```
@@ -155,7 +155,7 @@ NanoAgent includes security hardening enabled by default:
 
 ```text
 src/
-├── main.ts              # CLI entry point & command router (nanogent)
+├── main.ts              # CLI entry point & command router (nanoagent)
 ├── config.ts            # Configuration loader & .nanogent.json manager
 ├── agent.ts             # Core Agent state machine & loop
 ├── types.ts             # TypeScript definitions
