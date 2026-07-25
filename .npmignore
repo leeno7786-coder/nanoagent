@@ -34,10 +34,8 @@ package-lock.json
 prerelease/
 scripts/
 *.tgz
-dist/
 
 # CI/CD
-.github/
 .npmrc
 *.yml
 *.yaml
