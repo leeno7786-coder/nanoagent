@@ -6,6 +6,7 @@ import { useKeyboard } from '@opentui/react';
 import type { Message, ToolResult, AgentState, ToolCall } from '../types.js';
 import type { SubAgentProgressEvent } from '../tools/index.js';
 import type { SubAgentResult } from '../subagents.js';
+import { sanitizeForTui } from './sanitize.js';
 import { CommandDropdown } from './command-dropdown.js';
 import { getSyntaxStyle } from './syntax-style.js';
 import type { Theme } from './theme.js';
@@ -65,7 +66,9 @@ function parseCodeBlocks(
 
 function renderLinesSafely(text: string, maxLines = 40, fgColor: string, prefix = '') {
   if (!text) return null;
-  const allLines = text.split('\n');
+  // Strip ANSI escapes/control chars — a raw ESC[2J from tool output would
+  // wipe the whole TUI frame
+  const allLines = sanitizeForTui(text).split('\n');
   if (allLines.length <= maxLines) {
     return allLines.map((line, idx) => (
       <text key={idx} fg={fgColor}>
@@ -443,7 +446,7 @@ function SubAgentPanel({
             .replace(/^=== SHARED CONTEXT ===[\s\S]*?=== END CONTEXT ===\s*/m, '')
             .trim();
         }
-        const taskLabel = rawPrompt
+        const taskLabel = sanitizeForTui(rawPrompt)
           .split('\n')[0]
           .replace(/^(analyze|review|investigate|check|audit|explore|find|search|look)\s+/i, '')
           .slice(0, 60)
@@ -604,16 +607,22 @@ const MessageItem = memo(
               );
             }
             if (seg.lang === 'diff') {
+              const safeDiff = sanitizeForTui(
+                seg.code.split('\n').length > 200
+                  ? seg.code.split('\n').slice(0, 200).join('\n') + '\n… [diff truncated]'
+                  : seg.code
+              );
               return (
                 <box key={si} flexDirection="column" marginY={1}>
-                  <diff diff={seg.code} {...DIFF_PROPS} />
+                  <diff diff={safeDiff} {...DIFF_PROPS} />
                 </box>
               );
             }
-            const safeCode =
+            const safeCode = sanitizeForTui(
               seg.code.split('\n').length > 120
                 ? seg.code.split('\n').slice(0, 120).join('\n') + '\n… [truncated]'
-                : seg.code;
+                : seg.code
+            );
             return (
               <box key={si} flexDirection="column" marginY={1}>
                 {seg.lang && <text fg={theme.mutedFg}>{seg.lang}</text>}

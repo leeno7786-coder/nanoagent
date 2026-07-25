@@ -1,3 +1,5 @@
+import { sanitizeForTui } from './sanitize.js';
+
 export interface ToolDisplayBlock {
   action: string;
   target: string;
@@ -166,6 +168,18 @@ export function buildSummary(
   return 'ok';
 }
 
+/** Strip ANSI escapes/control chars from every text field (tool output can contain them). */
+function sanitizeBlock(block: ToolDisplayBlock): ToolDisplayBlock {
+  return {
+    ...block,
+    action: sanitizeForTui(block.action),
+    target: sanitizeForTui(block.target),
+    summary: sanitizeForTui(block.summary),
+    diff: block.diff ? sanitizeForTui(block.diff) : undefined,
+    previewLines: block.previewLines?.map(sanitizeForTui),
+  };
+}
+
 export function buildToolDisplayBlock(
   toolName: string,
   argsRaw: string,
@@ -196,18 +210,18 @@ export function buildToolDisplayBlock(
         .filter(Boolean)
         .slice(0, 12);
     }
-    return block;
+    return sanitizeBlock(block);
   }
 
   if (toolName.startsWith('sub:')) {
     const model = args?.model ? ` · ${args.model as string}` : '';
-    return {
+    return sanitizeBlock({
       action: 'SubAgent',
       target: `${toolName.slice(4)}${model}`,
       ok: true,
       summary: `running ${(args?.tool as string) ?? 'tool'}…`,
       durationMs,
-    };
+    });
   }
 
   const block: ToolDisplayBlock = {
@@ -235,5 +249,5 @@ export function buildToolDisplayBlock(
     block.previewLines = previewLinesFromOutput(result ?? ({} as Record<string, unknown>));
   }
 
-  return block;
+  return sanitizeBlock(block);
 }
