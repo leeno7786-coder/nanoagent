@@ -39,7 +39,6 @@ const WRITE_TOOLS = new Set([
   'multi_replace_file_content',
   'replace_file_content',
   'create_new_skill',
-  'manage_todos',
   'build_memory_graph',
 ]);
 

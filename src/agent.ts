@@ -1248,6 +1248,41 @@ export class AgentCore {
     this.onUpdate?.();
   }
 
+  /** Whether the user has consented to remote sub-agent dispatch this session. */
+  private subAgentSessionApproved = false;
+
+  /**
+   * One-time per-session confirmation before explore_subagent ships workspace
+   * file contents to remote endpoints (which may be plaintext HTTP).
+   */
+  private async checkSubAgentConsent(tcId: string): Promise<'allow' | 'deny'> {
+    if (this.subAgentSessionApproved) return 'allow';
+    if (
+      this.securityManager.permissionManager.getMode() === 'always_allow' ||
+      !this.onPermissionRequest
+    ) {
+      // Non-interactive (headless) or permissive mode: no one to ask
+      this.subAgentSessionApproved = true;
+      return 'allow';
+    }
+    this.setState('waiting_for_user');
+    const decision = await this.onPermissionRequest({
+      id: tcId,
+      tool: 'explore_subagent',
+      category: 'read',
+      args: {
+        note: 'First sub-agent dispatch this session: workspace file contents will be sent to the configured remote sub-agent endpoint(s).',
+      },
+    });
+    this.setState('executing_tool');
+    if (decision === 'deny') return 'deny';
+    if (decision === 'always_allow') {
+      this.securityManager.permissionManager.setRule('explore_subagent', 'allow');
+    }
+    this.subAgentSessionApproved = true;
+    return 'allow';
+  }
+
   /**
    * Parse tool arguments from a tool call.
    */
@@ -1374,6 +1409,20 @@ export class AgentCore {
           output = JSON.stringify({
             ok: false,
             error: `Permission denied by policy (${perm.reason || 'read_only mode'})`,
+          });
+          this.addToolMessage(output, tc.id);
+          this.currentTool = undefined;
+          return;
+        }
+      }
+
+      // One-time consent for remote sub-agent dispatch
+      if (tc.name === 'explore_subagent') {
+        const consent = await this.checkSubAgentConsent(tc.id);
+        if (consent === 'deny') {
+          output = JSON.stringify({
+            ok: false,
+            error: 'Sub-agent dispatch denied by user',
           });
           this.addToolMessage(output, tc.id);
           this.currentTool = undefined;
@@ -1552,7 +1601,16 @@ export class AgentCore {
             const target = perm.command || tc.name;
             this.securityManager.permissionManager.setRule(target, 'allow');
           }
-        } else if (!perm.allowed) {
+        } else {
+          // Requires confirmation but no interactive handler, or hard deny
+          permissionResults.set(tc.id, 'deny');
+        }
+      }
+
+      // One-time consent for remote sub-agent dispatch
+      if (tc.name === 'explore_subagent' && !permissionResults.has(tc.id)) {
+        const consent = await this.checkSubAgentConsent(tc.id);
+        if (consent === 'deny') {
           permissionResults.set(tc.id, 'deny');
         }
       }
@@ -1835,19 +1893,25 @@ export class AgentCore {
     return text.trim();
   }
 
-  /** Sync the dedicated todo system message for internal tracking (filtered out before sending to LLM). */
+  /** Sync the dedicated todo system message (kept right after system-base). */
   private syncTodoMessage() {
     const idx = this.messages.findIndex((m) => m.role === 'system' && m.id === 'system-todos');
     const content = this.buildTodoContext();
     if (idx >= 0) {
       this.messages[idx].content = content;
     } else {
-      this.messages.unshift({
+      const todoMsg: Message = {
         id: 'system-todos',
         role: 'system',
         content,
         timestamp: now(),
-      });
+      };
+      const baseIdx = this.messages.findIndex((m) => m.id === 'system-base');
+      if (baseIdx >= 0) {
+        this.messages.splice(baseIdx + 1, 0, todoMsg);
+      } else {
+        this.messages.unshift(todoMsg);
+      }
     }
   }
 

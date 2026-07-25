@@ -1,2 +1,0 @@
-$ eslint src --ext .ts,.tsx
-error: script "lint" exited with code 1

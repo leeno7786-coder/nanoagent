@@ -38,3 +38,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 fix_tools.py
 test-output.txt
 skills/test-*.json
+
+# pack output / scratch
+/*.tgz
