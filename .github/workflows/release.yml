@@ -52,7 +52,7 @@ jobs:
           else
             TAG="latest"        # stable release
           fi
-          echo "Publishing @omegaaillc/nanoagent@$VERSION with dist-tag '$TAG'"
+          echo "Publishing @omega3_0/nanoagent@$VERSION with dist-tag '$TAG'"
           npm publish --access public --tag "$TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -390,38 +390,74 @@ async function runSingleSubAgent(wctx, task, signal, hooks) {
         }
         let accumulatedContent = '';
         let streamedToolCalls = [];
-        const stream = streamChat(wctx.client, wctx.cfg, messages, toolDefs, signal, {
-            enableThinking: false,
-            onRetry: (info) => {
+        // Per-turn activity timeout (60s) to prevent sub-agent hangs on stalled endpoints
+        const turnController = new AbortController();
+        let turnTimer = setTimeout(() => {
+            turnController.abort();
+        }, 60000);
+        const resetTurnTimer = () => {
+            if (turnTimer)
+                clearTimeout(turnTimer);
+            turnTimer = setTimeout(() => {
+                turnController.abort();
+            }, 60000);
+        };
+        if (signal) {
+            if (signal.aborted)
+                turnController.abort();
+            else
+                signal.addEventListener('abort', () => turnController.abort());
+        }
+        try {
+            const stream = streamChat(wctx.client, wctx.cfg, messages, toolDefs, turnController.signal, {
+                enableThinking: false,
+                onRetry: (info) => {
+                    resetTurnTimer();
+                    emit({
+                        type: 'subagent_chunk',
+                        agent: wctx.endpoint.name,
+                        model: wctx.cfg.model,
+                        text: `\n[Rate limit retry (${info.status}): waiting ${(info.delayMs / 1000).toFixed(1)}s (attempt ${info.attempt}/${info.maxAttempts})]\n`,
+                    });
+                },
+            });
+            for await (const chunk of stream) {
+                resetTurnTimer();
+                if (chunk.content) {
+                    accumulatedContent += chunk.content;
+                    emit({
+                        type: 'subagent_chunk',
+                        agent: wctx.endpoint.name,
+                        model: wctx.cfg.model,
+                        text: chunk.content,
+                    });
+                }
+                if (chunk.reasoningContent) {
+                    emit({
+                        type: 'subagent_chunk',
+                        agent: wctx.endpoint.name,
+                        model: wctx.cfg.model,
+                        reasoning: chunk.reasoningContent,
+                    });
+                }
+                if (chunk.toolCalls && chunk.toolCalls.length > 0) {
+                    streamedToolCalls = chunk.toolCalls;
+                }
+            }
+        }
+        catch (e) {
+            if (turnController.signal.aborted) {
                 emit({
                     type: 'subagent_chunk',
                     agent: wctx.endpoint.name,
                     model: wctx.cfg.model,
-                    text: `\n[Rate limit retry (${info.status}): waiting ${(info.delayMs / 1000).toFixed(1)}s (attempt ${info.attempt}/${info.maxAttempts})]\n`,
-                });
-            },
-        });
-        for await (const chunk of stream) {
-            if (chunk.content) {
-                accumulatedContent += chunk.content;
-                emit({
-                    type: 'subagent_chunk',
-                    agent: wctx.endpoint.name,
-                    model: wctx.cfg.model,
-                    text: chunk.content,
+                    text: '\n[Sub-agent turn timed out — proceeding with gathered findings]\n',
                 });
             }
-            if (chunk.reasoningContent) {
-                emit({
-                    type: 'subagent_chunk',
-                    agent: wctx.endpoint.name,
-                    model: wctx.cfg.model,
-                    reasoning: chunk.reasoningContent,
-                });
-            }
-            if (chunk.toolCalls && chunk.toolCalls.length > 0) {
-                streamedToolCalls = chunk.toolCalls;
-            }
+        }
+        finally {
+            if (turnTimer)
+                clearTimeout(turnTimer);
         }
         const msg = {
             role: 'assistant',
@@ -658,17 +694,38 @@ export const MAX_CONCURRENT_SUBAGENTS = 3;
 class SubAgentScheduler {
     inUse = new Set();
     cursor = 0;
-    /** Borrow a free endpoint; returns undefined if all workers are busy. */
-    acquire(endpoints, preferred) {
+    queue = [];
+    /** Acquire an endpoint asynchronously, queuing if all workers are currently busy. */
+    async acquire(endpoints, preferred, timeoutMs = 60000) {
         const usable = endpoints.filter((e) => e.baseURL && e.model);
+        if (usable.length === 0)
+            return undefined;
+        let ep = this.tryAcquire(usable, preferred);
+        if (ep)
+            return ep;
+        // Queue call until an endpoint frees up or timeout expires
+        const start = Date.now();
+        while (!ep) {
+            const elapsed = Date.now() - start;
+            if (elapsed >= timeoutMs)
+                return undefined;
+            await new Promise((res) => {
+                const timer = setTimeout(res, Math.min(1000, timeoutMs - elapsed));
+                this.queue.push(() => {
+                    clearTimeout(timer);
+                    res();
+                });
+            });
+            ep = this.tryAcquire(usable, preferred);
+        }
+        return ep;
+    }
+    tryAcquire(usable, preferred) {
         if (preferred) {
             const p = usable.find((e) => e.name === preferred);
             if (p && !this.inUse.has(p.name)) {
                 this.inUse.add(p.name);
                 return p;
-            }
-            if (p) {
-                // Preferred endpoint is busy — fall through to any free one.
             }
         }
         const free = usable.filter((e) => !this.inUse.has(e.name));
@@ -681,6 +738,9 @@ class SubAgentScheduler {
     }
     release(name) {
         this.inUse.delete(name);
+        const next = this.queue.shift();
+        if (next)
+            next();
     }
 }
 const scheduler = new SubAgentScheduler();
@@ -701,8 +761,8 @@ export async function exploreWithSubAgent(base, pool, endpointName, task, signal
             toolCalls: 0,
         };
     }
-    // Acquire a distinct endpoint so concurrent calls fan out across the pool.
-    const ep = scheduler.acquire(endpoints, endpointName);
+    // Acquire a free endpoint, queuing if workers are currently busy.
+    const ep = await scheduler.acquire(endpoints, endpointName);
     if (!ep) {
         return {
             name: endpointName || 'pool',
@@ -711,7 +771,7 @@ export async function exploreWithSubAgent(base, pool, endpointName, task, signal
             ok: false,
             output: '',
             durationMs: 0,
-            error: 'all sub-agent workers are busy (max 4 concurrent)',
+            error: 'all sub-agent workers are busy (timed out waiting for endpoint slot)',
             toolCalls: 0,
         };
     }
