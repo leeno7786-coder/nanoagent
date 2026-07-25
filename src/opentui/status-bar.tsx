@@ -106,7 +106,9 @@ export function StatusBar({
         {todoCount > 0 && <text fg={theme.mutedFg}> · {todoCount}</text>}
       </box>
       <box flexDirection="row" paddingX={1} height={1} overflow="hidden">
-        <text fg={theme.mutedFg}>F1 help · F2 clear · F3 auto · F4 todo · F9 theme · F10 exit</text>
+        <text fg={theme.mutedFg}>
+          F1 help · F3 auto · F4 todo · F9 theme · F10 exit · drag=copy · ^D abort
+        </text>
         {!mouseEnabled && <text fg={theme.statusError}> [MOUSE OFF]</text>}
       </box>
     </box>

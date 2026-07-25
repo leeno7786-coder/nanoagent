@@ -267,8 +267,63 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     return () => clearTimeout(timer);
   }, [messages, todos]);
 
+  // Copy helper: OSC52 first (works over SSH), clipboardy as fallback
+  const copySelectionText = useCallback(
+    (text: string): boolean => {
+      if (!text) return false;
+      try {
+        if (renderer.copyToClipboardOSC52?.(text)) return true;
+      } catch {
+        /* OSC52 unsupported — fall back to native clipboard */
+      }
+      return copyToClipboard(text);
+    },
+    [renderer]
+  );
+
+  // Auto-copy mouse selection on drag end (Windows Terminal behavior):
+  // highlight text with the mouse and it's on the clipboard immediately.
+  useEffect(() => {
+    const onSelection = (selection: { isDragging: boolean; getSelectedText?: () => string }) => {
+      if (selection.isDragging) return;
+      const text = selection.getSelectedText?.() ?? '';
+      if (text.trim()) {
+        copySelectionText(text);
+        renderer.clearSelection();
+      }
+    };
+    renderer.on('selection', onSelection);
+    return () => {
+      renderer.off('selection', onSelection);
+    };
+  }, [renderer, copySelectionText]);
+
   // Global keyboard shortcuts
   useKeyboard((keyEvent) => {
+    // Ctrl+C: copy the mouse-highlighted selection (if any) — falls through
+    // to the selected-message copy below when there is no active selection
+    if (keyEvent.ctrl && (keyEvent.name === 'c' || keyEvent.name === 'C')) {
+      const sel = renderer.getSelection?.();
+      const text = sel?.getSelectedText?.() ?? '';
+      if (text.trim()) {
+        copySelectionText(text);
+        renderer.clearSelection();
+        keyEvent.preventDefault?.();
+        return;
+      }
+    }
+
+    // Ctrl+D: abort the running agent (frees Ctrl+C for copy, like a shell)
+    if (keyEvent.ctrl && (keyEvent.name === 'd' || keyEvent.name === 'D')) {
+      const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
+      if (busy) {
+        abortControllerRef.current?.abort();
+        agentRef.current?.setState('idle');
+      }
+      keyEvent.preventDefault?.();
+      return;
+    }
+
     if (pendingPermissionReq) {
       if (keyEvent.name === 'y' || keyEvent.name === 'Y') {
         handlePermissionDecision('allow');
