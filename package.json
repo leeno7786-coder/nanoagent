@@ -28,8 +28,7 @@
     "url": "https://github.com/leeno7786-coder/nanoagent/issues"
   },
   "publishConfig": {
-    "access": "public",
-    "registry": "https://npm.pkg.github.com"
+    "access": "public"
   },
   "keywords": [
     "agent",
