@@ -188,6 +188,13 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       }
       return;
     case 'skill': {
+      const skillName = args.trim().replace(/^skill:/, '');
+      if (skillName) {
+        // Activate via the agent's built-in /skill: flow (loads + notifies
+        // the model in-conversation so it actually adopts the skill)
+        await agent.run(`/skill:${skillName}`, signal);
+        return;
+      }
       const allSkills = loadSkills();
       const content =
         allSkills.size > 0
@@ -465,22 +472,10 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       }
       const skill = getSkill(loadName) || skills.get(loadName);
       if (skill) {
-        const loaded = agent.skillManager.load(
-          skill,
-          agent.messages,
-          agent.isSmallModel,
-          undefined
-        );
-        if (loaded) {
-          const skillDesc = skill.description || '';
-          pushAssistant(
-            agent,
-            `**Skill Loaded: ${skill.name}**\n\n${skillDesc}\n\nWhat would you like to do with this skill?`,
-            setMessages
-          );
-        } else {
-          pushAssistant(agent, `Skill "${loadName}" is already loaded.`, setMessages);
-        }
+        // Delegate to the agent's built-in /skill-load flow: loads the skill
+        // AND injects a system notice so the model acknowledges + activates it
+        await agent.run(text, signal);
+        return;
       } else {
         pushAssistant(
           agent,
@@ -848,20 +843,10 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           : undefined);
 
       if (targetSkill) {
-        const loaded = agent.skillManager.load(
-          targetSkill,
-          agent.messages,
-          agent.isSmallModel,
-          undefined
-        );
-        const skillDesc = targetSkill.welcomeMessage || targetSkill.description || '';
-        pushAssistant(
-          agent,
-          loaded
-            ? `**Skill Loaded: ${targetSkill.name}**\n\n${skillDesc}\n\nWhat would you like to do with this skill?`
-            : `Skill "${targetSkill.name}" is already loaded.`,
-          setMessages
-        );
+        // Delegate to the agent's built-in /skill: activation flow — loads
+        // the skill AND tells the model in-conversation (system notice),
+        // so it actually starts behaving per the skill's guidance
+        await agent.run(`/skill:${cleanSkillName}`, signal);
         return;
       }
 

@@ -73,7 +73,9 @@ export class SkillManager {
     const matched = matchSkillTriggers(userText, allSkills);
     const newlyLoaded: Skill[] = [];
 
-    for (const skill of matched) {
+    // Cap at 2 skills per turn — flooding the context with 5 skill prompts
+    // dilutes all of them (especially for small models)
+    for (const skill of matched.slice(0, 2)) {
       if (this._autoLoadedSkills.has(skill.name)) continue;
       if (this.activeSkills.has(skill.name)) continue;
       this.load(skill, messages, smallModel, onUpdate);

@@ -55,6 +55,45 @@ describe('skills.ts - Skill Management', () => {
       const matched = matchSkillTriggers('prefix-test', skills);
       expect(matched.length).toBe(1);
     });
+
+    it('matches multi-word triggers order-independently (all words present)', () => {
+      const skills = new Map([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ['fd', { name: 'fd', triggers: ['frontend design'] } as any],
+      ]);
+      expect(matchSkillTriggers('design a frontend for my app', skills).length).toBe(1);
+      expect(matchSkillTriggers('I need a frontend design', skills).length).toBe(1);
+      // missing one of the words -> no match
+      expect(matchSkillTriggers('design a poster', skills).length).toBe(0);
+    });
+
+    it('single-word triggers require a word boundary (no substring false positives)', () => {
+      const skills = new Map([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ['api', { name: 'api', triggers: ['api'] } as any],
+      ]);
+      expect(matchSkillTriggers('build an api endpoint', skills).length).toBe(1);
+      // 'capitalize' contains 'api' but not as a word
+      expect(matchSkillTriggers('capitalize the first letter', skills).length).toBe(0);
+    });
+
+    it('ignores words of 2 chars or less inside trigger phrases', () => {
+      const skills = new Map([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ['ui', { name: 'ui', triggers: ['ui design'] } as any],
+      ]);
+      // 'ui' is dropped (too short); 'design' must match as a word
+      expect(matchSkillTriggers('design a poster', skills).length).toBe(1);
+      expect(matchSkillTriggers('redesign', skills).length).toBe(0);
+    });
+
+    it('skips already-enabled skills', () => {
+      const skills = new Map([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ['on', { name: 'on', triggers: ['deploy'], enabled: true } as any],
+      ]);
+      expect(matchSkillTriggers('deploy the app', skills).length).toBe(0);
+    });
   });
 
   describe('loadTemplates', () => {

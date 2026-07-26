@@ -320,6 +320,28 @@ export function loadSkills(): Map<string, Skill> {
   return map;
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Match a trigger phrase against user text.
+ * Multi-word phrases match when ALL significant words appear (order-
+ * independent) — 'frontend design' matches 'design a frontend'. Single-word
+ * triggers require a word-boundary match to avoid false positives.
+ */
+function triggerMatches(trigger: string, lowerText: string): boolean {
+  const words = trigger
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+  if (words.length === 0) return false;
+  if (words.length === 1) {
+    return new RegExp(`\\b${escapeRegExp(words[0])}\\b`, 'i').test(lowerText);
+  }
+  return words.every((w) => lowerText.includes(w));
+}
+
 export function matchSkillTriggers(text: string, skills: Map<string, Skill>): Skill[] {
   const lower = text.toLowerCase();
   const matched: Skill[] = [];
@@ -332,7 +354,7 @@ export function matchSkillTriggers(text: string, skills: Map<string, Skill>): Sk
     // Check triggers
     if (skill.triggers?.length) {
       for (const trigger of skill.triggers) {
-        if (lower.includes(trigger.toLowerCase())) {
+        if (triggerMatches(trigger, lower)) {
           matched.push(skill);
           seen.add(name);
           break;

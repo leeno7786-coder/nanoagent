@@ -286,4 +286,40 @@ describe('handleSlashCommand', () => {
     await handleSlashCommand('/frobnicate', h.ctx);
     expect(lastAssistantContent(h)).toContain('Unknown command: /frobnicate');
   });
+
+  it('/<skill-name> delegates to the agent /skill: activation flow', async () => {
+    h.ctx.skills.set('fake-skill', {
+      name: 'fake-skill',
+      description: 'test skill',
+      prompt: 'do things',
+      enabled: false,
+    } as never);
+    await handleSlashCommand('/fake-skill', h.ctx);
+    expect(stub.runCalls).toHaveLength(1);
+    expect(stub.runCalls[0].text).toBe('/skill:fake-skill');
+  });
+
+  it('/skill <name> delegates to the activation flow', async () => {
+    await handleSlashCommand('/skill some-tool', h.ctx);
+    expect(stub.runCalls).toHaveLength(1);
+    expect(stub.runCalls[0].text).toBe('/skill:some-tool');
+  });
+
+  it('/skill with no args lists available skills', async () => {
+    await handleSlashCommand('/skill', h.ctx);
+    expect(stub.runCalls).toHaveLength(0);
+    expect(lastAssistantContent(h).length).toBeGreaterThan(0);
+  });
+
+  it('/skill-load <name> delegates to the agent activation flow', async () => {
+    h.ctx.skills.set('fake-skill', {
+      name: 'fake-skill',
+      description: 'test skill',
+      prompt: 'do things',
+      enabled: false,
+    } as never);
+    await handleSlashCommand('/skill-load fake-skill', h.ctx);
+    expect(stub.runCalls).toHaveLength(1);
+    expect(stub.runCalls[0].text).toBe('/skill-load fake-skill');
+  });
 });
