@@ -36,8 +36,8 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install dependencies (npm ci)
-        run: npm ci
+      - name: Install dependencies (bun, frozen lockfile)
+        run: bun install --frozen-lockfile
 
       - name: Run tests
         run: bun test
