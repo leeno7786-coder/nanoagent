@@ -512,6 +512,64 @@ export async function awaitEndpointRateLimit(
   }
 }
 
+// --- Proactive token bucket rate limiter per endpoint ---
+
+interface TokenBucket {
+  tokens: number;
+  lastRefill: number;
+  maxTokens: number;
+  refillIntervalMs: number;
+}
+
+const endpointTokenBuckets = new Map<string, TokenBucket>();
+
+function getEndpointKey(baseURL?: string): string | undefined {
+  if (!baseURL) return undefined;
+  return baseURL.toLowerCase().replace(/\/+$/, '');
+}
+
+/**
+ * Wait until a rate-limit token is available for the given endpoint.
+ * Blocks the caller until a token can be consumed or signal aborted.
+ * No-op when rpm <= 0 (unlimited mode).
+ */
+async function awaitRateLimitToken(
+  baseURL: string | undefined,
+  rpm: number,
+  signal?: AbortSignal
+): Promise<void> {
+  if (rpm <= 0) return;
+  const key = getEndpointKey(baseURL);
+  if (!key) return;
+
+  let bucket = endpointTokenBuckets.get(key);
+  if (!bucket) {
+    bucket = {
+      tokens: rpm,
+      lastRefill: Date.now(),
+      maxTokens: rpm,
+      refillIntervalMs: Math.max(Math.round(60_000 / rpm), 50),
+    };
+    endpointTokenBuckets.set(key, bucket);
+  }
+
+  while (true) {
+    const now = Date.now();
+    const elapsed = now - bucket.lastRefill;
+    const newTokens = Math.floor(elapsed / bucket.refillIntervalMs);
+    if (newTokens > 0) {
+      bucket.tokens = Math.min(bucket.maxTokens, bucket.tokens + newTokens);
+      bucket.lastRefill += newTokens * bucket.refillIntervalMs;
+    }
+    if (bucket.tokens >= 1) {
+      bucket.tokens--;
+      return;
+    }
+    const waitMs = bucket.refillIntervalMs - (now - bucket.lastRefill);
+    await sleepWithSignal(Math.max(waitMs, 50), signal);
+  }
+}
+
 /**
  * Extract retry-after delay (in milliseconds) from error headers or message text.
  */
@@ -761,6 +819,7 @@ export async function chat(
   while (true) {
     try {
       await awaitEndpointRateLimit(cfg.baseURL, signal);
+      await awaitRateLimitToken(cfg.baseURL, cfg.maxRequestsPerMinute ?? 0, signal);
 
       const isQwen = cfg.model.toLowerCase().includes('qwen');
       const enableThinking = options?.enableThinking ?? (isQwen ? true : false);
@@ -899,6 +958,7 @@ export async function* streamChat(
   while (true) {
     try {
       await awaitEndpointRateLimit(cfg.baseURL, signal);
+      await awaitRateLimitToken(cfg.baseURL, cfg.maxRequestsPerMinute ?? 0, signal);
 
       const isQwen = cfg.model.toLowerCase().includes('qwen');
       const enableThinking = options?.enableThinking ?? (isQwen ? true : false);

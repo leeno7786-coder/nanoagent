@@ -235,6 +235,9 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
       cfg.apiKey = process.env.OPENAI_API_KEY;
     }
   }
+  if (cfg.maxRequestsPerMinute === undefined && cfg.baseURL?.includes('openrouter.ai')) {
+    cfg.maxRequestsPerMinute = 30;
+  }
   if (process.env.QWEN_MODEL) {
     const preset = MODELS[process.env.QWEN_MODEL];
     if (preset) {
@@ -262,6 +265,10 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   if (process.env.QWEN_RATE_LIMIT_MS) {
     const n = parseInt(process.env.QWEN_RATE_LIMIT_MS, 10);
     if (!Number.isNaN(n) && n >= 0 && n <= 10000) cfg.rateLimitMs = n;
+  }
+  if (process.env.QWEN_MAX_RPM) {
+    const n = parseInt(process.env.QWEN_MAX_RPM, 10);
+    if (!Number.isNaN(n) && n >= 0) cfg.maxRequestsPerMinute = n;
   }
 
   // Tool cache configuration
@@ -435,6 +442,12 @@ export function validateConfig(cfg: Config): {
   if (cfg.retryCount !== undefined) {
     if (cfg.retryCount < 0 || cfg.retryCount > 10) {
       errors.push(`retryCount must be between 0 and 10, got ${cfg.retryCount}`);
+    }
+  }
+
+  if (cfg.maxRequestsPerMinute !== undefined) {
+    if (cfg.maxRequestsPerMinute < 0 || cfg.maxRequestsPerMinute > 10000) {
+      errors.push(`maxRequestsPerMinute must be between 0 and 10000, got ${cfg.maxRequestsPerMinute}`);
     }
   }
 

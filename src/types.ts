@@ -53,6 +53,8 @@ export interface Config {
   provider?: string;
 
   rateLimitMs?: number;
+  /** Proactive per-endpoint rate limit in requests per minute (0 = unlimited). */
+  maxRequestsPerMinute?: number;
   /** Enable tool execution caching (default: true). */
   toolCacheEnabled?: boolean;
   /** TTL for tool cache entries in milliseconds (default: 30000). */

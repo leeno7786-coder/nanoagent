@@ -32,7 +32,6 @@ package-lock.json
 
 # Build/packaging
 prerelease/
-scripts/
 *.tgz
 
 # CI/CD
