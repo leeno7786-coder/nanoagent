@@ -86,7 +86,7 @@ async function main(): Promise<number> {
         '\n⚡ NanoAgent TUI requires the Bun runtime for native terminal rendering.\n' +
           '   Install it (no build step needed):\n\n' +
           '     curl -fsSL https://bun.sh/install | bash   (macOS/Linux)\n' +
-          '     powershell -c "irm bun.sh/install.ps1"      (Windows)\n\n' +
+          '     powershell -c "irm bun.sh/install.ps1|iex"   (Windows)\n\n' +
           '   Headless mode works on plain Node.js: try `nanoagent run --prompt "..."`.\n'
       );
       return 1;

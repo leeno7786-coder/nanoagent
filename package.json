@@ -1,6 +1,6 @@
 {
   "name": "@omega3_0/nanoagent",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "description": "Ultra-lightweight, scalable CLI/TUI coding agent optimized for tiny local models & remote runtimes",
   "module": "dist/opentui/index.js",
   "type": "module",
@@ -66,6 +66,7 @@
     "ci": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build",
     "build": "tsc -p tsconfig.json && node -e \"try{require('fs').chmodSync('dist/main.js',0o755)}catch(e){}\"",
     "build:bun": "bun build src/main.ts src/opentui/index.tsx --outdir dist --minify --target node",
+    "postinstall": "node scripts/install-bun.mjs",
     "prepack": "npm run build",
     "package": "npm pack"
   },
