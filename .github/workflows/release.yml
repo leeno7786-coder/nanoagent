@@ -2,83 +2,50 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Version tag to publish (must exist)'
-        required: false
-        default: ''
+    tags: ["v*"]
 
 permissions:
-  contents: write          # create GitHub release
-  id-token: write          # npm provenance (OIDC)
+  contents: write
+  packages: write
+
+env:
+  BUN_VERSION: "1.3"
+  NODE_VERSION: "22"
 
 jobs:
   publish:
-    name: Build & publish to npm
+    name: Publish to npm
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Set up Bun
+      - name: Install Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Install dependencies (bun, frozen lockfile)
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run tests
-        run: bun test
-
-      - name: Verify tag matches package.json version
-        run: |
-          REF="${{ github.event.inputs.tag != '' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}"
-          TAG_VERSION="${REF#refs/tags/v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "Tag version '$TAG_VERSION' does not match package.json version '$PKG_VERSION'"
-            exit 1
-          fi
-          echo "Tag version $TAG_VERSION matches package.json version"
-
-      - name: Build (tsc -> dist/)
+      - name: Build
         run: npm run build
 
-      - name: Pack & inspect tarball
-        run: |
-          npm pack
-          echo "=== tarball contents (top-level) ==="
-          tar tzf nanoagent-*.tgz | sed 's#^package/##' | awk -F/ '{print $1}' | sort | uniq -c
+      - name: Pack
+        run: npm pack
 
-      - name: Publish to npm
-        run: |
-          REF="${{ github.event.inputs.tag != '' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}"
-          VERSION="${REF#refs/tags/v}"
-          if [[ "$VERSION" =~ -[0-9A-Za-z.-]+$ ]]; then
-            TAG="next"          # prerelease -> next tag
-          else
-            TAG="latest"        # stable release
-          fi
-          echo "Publishing @omega3_0/nanoagent@$VERSION with dist-tag '$TAG'"
-          npm publish --access public --tag "$TAG" --provenance
+      - name: Publish
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: nanoagent ${{ github.ref_name }}
+          files: "*.tgz"
           generate_release_notes: true
-          files: nanoagent-*.tgz

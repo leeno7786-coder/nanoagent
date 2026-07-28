@@ -1,4 +1,4 @@
-export { RUNTIME_PROVIDERS } from './providers/catalog.js';
+export { RUNTIME_PROVIDERS } from './catalog.js';
 export {
   sanitizeBaseURL,
   getProviderBaseURL,
@@ -12,9 +12,9 @@ export {
   getRemoteProviders,
   providerRequiresAuth,
   getApiKeyEnvVar,
-} from './providers/lookup.js';
+} from './lookup.js';
 export {
   fetchLocalModels,
   checkRuntimeHealth,
   fetchOpenRouterModels,
-} from './providers/runtime.js';
+} from './runtime.js';

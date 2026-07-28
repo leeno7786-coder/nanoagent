@@ -1,0 +1,14 @@
+node_modules
+.git
+.gitignore
+.github
+dist
+*.tgz
+.env*
+*.md
+!.env.example
+!README.md
+AGENTS.md
+SECURITY*
+tests/
+src/**/*.test.ts

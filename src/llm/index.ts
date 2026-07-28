@@ -1,5 +1,6 @@
-export { ApiError } from './llm/index.js';
-export type { ChatMessage, ChatResponse, ChatRequestOptions } from './llm/index.js';
+export { ApiError } from './types.js';
+export type { ChatMessage, ChatResponse, ChatRequestOptions } from './types.js';
+
 export {
   normalizeContent,
   isLocalProvider,
@@ -11,14 +12,22 @@ export {
   extractRetryAfterDelayMs,
   calculateBackoffDelay,
   getMaxOutputTokens,
+} from './utils.js';
+
+export {
   doesChatFitInContext,
   estimateModelContextSize,
   effectiveContextSize,
   getModelCompactionSettings,
-  createClient,
+} from './context.js';
+
+export { createClient } from './client.js';
+
+export {
   markEndpointRateLimited,
   awaitEndpointRateLimit,
   errorMessage,
-  chat,
-  streamChat,
-} from './llm/index.js';
+} from './rate-limit.js';
+
+export { chat } from './chat.js';
+export { streamChat } from './stream.js';

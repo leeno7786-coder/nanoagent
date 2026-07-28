@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/react */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useKeyboard } from '@opentui/react';
 import type { CliRenderer } from '@opentui/core';
 import { AgentCore } from '../agent.js';
@@ -15,21 +15,7 @@ import {
   autoSaveSession,
   buildConfigSnapshot,
 } from '../store.js';
-import type {
-  Message,
-  AgentState,
-  Todo,
-  ToolResult,
-  Session,
-  Skill,
-  SkillCommand,
-  Config,
-  RuntimeProvider,
-  ModelInfo,
-} from '../types.js';
-import type { PermissionRequest } from '../security/index.js';
-import type { SubAgentProgressEvent } from '../tools/index.js';
-import type { SubAgentResult } from '../subagents.js';
+import type { Session, Config } from '../types.js';
 import { ChatScreen } from './chat-screen.js';
 import { ErrorBoundary } from './error-boundary.js';
 import { HelpOverlay, HistoryOverlay } from './overlays.js';
@@ -43,69 +29,32 @@ import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
 import { getProviderBaseURL } from '../providers.js';
 import { handleSlashCommand, checkAndAutoCompact } from './slash-commands.js';
 import { logError } from '../log.js';
-
-type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'todo' | null;
+import { useAppStore } from './app-store.js';
 
 export function App({ renderer }: { renderer: CliRenderer }) {
-  const [overlay, setOverlay] = useState<Overlay>(null);
-  const [showTodos, setShowTodos] = useState(false);
-  const [mouseEnabled, setMouseEnabled] = useState(true);
-  const [theme, setTheme] = useState<Theme>(() => {
-    const cfg = loadConfig();
-    return THEMES[cfg.theme || ''] || DEFAULT_THEME;
-  });
+  const store = useAppStore;
+  const overlay = useAppStore((s) => s.overlay);
+  const showTodos = useAppStore((s) => s.showTodos);
+  const mouseEnabled = useAppStore((s) => s.mouseEnabled);
+  const theme = useAppStore((s) => s.theme);
+  const state = useAppStore((s) => s.state);
+  const messages = useAppStore((s) => s.messages);
+  const todos = useAppStore((s) => s.todos);
+  const toolResults = useAppStore((s) => s.toolResults);
+  const currentTool = useAppStore((s) => s.currentTool);
+  const lastUsage = useAppStore((s) => s.lastUsage);
+  const totalUsage = useAppStore((s) => s.totalUsage);
+  const subAgents = useAppStore((s) => s.subAgents);
+  const sessions = useAppStore((s) => s.sessions);
+  const selectedMessageIndex = useAppStore((s) => s.selectedMessageIndex);
+  const pendingPermissionReq = useAppStore((s) => s.pendingPermissionReq);
 
-  // Permission state
-  const [pendingPermissionReq, setPendingPermissionReq] = useState<PermissionRequest | null>(null);
-  const permissionResolverRef = useRef<
-    ((choice: 'allow' | 'always_allow' | 'deny') => void) | null
-  >(null);
-
-  const handlePermissionDecision = useCallback((decision: 'allow' | 'always_allow' | 'deny') => {
-    const resolve = permissionResolverRef.current;
-    permissionResolverRef.current = null;
-    setPendingPermissionReq(null);
-    if (resolve) {
-      resolve(decision);
-    }
-  }, []);
-
-  // Agent state
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [state, setState] = useState<AgentState>('idle');
-  const cfg = loadConfig();
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [toolResults, setToolResults] = useState<ToolResult[]>([]);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [currentTool, setCurrentTool] = useState<
-    | {
-        name: string;
-        args: string;
-      }
-    | undefined
-  >();
-  const [lastUsage, setLastUsage] = useState<
-    { input_tokens: number; output_tokens: number } | undefined
-  >();
-  const [totalUsage, setTotalUsage] = useState({
-    input_tokens: 0,
-    output_tokens: 0,
-  });
-  const [subAgents, setSubAgents] = useState<
-    Array<{
-      id: string;
-      prompt: string;
-      focusPath?: string;
-      status: 'running' | 'done' | 'error';
-      log?: SubAgentProgressEvent[];
-      result?: SubAgentResult;
-    }>
-  >([]);
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [selectedMessageIndex, setSelectedMessageIndex] = useState<number | null>(null);
-  const [skills, setSkills] = useState<Map<string, Skill>>(new Map());
-  const [, setSkillCommands] = useState<SkillCommand[]>([]);
+  const {
+    setOverlay, setShowTodos, toggleShowTodos, setMouseEnabled, cycleTheme,
+    setSelectedMessageIndex, setPendingPermissionReq, setPermissionResolver,
+    syncFromAgent, setMessages, setTodos, setToolResults, pushToolResult,
+    setSessions, setCurrentSessionId, setElapsedMs, setSkills, setSkillCommands,
+  } = store.getState();
 
   const agentRef = useRef<AgentCore | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -116,63 +65,40 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   useEffect(() => {
     const cfg = loadConfig();
     const agent = new AgentCore(cfg);
-    agent.todos = todos;
+    agent.todos = [];
     agent.onUpdate = () => {
-      const lastMsg = agent.messages[agent.messages.length - 1];
-      if (process.env.QWEN_DEBUG_LLM) {
-        logError(
-          '[app onUpdate] state:',
-          agent.state,
-          'lastMsg.role:',
-          lastMsg?.role,
-          'lastMsg.content:',
-          JSON.stringify(lastMsg?.content?.slice(0, 60))
-        );
-      }
-      setMessages([...agent.messages]);
-      setState(agent.state);
-      setTodos([...agent.todos]);
-      setCurrentTool(agent.currentTool);
-      setLastUsage(agent.lastUsage);
-      setTotalUsage({ ...agent.totalUsage });
-      setSubAgents(agent.getSubAgentSnapshot());
+      syncFromAgent(agent);
     };
     agent.onToolResult = (r) => {
-      setToolResults((prev) => [...prev.slice(-99), r]);
+      store.getState().pushToolResult(r);
     };
     agent.onPermissionRequest = (req) => {
-      setPendingPermissionReq(req);
+      store.getState().setPendingPermissionReq(req);
       return new Promise<'allow' | 'always_allow' | 'deny'>((resolve) => {
-        permissionResolverRef.current = resolve;
+        store.getState().setPermissionResolver(resolve);
       });
     };
     agent.init().then(() => {
       agentRef.current = agent;
-      setMessages([...agent.messages]);
+      syncFromAgent(agent);
     });
 
-    // Load skills
     const loadedSkills = loadSkills();
-    setSkills(loadedSkills);
-    setSkillCommands(getSkillCommands(loadedSkills));
+    store.getState().setSkills(loadedSkills);
+    store.getState().setSkillCommands(getSkillCommands(loadedSkills));
 
-    // Set up skill refresh handler
     const handleSkillRefresh = () => {
       const refreshedSkills = loadSkills();
-      setSkills(refreshedSkills);
-      setSkillCommands(getSkillCommands(refreshedSkills));
+      store.getState().setSkills(refreshedSkills);
+      store.getState().setSkillCommands(getSkillCommands(refreshedSkills));
     };
-
-    // Store refresh handler in global scope for skills overlay to call
     (globalThis as Record<string, unknown>)['__refreshSkills'] = handleSkillRefresh;
 
-    // Graceful shutdown on SIGINT (Ctrl+C) — cleanup is also handled by main.ts
     const handleSigint = () => {
       agent.shutdown().catch(() => {});
     };
     process.on('SIGINT', handleSigint);
 
-    // Show initial welcome banner if no messages exist
     if (agent.messages.length === 0) {
       agent.messages.push({
         id: 'welcome-banner',
@@ -180,20 +106,22 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         content: `${NANOAGENT_BANNER}\nWelcome to **NanoAgent**! Type \`/help\` for commands or \`/config\` to manage settings.`,
         timestamp: Date.now(),
       });
-      setMessages([...agent.messages]);
+      syncFromAgent(agent);
     }
 
-    // Warn if no API key is configured
     if (!cfg.apiKey || cfg.apiKey.trim() === '') {
       agent.messages.push({
         id: Math.random().toString(36).slice(2, 10),
         role: 'system',
         content:
-          '⚠️ No API key configured. Use /connect to select a provider and enter your API key.',
+          '\u26A0\uFE0F No API key configured. Use /connect to select a provider and enter your API key.',
         timestamp: Date.now(),
       });
-      setMessages([...agent.messages]);
+      syncFromAgent(agent);
     }
+
+    // Initialize theme from config
+    store.getState().setTheme(THEMES[cfg.theme || ''] || DEFAULT_THEME);
 
     return () => {
       process.off('SIGINT', handleSigint);
@@ -206,11 +134,9 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         clearInterval(compactTimerRef.current);
         compactTimerRef.current = null;
       }
-      // Auto-save session on exit
       if (agent && agent.messages.length > 0) {
         autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
       }
-      // Clean up global skill refresh handler
       delete (globalThis as Record<string, unknown>)['__refreshSkills'];
     };
   }, []);
@@ -235,7 +161,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   useEffect(() => {
     compactTimerRef.current = setInterval(() => {
       if (agentRef.current) {
-        checkAndAutoCompact(agentRef.current, setMessages);
+        checkAndAutoCompact(agentRef.current, (msgs) => store.getState().setMessages(msgs));
       }
     }, 10000);
     return () => {
@@ -246,7 +172,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     };
   }, []);
 
-  // Auto-save session periodically
   useEffect(() => {
     const agent = agentRef.current;
     if (!agent || agent.messages.length <= 2) return;
@@ -267,22 +192,19 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     return () => clearTimeout(timer);
   }, [messages, todos]);
 
-  // Copy helper: OSC52 first (works over SSH), clipboardy as fallback
   const copySelectionText = useCallback(
     (text: string): boolean => {
       if (!text) return false;
       try {
         if (renderer.copyToClipboardOSC52?.(text)) return true;
       } catch {
-        /* OSC52 unsupported — fall back to native clipboard */
+        /* fall back */
       }
       return copyToClipboard(text);
     },
     [renderer]
   );
 
-  // Auto-copy mouse selection on drag end (Windows Terminal behavior):
-  // highlight text with the mouse and it's on the clipboard immediately.
   useEffect(() => {
     const onSelection = (selection: { isDragging: boolean; getSelectedText?: () => string }) => {
       if (selection.isDragging) return;
@@ -297,175 +219,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       renderer.off('selection', onSelection);
     };
   }, [renderer, copySelectionText]);
-
-  // Global keyboard shortcuts
-  useKeyboard((keyEvent) => {
-    // Ctrl+C: copy the mouse-highlighted selection (if any) — falls through
-    // to the selected-message copy below when there is no active selection
-    if (keyEvent.ctrl && (keyEvent.name === 'c' || keyEvent.name === 'C')) {
-      const sel = renderer.getSelection?.();
-      const text = sel?.getSelectedText?.() ?? '';
-      if (text.trim()) {
-        copySelectionText(text);
-        renderer.clearSelection();
-        keyEvent.preventDefault?.();
-        return;
-      }
-    }
-
-    // Ctrl+D: abort the running agent (frees Ctrl+C for copy, like a shell)
-    if (keyEvent.ctrl && (keyEvent.name === 'd' || keyEvent.name === 'D')) {
-      const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
-      if (busy) {
-        abortControllerRef.current?.abort();
-        agentRef.current?.setState('idle');
-      }
-      keyEvent.preventDefault?.();
-      return;
-    }
-
-    if (pendingPermissionReq) {
-      if (keyEvent.name === 'y' || keyEvent.name === 'Y') {
-        handlePermissionDecision('allow');
-        keyEvent.preventDefault?.();
-        return;
-      }
-      if (keyEvent.name === 'a' || keyEvent.name === 'A') {
-        handlePermissionDecision('always_allow');
-        keyEvent.preventDefault?.();
-        return;
-      }
-      if (
-        keyEvent.name === 'n' ||
-        keyEvent.name === 'N' ||
-        keyEvent.name === 'escape' ||
-        keyEvent.name === 'Escape'
-      ) {
-        handlePermissionDecision('deny');
-        keyEvent.preventDefault?.();
-        return;
-      }
-    }
-
-    if (overlay) {
-      if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
-        setOverlay(null);
-        keyEvent.preventDefault?.();
-      }
-      return;
-    }
-
-    if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
-      const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
-      if (busy) {
-        abortControllerRef.current?.abort();
-        const agent = agentRef.current;
-        if (agent) {
-          agent.setState('idle');
-        }
-        keyEvent.preventDefault?.();
-      }
-      return;
-    }
-
-    if (keyEvent.name === 'f1' || keyEvent.name === 'F1') {
-      setOverlay('help');
-      keyEvent.preventDefault?.();
-    } else if (keyEvent.name === 'f2' || keyEvent.name === 'F2') {
-      const agent = agentRef.current;
-      if (agent) {
-        agent.messages = agent.messages.filter((m) => m.role === 'system');
-        setMessages([...agent.messages]);
-      }
-    } else if (keyEvent.name === 'f4' || keyEvent.name === 'F4') {
-      setShowTodos((s) => !s);
-    } else if (keyEvent.name === 'f5' || keyEvent.name === 'F5') {
-      handleSave();
-    } else if (keyEvent.name === 'f6' || keyEvent.name === 'F6') {
-      setSessions(loadSessions());
-      setOverlay('history');
-    } else if (keyEvent.name === 'f8' || keyEvent.name === 'F8') {
-      setOverlay('skills');
-    } else if (keyEvent.name === 'f7' || keyEvent.name === 'F7') {
-      const next = !mouseEnabled;
-      renderer.useMouse = next;
-      setMouseEnabled(next);
-    } else if (keyEvent.name === 'f9' || keyEvent.name === 'F9') {
-      const names = Object.keys(THEMES);
-      const idx = names.indexOf(theme.name);
-      const next = names[(idx + 1) % names.length];
-      setTheme(THEMES[next]);
-    } else if (keyEvent.name === 'f10' || keyEvent.name === 'F10') {
-      const agent = agentRef.current;
-      if (agent) {
-        autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
-      }
-      process.exit(0);
-    } else if (keyEvent.name === 'f12' || keyEvent.name === 'F12') {
-      setOverlay('todo');
-      keyEvent.preventDefault?.();
-    }
-
-    // Ctrl+Up/Down: Navigate message selection
-    if (keyEvent.ctrl) {
-      if (keyEvent.name === 'Up' || keyEvent.name === 'ArrowUp') {
-        const agent = agentRef.current;
-        if (agent && agent.messages.length > 0) {
-          const nonSystem = agent.messages.filter((m) => m.role !== 'system');
-          setSelectedMessageIndex((prev) => {
-            const current = prev !== null ? prev : nonSystem.length - 1;
-            const newIndex = Math.min(current + 1, nonSystem.length - 1);
-            return newIndex;
-          });
-          keyEvent.preventDefault?.();
-          keyEvent.stopPropagation?.();
-        }
-      } else if (keyEvent.name === 'Down' || keyEvent.name === 'ArrowDown') {
-        const agent = agentRef.current;
-        if (agent && agent.messages.length > 0) {
-          setSelectedMessageIndex((prev) => {
-            const current = prev !== null ? prev : 0;
-            const newIndex = Math.max(current - 1, 0);
-            return newIndex;
-          });
-          keyEvent.preventDefault?.();
-          keyEvent.stopPropagation?.();
-        }
-      } else if (keyEvent.name === 'c' || keyEvent.name === 'C') {
-        // Ctrl+C: Copy selected message
-        const agent = agentRef.current;
-        if (agent && selectedMessageIndex !== null) {
-          const nonSystem = agent.messages.filter((m) => m.role !== 'system');
-          const selectedMessage = nonSystem[selectedMessageIndex];
-          if (selectedMessage) {
-            const success = copyToClipboard(selectedMessage.content);
-            if (!success) {
-              agent.messages.push({
-                id: Math.random().toString(36).slice(2, 10),
-                role: 'system',
-                content: `Copied message ${selectedMessage.id.slice(0, 8)} to clipboard.`,
-                timestamp: Date.now(),
-              });
-              setMessages([...agent.messages]);
-            }
-            setSelectedMessageIndex(null);
-          }
-          keyEvent.preventDefault?.();
-          keyEvent.stopPropagation?.();
-        }
-      }
-    }
-
-    // Escape: Clear message selection
-    if (
-      (keyEvent.name === 'escape' || keyEvent.name === 'Escape') &&
-      selectedMessageIndex !== null
-    ) {
-      setSelectedMessageIndex(null);
-      keyEvent.preventDefault?.();
-      keyEvent.stopPropagation?.();
-    }
-  });
 
   const handleSave = useCallback(() => {
     const agent = agentRef.current;
@@ -485,13 +238,12 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     saveSession(session);
     setSessions(loadSessions());
     setCurrentSessionId(id);
-    const msg: Message = {
+    agent.messages.push({
       id: Math.random().toString(36).slice(2, 10),
       role: 'system',
       content: `Session saved as ${id} (Model: \`${agent.cfg.model}\`).`,
       timestamp: Date.now(),
-    };
-    agent.messages.push(msg);
+    });
     setMessages([...agent.messages]);
   }, []);
 
@@ -499,8 +251,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     (newName: string) => {
       const agent = agentRef.current;
       if (!agent) return;
-
       const name = newName.trim();
+      const csId = store.getState().currentSessionId;
       if (!name) {
         agent.messages.push({
           id: Math.random().toString(36).slice(2, 10),
@@ -511,57 +263,51 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         setMessages([...agent.messages]);
         return;
       }
-
-      // If we have a current session, rename it
-      if (currentSessionId) {
-        const success = renameSession(currentSessionId, name);
+      if (csId) {
+        const success = renameSession(csId, name);
         if (success) {
           setCurrentSessionId(name);
           setSessions(loadSessions());
           agent.messages.push({
             id: Math.random().toString(36).slice(2, 10),
             role: 'system',
-            content: `Session renamed from ${currentSessionId} to ${name}.`,
+            content: `Session renamed from ${csId} to ${name}.`,
             timestamp: Date.now(),
           });
-          setMessages([...agent.messages]);
         } else {
           agent.messages.push({
             id: Math.random().toString(36).slice(2, 10),
             role: 'system',
-            content: `Failed to rename session. Session '${currentSessionId}' not found.`,
+            content: `Failed to rename session. Session '${csId}' not found.`,
             timestamp: Date.now(),
           });
-          setMessages([...agent.messages]);
         }
-        return;
+      } else {
+        const sessId = name;
+        const session: Session = {
+          id: sessId,
+          messages: agent.messages,
+          todos: agent.todos.filter((t) => !t.done),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          model: agent.cfg.model,
+          baseURL: agent.cfg.baseURL,
+          provider: agent.cfg.provider,
+          config: buildConfigSnapshot(agent.cfg),
+        };
+        saveSession(session);
+        setSessions(loadSessions());
+        setCurrentSessionId(sessId);
+        agent.messages.push({
+          id: Math.random().toString(36).slice(2, 10),
+          role: 'system',
+          content: `Session saved as ${sessId} (Model: \`${agent.cfg.model}\`).`,
+          timestamp: Date.now(),
+        });
       }
-
-      // Otherwise, save current messages as a new session with the given name
-      const id = name;
-      const session: Session = {
-        id,
-        messages: agent.messages,
-        todos: agent.todos.filter((t) => !t.done),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        model: agent.cfg.model,
-        baseURL: agent.cfg.baseURL,
-        provider: agent.cfg.provider,
-        config: buildConfigSnapshot(agent.cfg),
-      };
-      saveSession(session);
-      setSessions(loadSessions());
-      setCurrentSessionId(id);
-      agent.messages.push({
-        id: Math.random().toString(36).slice(2, 10),
-        role: 'system',
-        content: `Session saved as ${id} (Model: \`${agent.cfg.model}\`).`,
-        timestamp: Date.now(),
-      });
       setMessages([...agent.messages]);
     },
-    [currentSessionId]
+    []
   );
 
   const handleLoad = useCallback(async (session: Session) => {
@@ -585,8 +331,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
     await agent.reconfigure(nextConfig);
 
-    setMessages([...agent.messages]);
-    setTodos([...agent.todos]);
+    syncFromAgent(agent);
     setToolResults([]);
     setCurrentSessionId(session.id);
 
@@ -594,11 +339,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     agent.messages.push({
       id: Math.random().toString(36).slice(2, 10),
       role: 'system',
-      content: `🔄 **Session restored**: Model \`${newModel}\` on \`${restoredProvider}\` (${session.messages.length} messages loaded).`,
+      content: `\uD83D\uDD04 **Session restored**: Model \`${newModel}\` on \`${restoredProvider}\` (${session.messages.length} messages loaded).`,
       timestamp: Date.now(),
     });
     setMessages([...agent.messages]);
-
     agent.onUpdate?.();
     setOverlay(null);
   }, []);
@@ -619,21 +363,22 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
       try {
         if (text.startsWith('/')) {
+          const st = store.getState();
           await handleSlashCommand(text, {
             agent,
             signal,
-            cfg,
-            todos,
-            skills,
-            setMessages,
-            setToolResults,
-            setTodos,
-            setSessions,
-            setOverlay,
-            setShowTodos,
-            setTheme,
-            setSkills,
-            setSkillCommands,
+            cfg: agent.cfg,
+            todos: st.todos,
+            skills: st.skills,
+            setMessages: st.setMessages,
+            setToolResults: st.setToolResults,
+            setTodos: st.setTodos,
+            setSessions: st.setSessions,
+            setOverlay: st.setOverlay,
+            setShowTodos: st.setShowTodos,
+            setTheme: st.setTheme,
+            setSkills: st.setSkills,
+            setSkillCommands: st.setSkillCommands,
             handleSave,
             handleLoad,
             handleRename,
@@ -641,9 +386,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           return;
         }
 
-        // Check if auto-compaction is needed before sending
         if (agent) {
-          checkAndAutoCompact(agent, setMessages);
+          checkAndAutoCompact(agent, (msgs) => store.getState().setMessages(msgs));
         }
 
         await agent.run(text, signal);
@@ -672,27 +416,28 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const closeOverlay = useCallback(() => setOverlay(null), []);
 
   const handleSkillsChange = useCallback(() => {
-    setSkills(loadSkills());
-    setSkillCommands(getSkillCommands(loadSkills()));
+    const loaded = loadSkills();
+    setSkills(loaded);
+    setSkillCommands(getSkillCommands(loaded));
   }, []);
 
   const handleSkillsClose = useCallback(() => {
     setOverlay(null);
-    setSkills(loadSkills());
-    setSkillCommands(getSkillCommands(loadSkills()));
+    const loaded = loadSkills();
+    setSkills(loaded);
+    setSkillCommands(getSkillCommands(loaded));
   }, []);
 
   const handleSkillSelect = useCallback((skillName: string) => {
     setOverlay(null);
     const skill = getSkill(skillName);
     if (skill && agentRef.current) {
-      // Dispatch the load command to the agent so it triggers the LLM logic
       agentRef.current.run(`/skill-load ${skill.name}`).catch(console.error);
     }
   }, []);
 
   const handleConnectSelect = useCallback(
-    async (provider: RuntimeProvider, model: ModelInfo, apiKey?: string) => {
+    async (provider: import('../types.js').RuntimeProvider, model: import('../types.js').ModelInfo, apiKey?: string) => {
       const agent = agentRef.current;
       if (agent) {
         const newConfig: Partial<Config> = {
@@ -709,10 +454,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         }
         await agent.reconfigure(newConfig);
         const ctxNote = agent.cfg.modelContextLength
-          ? ` · ${Math.round(agent.cfg.modelContextLength / 1000)}k ctx`
+          ? ` \u00B7 ${Math.round(agent.cfg.modelContextLength / 1000)}k ctx`
           : '';
         const paramNote =
-          agent.cfg.modelParamBillions !== undefined ? ` · ~${agent.cfg.modelParamBillions}B` : '';
+          agent.cfg.modelParamBillions !== undefined ? ` \u00B7 ~${agent.cfg.modelParamBillions}B` : '';
         agent.messages.push({
           id: Math.random().toString(36).slice(2, 10),
           role: 'assistant',
@@ -726,16 +471,169 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   );
 
   const handleTodoToggle = useCallback((id: string) => {
-    const agent = agentRef.current;
-    if (agent) agent.toggleTodo(id);
+    agentRef.current?.toggleTodo(id);
   }, []);
 
   const handleTodoDelete = useCallback((id: string) => {
-    const agent = agentRef.current;
-    if (agent) agent.removeTodo(id);
+    agentRef.current?.removeTodo(id);
   }, []);
 
   const handleCloseTodos = useCallback(() => setShowTodos(false), []);
+
+  // Keyboard shortcuts
+  useKeyboard((keyEvent) => {
+    const st = store.getState();
+
+    if (keyEvent.ctrl && (keyEvent.name === 'c' || keyEvent.name === 'C')) {
+      const sel = renderer.getSelection?.();
+      const text = sel?.getSelectedText?.() ?? '';
+      if (text.trim()) {
+        copySelectionText(text);
+        renderer.clearSelection();
+        keyEvent.preventDefault?.();
+        return;
+      }
+    }
+
+    if (keyEvent.ctrl && (keyEvent.name === 'd' || keyEvent.name === 'D')) {
+      const busy = st.state !== 'idle' && st.state !== 'error' && st.state !== 'waiting_for_user';
+      if (busy) {
+        abortControllerRef.current?.abort();
+        agentRef.current?.setState('idle');
+      }
+      keyEvent.preventDefault?.();
+      return;
+    }
+
+    if (st.pendingPermissionReq) {
+      if (keyEvent.name === 'y' || keyEvent.name === 'Y') {
+        const resolve = st.permissionResolver;
+        st.setPermissionResolver(null);
+        st.setPendingPermissionReq(null);
+        resolve?.('allow');
+        keyEvent.preventDefault?.();
+        return;
+      }
+      if (keyEvent.name === 'a' || keyEvent.name === 'A') {
+        const resolve = st.permissionResolver;
+        st.setPermissionResolver(null);
+        st.setPendingPermissionReq(null);
+        resolve?.('always_allow');
+        keyEvent.preventDefault?.();
+        return;
+      }
+      if (keyEvent.name === 'n' || keyEvent.name === 'N' || keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
+        const resolve = st.permissionResolver;
+        st.setPermissionResolver(null);
+        st.setPendingPermissionReq(null);
+        resolve?.('deny');
+        keyEvent.preventDefault?.();
+        return;
+      }
+    }
+
+    if (st.overlay) {
+      if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
+        st.setOverlay(null);
+        keyEvent.preventDefault?.();
+      }
+      return;
+    }
+
+    if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
+      const busy = st.state !== 'idle' && st.state !== 'error' && st.state !== 'waiting_for_user';
+      if (busy) {
+        abortControllerRef.current?.abort();
+        agentRef.current?.setState('idle');
+      } else if (st.selectedMessageIndex !== null) {
+        st.setSelectedMessageIndex(null);
+      }
+      keyEvent.preventDefault?.();
+      return;
+    }
+
+    if (keyEvent.name === 'f1' || keyEvent.name === 'F1') {
+      st.setOverlay('help');
+      keyEvent.preventDefault?.();
+    } else if (keyEvent.name === 'f2' || keyEvent.name === 'F2') {
+      const agent = agentRef.current;
+      if (agent) {
+        agent.messages = agent.messages.filter((m) => m.role === 'system');
+        st.setMessages([...agent.messages]);
+      }
+    } else if (keyEvent.name === 'f4' || keyEvent.name === 'F4') {
+      st.toggleShowTodos();
+    } else if (keyEvent.name === 'f5' || keyEvent.name === 'F5') {
+      handleSave();
+    } else if (keyEvent.name === 'f6' || keyEvent.name === 'F6') {
+      st.setSessions(loadSessions());
+      st.setOverlay('history');
+    } else if (keyEvent.name === 'f8' || keyEvent.name === 'F8') {
+      st.setOverlay('skills');
+    } else if (keyEvent.name === 'f7' || keyEvent.name === 'F7') {
+      const next = !st.mouseEnabled;
+      renderer.useMouse = next;
+      st.setMouseEnabled(next);
+    } else if (keyEvent.name === 'f9' || keyEvent.name === 'F9') {
+      st.cycleTheme(Object.keys(THEMES), THEMES);
+    } else if (keyEvent.name === 'f10' || keyEvent.name === 'F10') {
+      const agent = agentRef.current;
+      if (agent) {
+        autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
+      }
+      process.exit(0);
+    } else if (keyEvent.name === 'f12' || keyEvent.name === 'F12') {
+      st.setOverlay('todo');
+      keyEvent.preventDefault?.();
+    }
+
+    if (keyEvent.ctrl) {
+      if (keyEvent.name === 'Up' || keyEvent.name === 'ArrowUp') {
+        const agent = agentRef.current;
+        if (agent && agent.messages.length > 0) {
+          const nonSystem = agent.messages.filter((m) => m.role !== 'system');
+          st.setSelectedMessageIndex((prev) => {
+            const current = prev !== null ? prev : nonSystem.length - 1;
+            return Math.min(current + 1, nonSystem.length - 1);
+          });
+          keyEvent.preventDefault?.();
+          keyEvent.stopPropagation?.();
+        }
+      } else if (keyEvent.name === 'Down' || keyEvent.name === 'ArrowDown') {
+        const agent = agentRef.current;
+        if (agent && agent.messages.length > 0) {
+          const nonSystem = agent.messages.filter((m) => m.role !== 'system');
+          st.setSelectedMessageIndex((prev) => {
+            const current = prev !== null ? prev : 0;
+            return Math.max(current - 1, 0);
+          });
+          keyEvent.preventDefault?.();
+          keyEvent.stopPropagation?.();
+        }
+      } else if (keyEvent.name === 'c' || keyEvent.name === 'C') {
+        const agent = agentRef.current;
+        if (agent && st.selectedMessageIndex !== null) {
+          const nonSystem = agent.messages.filter((m) => m.role !== 'system');
+          const selectedMessage = nonSystem[st.selectedMessageIndex];
+          if (selectedMessage) {
+            const success = copyToClipboard(selectedMessage.content);
+            if (!success) {
+              agent.messages.push({
+                id: Math.random().toString(36).slice(2, 10),
+                role: 'system',
+                content: `Copied message ${selectedMessage.id.slice(0, 8)} to clipboard.`,
+                timestamp: Date.now(),
+              });
+              st.setMessages([...agent.messages]);
+            }
+            st.setSelectedMessageIndex(null);
+          }
+          keyEvent.preventDefault?.();
+          keyEvent.stopPropagation?.();
+        }
+      }
+    }
+  });
 
   if (overlay === 'help') {
     return (
@@ -767,7 +665,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
           <SkillsOverlay
             theme={theme}
-            skills={skills}
+            skills={useAppStore.getState().skills}
             onSkillsChange={handleSkillsChange}
             onClose={handleSkillsClose}
             onSkillSelect={handleSkillSelect}
@@ -806,7 +704,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           currentTool={currentTool}
           lastUsage={lastUsage}
           totalUsage={totalUsage}
-          elapsedMs={elapsedMs}
+          elapsedMs={useAppStore.getState().elapsedMs}
           theme={theme}
           mouseEnabled={mouseEnabled}
           mcpToolCount={agentRef.current?.mcpManager?.totalTools ?? 0}
@@ -843,7 +741,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
                 marginY={1}
               >
                 <text fg={theme.warningFg || theme.toolFg}>
-                  {`⚠️ PERMISSION REQUIRED: ${pendingPermissionReq.category.toUpperCase()} OPERATION`}
+                  {`\u26A0\uFE0F PERMISSION REQUIRED: ${pendingPermissionReq.category.toUpperCase()} OPERATION`}
                 </text>
                 <text fg={theme.headerFg}>
                   {`Tool: ${pendingPermissionReq.tool}${pendingPermissionReq.command ? ` | Command: "${pendingPermissionReq.command}"` : ''}`}
@@ -862,7 +760,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               state={state}
               model={agentRef.current?.cfg.model || ''}
               todoCount={todos.length}
-              elapsedMs={elapsedMs}
+              elapsedMs={useAppStore.getState().elapsedMs}
               currentTool={currentTool}
               lastUsage={lastUsage}
               totalUsage={totalUsage}

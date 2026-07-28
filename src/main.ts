@@ -10,6 +10,7 @@
 
 import { runCli } from './cli/index.js';
 import { printRootHelp } from './cli/help.js';
+import { ensureBunAvailable, installBun } from './bun-detect.js';
 
 /** Registered cleanup callbacks invoked during graceful shutdown. */
 const cleanupFns: Array<() => void | Promise<void>> = [];
@@ -71,24 +72,45 @@ async function main(): Promise<number> {
     const isTui = argv.length === 0 || argv[0] === 'tui';
     if (isTui && typeof (globalThis as Record<string, unknown>).Bun === 'undefined') {
       const { spawnSync } = await import('child_process');
-      const bunCmd = process.platform === 'win32' ? 'bun.exe' : 'bun';
-      try {
-        const check = spawnSync(bunCmd, ['--version'], { stdio: 'ignore' });
-        if (check.status === 0) {
-          const res = spawnSync(bunCmd, [process.argv[1], ...argv], { stdio: 'inherit' });
-          return res.status ?? 0;
-        }
-      } catch {
-        /* Bun binary not on PATH */
+      const bunPath = await ensureBunAvailable();
+
+      if (bunPath) {
+        const res = spawnSync(bunPath, [process.argv[1], ...argv], { stdio: 'inherit' });
+        return res.status ?? 0;
       }
 
       console.error(
         '\n⚡ NanoAgent TUI requires the Bun runtime for native terminal rendering.\n' +
           '   Install it (no build step needed):\n\n' +
           '     curl -fsSL https://bun.sh/install | bash   (macOS/Linux)\n' +
-          '     powershell -c "irm bun.sh/install.ps1|iex"   (Windows)\n\n' +
+          '     powershell -c "irm bun.sh/install.ps1|iex"   (Windows)\n' +
+          '     npm install -g bun   (via npm, requires Rust)\n\n' +
           '   Headless mode works on plain Node.js: try `nanoagent run --prompt "..."`.\n'
       );
+
+      const stdin = process.stdin;
+      if (stdin.isTTY) {
+        console.error('   Would you like to install Bun now? [y/N] ');
+        stdin.setRawMode?.(true);
+        const answer = await new Promise<string>((resolve) => {
+          stdin.once('data', (buf) => {
+            resolve(buf.toString().trim().toLowerCase());
+          });
+        });
+        stdin.setRawMode?.(false);
+        if (answer === 'y' || answer === 'yes') {
+          console.error('   Installing Bun...\n');
+          if (installBun()) {
+            console.error('   Bun installed! Restarting...\n');
+            const newBunPath = await ensureBunAvailable();
+            if (newBunPath) {
+              return spawnSync(newBunPath, [process.argv[1], ...argv], { stdio: 'inherit' }).status ?? 0;
+            }
+          }
+          console.error('   Installation failed. Please install manually.\n');
+        }
+      }
+
       return 1;
     }
 

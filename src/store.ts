@@ -1,9 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'module';
 import type { Todo, Session, Message, Config } from './types.js';
 import { logError } from './log.js';
+import { VersionedStore } from './storage.js';
+
+const SESSION_VERSION = 1;
 
 export function buildConfigSnapshot(cfg: Config): Partial<Config> {
   return {
@@ -22,6 +25,36 @@ export function buildConfigSnapshot(cfg: Config): Partial<Config> {
     workspace: cfg.workspace,
     provider: cfg.provider,
   };
+}
+
+const requireOptional = createRequire(import.meta.url);
+const DATA_DIR = join(homedir(), '.qwen-agent-tui');
+const SESSION_DIR = join(DATA_DIR, 'sessions');
+const HISTORY_FILE = join(DATA_DIR, 'input-history.json');
+
+function ensureDir() {
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+  if (!existsSync(SESSION_DIR)) mkdirSync(SESSION_DIR, { recursive: true });
+}
+
+function hashWorkspace(ws: string): string {
+  let h = 0;
+  for (let i = 0; i < ws.length; i++) {
+    h = ((h << 5) - h + ws.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(16).padStart(8, '0');
+}
+
+function sessionStore(id: string): VersionedStore<Session> {
+  return new VersionedStore<Session>(join(SESSION_DIR, `${id}.json`), {
+    currentVersion: SESSION_VERSION,
+    backupCount: 3,
+  });
+}
+
+function stripEnvelope(raw: Record<string, unknown>): Session {
+  const { _version, _savedAt, ...rest } = raw;
+  return rest as unknown as Session;
 }
 
 /**
@@ -49,54 +82,21 @@ export function autoSaveSession(
     provider: cfg?.provider,
     config: cfg ? buildConfigSnapshot(cfg) : undefined,
   };
-  try {
-    writeFileSync(join(SESSION_DIR, `${id}.json`), JSON.stringify(session, null, 2), 'utf-8');
-  } catch (error) {
-    logError('Failed to auto-save session:', error);
-  }
+  sessionStore(id).write(session);
   return id;
-}
-
-const requireOptional = createRequire(import.meta.url);
-const DATA_DIR = join(homedir(), '.qwen-agent-tui');
-const SESSION_DIR = join(DATA_DIR, 'sessions');
-const HISTORY_FILE = join(DATA_DIR, 'input-history.json');
-
-function ensureDir() {
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-  if (!existsSync(SESSION_DIR)) mkdirSync(SESSION_DIR, { recursive: true });
-}
-
-function hashWorkspace(ws: string): string {
-  let h = 0;
-  for (let i = 0; i < ws.length; i++) {
-    h = ((h << 5) - h + ws.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h).toString(16).padStart(8, '0');
 }
 
 export function loadSession(id: string): Session | null {
   ensureDir();
-  const path = join(SESSION_DIR, `${id}.json`);
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, 'utf-8'));
-  } catch {
-    return null;
-  }
+  const store = sessionStore(id);
+  const raw = store.read();
+  if (!raw) return null;
+  return stripEnvelope(raw as unknown as Record<string, unknown>);
 }
 
 export function saveSession(session: Session): string {
   ensureDir();
-  try {
-    writeFileSync(
-      join(SESSION_DIR, `${session.id}.json`),
-      JSON.stringify(session, null, 2),
-      'utf-8'
-    );
-  } catch (error) {
-    logError('Failed to save session:', error);
-  }
+  sessionStore(session.id).write(session);
   return session.id;
 }
 
@@ -135,7 +135,8 @@ export function renameSession(oldId: string, newId: string): boolean {
     }
     session.id = newId;
     session.updatedAt = Date.now();
-    writeFileSync(newPath, JSON.stringify(session, null, 2), 'utf-8');
+    const store = sessionStore(newId);
+    store.write(session);
     rmSync(oldPath);
     return true;
   } catch {
@@ -147,7 +148,7 @@ export function listSessions(): string[] {
   ensureDir();
   try {
     return readdirSync(SESSION_DIR)
-      .filter((f) => f.endsWith('.json'))
+      .filter((f) => f.endsWith('.json') && !f.endsWith('.bak'))
       .map((f) => f.replace('.json', ''));
   } catch {
     return [];
