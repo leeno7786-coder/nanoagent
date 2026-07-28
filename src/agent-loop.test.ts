@@ -295,12 +295,9 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(dangling).toEqual([]);
   });
 
-  it('asks for consent once per session before explore_subagent dispatch', async () => {
+  it('does not prompt for consent before explore_subagent (read-only tool)', async () => {
     const agent = newAgent(
       makeConfig(ws, {
-        // Pool explicitly disabled: resolveSubAgentPool returns undefined
-        // instantly instead of probing the real local LM Studio (slow).
-        // Consent is still requested BEFORE the pool check fails.
         subagents: { enabled: false, endpoints: [] },
       } as Partial<Config>)
     );
@@ -329,29 +326,8 @@ describe('AgentCore run loop (behavioral)', () => {
     scripted.push(dispatch, [{ content: 'done2' }]);
     await agent.run('explore again');
 
-    // Prompted on the first dispatch only
-    expect(promptCount).toBe(1);
+    // explore_subagent is read-only — PermissionManager handles policy
+    expect(promptCount).toBe(0);
     expect(agent.state).toBe('idle');
   }, 15000);
-
-  it('respects a denied explore_subagent consent', async () => {
-    const agent = newAgent();
-    await agent.init();
-
-    agent.onPermissionRequest = async () => 'deny';
-
-    scripted.push([
-      {
-        toolCalls: [
-          { id: 'sa-9', name: 'explore_subagent', arguments: JSON.stringify({ prompt: 'look' }) },
-        ],
-      },
-    ]);
-    scripted.push([{ content: 'fallback answer' }]);
-    await agent.run('explore');
-
-    const toolMsg = agent.messages.find((m) => m.role === 'tool' && m.toolCallId === 'sa-9');
-    expect(toolMsg).toBeDefined();
-    expect(toolMsg!.content).toContain('denied');
-  });
 });
