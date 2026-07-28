@@ -1,5 +1,4 @@
 import { createRequire } from 'module';
-import { logError } from '../log.js';
 
 export function normalizeContent(v: unknown): string {
   if (v === null || v === undefined) return '';

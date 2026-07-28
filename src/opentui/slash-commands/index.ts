@@ -1,4 +1,3 @@
-import type { AgentCore } from '../../agent.js';
 import { loadSkills, getSkill, getSkillCommands } from '../../skills.js';
 import { loadConfig, saveConfigFile } from '../../config.js';
 import {
@@ -18,7 +17,6 @@ import {
 } from '../../store.js';
 import { THEMES } from '../theme.js';
 import { build_memory_graph, get_graph_stats, get_analysis_report } from '../../graph/tools.js';
-import { logError } from '../../log.js';
 export type { SlashCommandContext } from './types.js';
 import type { SlashCommandContext } from './types.js';
 import { checkAndAutoCompact, pushAssistant } from './utils.js';

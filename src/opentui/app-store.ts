@@ -1,7 +1,6 @@
 import { create } from 'zustand';
-import type { Message, AgentState, Todo, ToolResult, Session, Skill, SkillCommand, Config, RuntimeProvider, ModelInfo } from '../types.js';
+import type { Message, AgentState, Todo, ToolResult, Session, Skill, SkillCommand } from '../types.js';
 import type { PermissionRequest } from '../security/index.js';
-import type { SubAgentProgressEvent } from '../tools/index.js';
 import type { SubAgentSnapshot } from '../agent-subagents.js';
 import type { Theme } from './theme.js';
 import type { AgentCore } from '../agent.js';

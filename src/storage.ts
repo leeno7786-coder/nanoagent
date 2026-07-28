@@ -1,7 +1,7 @@
 import {
-  existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, copyFileSync, renameSync,
+  existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, copyFileSync,
 } from 'fs';
-import { join, dirname, basename, extname } from 'path';
+import { join, dirname, basename } from 'path';
 import { logError } from './log.js';
 
 const DEFAULT_BACKUP_COUNT = 3;

@@ -24,11 +24,10 @@ import { ConnectOverlay } from './connect-overlay.js';
 import { StatusBar } from './status-bar.js';
 import { TodoSidebar } from './todo-sidebar.js';
 import { TodoPage } from './todo-page.js';
-import { THEMES, DEFAULT_THEME, type Theme } from './theme.js';
+import { THEMES, DEFAULT_THEME } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
 import { getProviderBaseURL } from '../providers.js';
 import { handleSlashCommand, checkAndAutoCompact } from './slash-commands.js';
-import { logError } from '../log.js';
 import { useAppStore } from './app-store.js';
 
 export function App({ renderer }: { renderer: CliRenderer }) {
@@ -50,9 +49,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const pendingPermissionReq = useAppStore((s) => s.pendingPermissionReq);
 
   const {
-    setOverlay, setShowTodos, toggleShowTodos, setMouseEnabled, cycleTheme,
-    setSelectedMessageIndex, setPendingPermissionReq, setPermissionResolver,
-    syncFromAgent, setMessages, setTodos, setToolResults, pushToolResult,
+    setOverlay, setShowTodos,
+    syncFromAgent, setMessages, setToolResults,
     setSessions, setCurrentSessionId, setElapsedMs, setSkills, setSkillCommands,
   } = store.getState();
 
@@ -602,7 +600,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       } else if (keyEvent.name === 'Down' || keyEvent.name === 'ArrowDown') {
         const agent = agentRef.current;
         if (agent && agent.messages.length > 0) {
-          const nonSystem = agent.messages.filter((m) => m.role !== 'system');
           st.setSelectedMessageIndex((prev) => {
             const current = prev !== null ? prev : 0;
             return Math.max(current - 1, 0);

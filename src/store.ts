@@ -3,7 +3,6 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'module';
 import type { Todo, Session, Message, Config } from './types.js';
-import { logError } from './log.js';
 import { VersionedStore } from './storage.js';
 
 const SESSION_VERSION = 1;
@@ -53,7 +52,7 @@ function sessionStore(id: string): VersionedStore<Session> {
 }
 
 function stripEnvelope(raw: Record<string, unknown>): Session {
-  const { _version, _savedAt, ...rest } = raw;
+  const { ...rest } = raw;
   return rest as unknown as Session;
 }
 
@@ -122,8 +121,6 @@ export function deleteSession(id: string): void {
 export function renameSession(oldId: string, newId: string): boolean {
   ensureDir();
   const oldPath = join(SESSION_DIR, `${oldId}.json`);
-  const newPath = join(SESSION_DIR, `${newId}.json`);
-
   if (!existsSync(oldPath)) {
     return false;
   }

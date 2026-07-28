@@ -1,4 +1,4 @@
-import { createClient, chat, streamChat } from '../llm.js';
+import { createClient } from '../llm.js';
 import type { ChatMessage } from '../llm.js';
 import {
   toOpenAI,
