@@ -104,70 +104,9 @@ function parseCommand(cmd: string): { command: string; args: string[]; useShell:
   };
 }
 
-/** Whitelist of allowed commands for security. */
-const ALLOWED_COMMANDS = new Set([
-  // Read-only commands
-  'ls',
-  'dir',
-  'pwd',
-  'cat',
-  'echo',
-  'date',
-  'whoami',
-  // Git operations
-  'git status',
-  'git diff',
-  'git log',
-  'git show',
-  'git branch',
-  'git commit',
-  'git push',
-  'git pull',
-  // Build tools
-  'npm run',
-  'yarn',
-  'pnpm',
-  'bun run',
-  'bun test',
-  'bun build',
-  'tsc',
-  'eslint',
-  'prettier',
-  'jest',
-  'test',
-  'uv',
-  'uvx',
-  'python',
-  'python3',
-  'pytest',
-  'pip',
-  'pip3',
-  'curl',
-  'wget',
-  'git clone',
-  'docker',
-  'huggingface-cli',
-  // File operations (with proper validation)
-  'read_file',
-  'write_file',
-  'edit_file',
-  'edit_file_lines',
-  'list_dir',
-  'stat_path',
-  'find_files',
-  'search_and_view',
-]);
-
-/** Validate a command string against dangerous patterns. Permission policy is handled by PermissionManager. */
+/** Block only provably destructive commands. Broader policy is handled by SecurityManager and PermissionManager. */
 function validateCommand(cmd: string): boolean {
-  if (isDangerous(cmd)) return false;
-  // Check the allowlist: allow known commands, reject unknown ones
-  const cmdName = cmd.trim().split(/\s+/)[0]?.toLowerCase();
-  if (!cmdName) return false;
-  for (const allowed of ALLOWED_COMMANDS) {
-    if (cmd.trim().toLowerCase().startsWith(allowed)) return true;
-  }
-  return false;
+  return !isDangerous(cmd);
 }
 
 function formatExecResult(ok: boolean, out: string, err?: string, code?: number | null): string {
@@ -189,7 +128,7 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
       return JSON.stringify({ ok: false, error: 'Failed to parse command' });
     }
 
-    // SECURITY: Validate command against whitelist
+    // SECURITY: Block destructive commands (rm -rf, mkfs, fork bombs, etc.)
     if (!validateCommand(cmd)) {
       return JSON.stringify({ ok: false, error: 'Command not allowed' });
     }
@@ -273,7 +212,7 @@ function execCmdAsync(
       return;
     }
 
-    // SECURITY: Validate command against whitelist
+    // SECURITY: Block destructive commands (rm -rf, mkfs, fork bombs, etc.)
     if (!validateCommand(cmd)) {
       resolvePromise(JSON.stringify({ ok: false, error: 'Command not allowed' }));
       return;
