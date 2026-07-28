@@ -236,7 +236,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     }
   }
   if (cfg.maxRequestsPerMinute === undefined && cfg.baseURL?.includes('openrouter.ai')) {
-    cfg.maxRequestsPerMinute = 30;
+    cfg.maxRequestsPerMinute = 20;
   }
   if (process.env.QWEN_MODEL) {
     const preset = MODELS[process.env.QWEN_MODEL];

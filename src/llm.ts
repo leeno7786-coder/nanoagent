@@ -672,6 +672,13 @@ function errorMessage(
       ? `Model not found (404): ${detail}`
       : `Model not found (404). Try a different model name.`;
   }
+  if (status === 400) {
+    const detail = extractApiMessage(originalErr);
+    const delaySecStr = retryDelayMs ? ` in ${(retryDelayMs / 1000).toFixed(1)}s` : '';
+    return attempt >= maxAttempts
+      ? `Bad request (400).${detail ? ' ' + detail : ''} Maximum retries reached (${maxAttempts}).`
+      : `Bad request (400).${detail ? ' ' + detail : ''} Retrying${delaySecStr} (attempt ${attempt}/${maxAttempts})...`;
+  }
   if (status === 422) {
     const detail = extractApiMessage(originalErr);
     return `Request rejected (422): ${detail || 'Check max_tokens, model name, or message format.'}`;
@@ -734,6 +741,9 @@ function shouldRetry(status?: number, attempt?: number, err?: unknown): boolean 
   if (status === undefined) return true; // network error
   if (status === 429) return true;
   if (status === 502 || status === 503 || status === 504 || status === 529) return true;
+  // Some providers (OpenRouter free tier, others) return 400 instead of 429
+  // when the underlying provider is rate-limited or overloaded.
+  if (status === 400 && attempt !== undefined && attempt < 3) return true;
   if (status >= 500) return true;
   // Mistral/OpenRouter transient validation or rate-limiting subcodes
   if (status === 422 && attempt !== undefined && attempt < 2) return true;
@@ -751,7 +761,7 @@ export function calculateBackoffDelay(attempt: number, status: number, err?: unk
   }
 
   const isRateLimitOrOverload =
-    status === 429 || status === 503 || status === 529 || status === 504;
+    status === 400 || status === 429 || status === 503 || status === 529 || status === 504;
   const baseMs = isRateLimitOrOverload ? 2000 : 1000;
   const capMs = isRateLimitOrOverload ? 60000 : 30000;
 
@@ -908,7 +918,7 @@ export async function chat(
       const errStatus = e.status || e.status_code || e.response?.status || 0;
 
       const isRateLimit =
-        errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
+        errStatus === 400 || errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
 
       if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
@@ -1143,7 +1153,7 @@ export async function* streamChat(
       lastError = err as Error;
 
       const isRateLimit =
-        errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
+        errStatus === 400 || errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
 
       if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
