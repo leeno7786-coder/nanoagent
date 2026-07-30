@@ -74,6 +74,23 @@ export function SkillsOverlay({
   const [message, setMessage] = useState<string | null>(null);
   const [installUrl, setInstallUrl] = useState('');
   const [installing, setInstalling] = useState(false);
+  /** Focus within create form: 0=name, 1=desc, 2=prompt, 3=create, 4=cancel */
+  const [createFocus, setCreateFocus] = useState(0);
+  /** Focus within install form: 0=url, 1=install, 2=cancel */
+  const [installFocus, setInstallFocus] = useState(0);
+
+  const CREATE_FOCUS_MAX = 4;
+  const INSTALL_FOCUS_MAX = 2;
+
+  const resetFormState = useCallback(() => {
+    setNewSkillName('');
+    setNewSkillDesc('');
+    setNewSkillPrompt('');
+    setInstallUrl('');
+    setError(null);
+    setCreateFocus(0);
+    setInstallFocus(0);
+  }, []);
 
   // Load skill config on mount to apply user preferences
   useEffect(() => {
@@ -377,19 +394,18 @@ export function SkillsOverlay({
             break;
           case 'install':
             setMode('install');
-            setSelected(0);
+            setInstallFocus(0);
+            setSelected(3);
             break;
           case 'cancel':
             setMode('list');
-            setNewSkillName('');
-            setNewSkillDesc('');
-            setNewSkillPrompt('');
-            setInstallUrl('');
-            setError(null);
+            resetFormState();
+            setSelected(0);
             break;
           case 'new':
             setMode('create');
-            setSelected(0);
+            setCreateFocus(0);
+            setSelected(5);
             break;
           case 'toggle':
             handleToggleSkill();
@@ -425,6 +441,7 @@ export function SkillsOverlay({
       handleInstallSkill,
       onSkillSelect,
       onClose,
+      resetFormState,
     ]
   );
 
@@ -434,6 +451,7 @@ export function SkillsOverlay({
         if (mode === 'create' || mode === 'detail' || mode === 'commands' || mode === 'install') {
           setMode('list');
           setSelected(0);
+          resetFormState();
           keyEvent.preventDefault?.();
           keyEvent.stopPropagation?.();
         } else {
@@ -445,20 +463,70 @@ export function SkillsOverlay({
       }
 
       if (keyEvent.name === 'return' || keyEvent.name === 'Enter') {
-        handleSelect(selected);
+        // Create/install forms don't render the list-mode action rows, so Enter
+        // must submit directly (previously hit a header at selected=0 → noop hang).
+        if (mode === 'create') {
+          if (createFocus === CREATE_FOCUS_MAX) {
+            setMode('list');
+            resetFormState();
+            setSelected(0);
+          } else {
+            handleCreateSkill();
+          }
+        } else if (mode === 'install') {
+          if (installFocus === INSTALL_FOCUS_MAX) {
+            setMode('list');
+            resetFormState();
+            setSelected(0);
+          } else {
+            void handleInstallSkill();
+          }
+        } else {
+          handleSelect(selected);
+        }
         keyEvent.preventDefault?.();
         keyEvent.stopPropagation?.();
         return;
       }
 
-      if (mode === 'create' || mode === 'install') {
-        // Handle input modes - keyboard navigation is limited to actions
-        if (keyEvent.name === 'up' || keyEvent.name === 'ArrowUp') {
-          setSelected((s) => Math.max(0, s - 1));
+      if (mode === 'create') {
+        if (keyEvent.name === 'up' || keyEvent.name === 'ArrowUp' || keyEvent.name === 'tab') {
+          const backward = keyEvent.name !== 'tab' || keyEvent.shift;
+          setCreateFocus((f) => {
+            const cur = Math.min(Math.max(0, f), CREATE_FOCUS_MAX);
+            return backward
+              ? (cur + CREATE_FOCUS_MAX) % (CREATE_FOCUS_MAX + 1)
+              : (cur + 1) % (CREATE_FOCUS_MAX + 1);
+          });
           keyEvent.preventDefault?.();
           keyEvent.stopPropagation?.();
         } else if (keyEvent.name === 'down' || keyEvent.name === 'ArrowDown') {
-          setSelected((s) => Math.min(displayItems.length - 1, s + 1));
+          setCreateFocus((f) => {
+            const cur = Math.min(Math.max(0, f), CREATE_FOCUS_MAX);
+            return (cur + 1) % (CREATE_FOCUS_MAX + 1);
+          });
+          keyEvent.preventDefault?.();
+          keyEvent.stopPropagation?.();
+        }
+        return;
+      }
+
+      if (mode === 'install') {
+        if (keyEvent.name === 'up' || keyEvent.name === 'ArrowUp' || keyEvent.name === 'tab') {
+          const backward = keyEvent.name !== 'tab' || keyEvent.shift;
+          setInstallFocus((f) => {
+            const cur = Math.min(Math.max(0, f), INSTALL_FOCUS_MAX);
+            return backward
+              ? (cur + INSTALL_FOCUS_MAX) % (INSTALL_FOCUS_MAX + 1)
+              : (cur + 1) % (INSTALL_FOCUS_MAX + 1);
+          });
+          keyEvent.preventDefault?.();
+          keyEvent.stopPropagation?.();
+        } else if (keyEvent.name === 'down' || keyEvent.name === 'ArrowDown') {
+          setInstallFocus((f) => {
+            const cur = Math.min(Math.max(0, f), INSTALL_FOCUS_MAX);
+            return (cur + 1) % (INSTALL_FOCUS_MAX + 1);
+          });
           keyEvent.preventDefault?.();
           keyEvent.stopPropagation?.();
         }
@@ -553,6 +621,7 @@ export function SkillsOverlay({
             value={newSkillName}
             onInput={setNewSkillName}
             placeholder="e.g., azure-ai"
+            focused={createFocus === 0}
           />
 
           <text fg={theme.headerFg} marginTop={1}>
@@ -566,6 +635,7 @@ export function SkillsOverlay({
             value={newSkillDesc}
             onInput={setNewSkillDesc}
             placeholder="e.g., Use for Azure AI Search, Speech, and OpenAI tasks"
+            focused={createFocus === 1}
           />
 
           <text fg={theme.headerFg} marginTop={1}>
@@ -579,6 +649,7 @@ export function SkillsOverlay({
             value={newSkillPrompt}
             onInput={setNewSkillPrompt}
             placeholder="Leave blank for auto-generated prompt"
+            focused={createFocus === 2}
           />
 
           <box marginTop={1}>
@@ -599,9 +670,23 @@ export function SkillsOverlay({
             </text>
           )}
 
-          <text fg={theme.agentFg} marginTop={2}>
-            Press Enter to select "Create Skill" or "Cancel"
-          </text>
+          <box marginTop={2} flexDirection="column">
+            <text
+              fg={createFocus === 3 ? theme.headerFg : theme.agentFg}
+              bg={createFocus === 3 ? theme.bgSelected : undefined}
+            >
+              {creating ? '› Creating...' : '› Create Skill'} (Enter)
+            </text>
+            <text
+              fg={createFocus === 4 ? theme.headerFg : theme.mutedFg}
+              bg={createFocus === 4 ? theme.bgSelected : undefined}
+            >
+              › Cancel (Esc)
+            </text>
+            <text fg={theme.mutedFg} marginTop={1}>
+              Tab/↑↓ move · Enter create · Esc cancel
+            </text>
+          </box>
         </box>
       ) : mode === 'install' ? (
         <box
@@ -626,6 +711,7 @@ export function SkillsOverlay({
             value={installUrl}
             onInput={setInstallUrl}
             placeholder="https://raw.githubusercontent.com/.../skill.json"
+            focused={installFocus === 0}
           />
 
           {error && (
@@ -634,9 +720,23 @@ export function SkillsOverlay({
             </text>
           )}
 
-          <text fg={theme.agentFg} marginTop={2}>
-            Press Enter to select "Install" or "Cancel"
-          </text>
+          <box marginTop={2} flexDirection="column">
+            <text
+              fg={installFocus === 1 ? theme.headerFg : theme.agentFg}
+              bg={installFocus === 1 ? theme.bgSelected : undefined}
+            >
+              {installing ? '› Installing...' : '› Install'} (Enter)
+            </text>
+            <text
+              fg={installFocus === 2 ? theme.headerFg : theme.mutedFg}
+              bg={installFocus === 2 ? theme.bgSelected : undefined}
+            >
+              › Cancel (Esc)
+            </text>
+            <text fg={theme.mutedFg} marginTop={1}>
+              Tab/↑↓ move · Enter install · Esc cancel
+            </text>
+          </box>
         </box>
       ) : (
         <scrollbox

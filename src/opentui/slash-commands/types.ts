@@ -1,5 +1,13 @@
 import type { AgentCore } from '../../agent.js';
-import type { Config, Message, Todo, ToolResult, Skill, SkillCommand, Session } from '../../types.js';
+import type {
+  Config,
+  Message,
+  Todo,
+  ToolResult,
+  Skill,
+  SkillCommand,
+  Session,
+} from '../../types.js';
 import type { Theme } from '../theme.js';
 
 export type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'todo' | null;

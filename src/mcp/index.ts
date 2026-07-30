@@ -190,10 +190,41 @@ export class McpManager {
       command,
       args,
       env,
-      cwd: config.cwd,
+      // Default to agent workspace so project-aware servers (e.g. Serena
+      // --project-from-cwd) activate the correct root.
+      cwd: config.cwd ?? this.workspace,
+      // Never inherit stderr into the TUI — MCP servers (Serena especially)
+      // emit INFO logs that corrupt the OpenTUI screen.
+      stderr: 'pipe',
     });
 
-    await client.connect(transport);
+    // Drain stderr so a noisy server cannot block on a full pipe buffer.
+    // Keep a small ring for connection-error diagnostics; only echo when debugging.
+    const stderrChunks: Buffer[] = [];
+    let stderrBytes = 0;
+    const MAX_STDERR_CAPTURE = 32 * 1024;
+    const debugMcp = Boolean(process.env.QWEN_DEBUG_MCP);
+    transport.stderr?.on('data', (chunk: Buffer | string) => {
+      const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      if (stderrBytes < MAX_STDERR_CAPTURE) {
+        stderrChunks.push(buf);
+        stderrBytes += buf.length;
+      }
+      if (debugMcp) {
+        process.stderr.write(`[mcp:${name}] ${buf.toString('utf8')}`);
+      }
+    });
+
+    try {
+      await client.connect(transport);
+    } catch (err: unknown) {
+      const captured = Buffer.concat(stderrChunks).toString('utf8').trim();
+      if (captured) {
+        const base = err instanceof Error ? err.message : String(err);
+        throw new Error(`${base}\n--- mcp:${name} stderr ---\n${captured.slice(-4000)}`);
+      }
+      throw err;
+    }
   }
 
   /**
@@ -212,18 +243,31 @@ export class McpManager {
       }
     }
 
-    // Try Streamable HTTP first, fall back to SSE
+    // Try Streamable HTTP first, fall back to SSE for older servers
     try {
       const transport = new StreamableHTTPClientTransport(url, {
         requestInit: { headers },
       });
       await client.connect(transport);
-    } catch {
-      // Fallback to SSE transport for older servers
-      const sseTransport = new SSEClientTransport(url, {
-        requestInit: { headers },
-      });
-      await client.connect(sseTransport);
+    } catch (httpErr: unknown) {
+      try {
+        const sseTransport = new SSEClientTransport(url, {
+          requestInit: { headers },
+        });
+        await client.connect(sseTransport);
+        if (process.env.QWEN_DEBUG_MCP) {
+          const msg = httpErr instanceof Error ? httpErr.message : String(httpErr);
+          process.stderr.write(
+            `[mcp:${name}] Streamable HTTP failed (${msg}); connected via SSE fallback\n`
+          );
+        }
+      } catch (sseErr: unknown) {
+        const httpMsg = httpErr instanceof Error ? httpErr.message : String(httpErr);
+        const sseMsg = sseErr instanceof Error ? sseErr.message : String(sseErr);
+        throw new Error(
+          `Remote MCP "${name}" failed over Streamable HTTP (${httpMsg}) and SSE (${sseMsg})`
+        );
+      }
     }
   }
 
@@ -268,7 +312,7 @@ export class McpManager {
     serverName: string,
     toolName: string,
     args: Record<string, unknown>,
-    _signal?: AbortSignal
+    signal?: AbortSignal
   ): Promise<string> {
     const conn = this.connections.get(serverName);
     if (!conn) {
@@ -282,7 +326,16 @@ export class McpManager {
     }
 
     try {
-      const result = await conn.client.callTool({ name: toolName, arguments: args });
+      if (signal?.aborted) {
+        return JSON.stringify({ ok: false, error: 'Aborted' });
+      }
+
+      // SDK signature: callTool(params, resultSchema?, options?) — pass signal via options.
+      const result = await conn.client.callTool(
+        { name: toolName, arguments: args },
+        undefined,
+        signal ? { signal } : undefined
+      );
 
       // MCP protocol: a tool-level failure is reported via isError, NOT thrown
       const isError = (result as { isError?: boolean }).isError === true;
@@ -316,6 +369,13 @@ export class McpManager {
           : { ok: true, result: content }
       );
     } catch (err: unknown) {
+      const aborted =
+        signal?.aborted ||
+        (err instanceof Error &&
+          (err.name === 'AbortError' || err.message.toLowerCase().includes('abort')));
+      if (aborted) {
+        return JSON.stringify({ ok: false, error: 'Aborted' });
+      }
       return JSON.stringify({
         ok: false,
         error: `MCP tool "${toolName}" on "${serverName}" failed: ${(err as { message?: string }).message ?? String(err)}`,

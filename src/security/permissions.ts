@@ -7,7 +7,7 @@ export type PermissionMode = 'read_only' | 'ask' | 'allow_edits' | 'always_allow
 
 export type PermissionLevel = 'allow' | 'ask' | 'deny';
 
-export type ToolCategory = 'read' | 'write' | 'command';
+export type ToolCategory = 'read' | 'write' | 'command' | 'mcp';
 
 export interface PermissionCheckResult {
   allowed: boolean;
@@ -104,9 +104,10 @@ export class PermissionManager {
 
   getCategory(toolName: string): ToolCategory {
     const name = toolName.toLowerCase();
-    // MCP tools are provided by external servers and can do anything —
-    // never auto-allow them; route through the command (confirmation) path.
-    if (name.startsWith('mcp_')) return 'command';
+    // MCP tools come from trusted server configs (home/explicit/env).
+    // Auto-allow them in normal modes; still blocked in read_only.
+    // Shell/exec tools stay on the separate `command` confirmation path.
+    if (name.startsWith('mcp_')) return 'mcp';
     if (WRITE_TOOLS.has(name)) return 'write';
     if (COMMAND_TOOLS.has(name)) return 'command';
     return 'read';
@@ -157,6 +158,10 @@ export class PermissionManager {
 
     if (category === 'read') {
       level = 'allow';
+    } else if (category === 'mcp') {
+      // Trusted MCP servers are auto-allowed except in read_only.
+      // Explicit permissionRules can still deny/ask individual mcp_* tools.
+      level = this.mode === 'read_only' ? 'deny' : 'allow';
     } else if (category === 'write') {
       if (this.mode === 'read_only') {
         level = 'deny';

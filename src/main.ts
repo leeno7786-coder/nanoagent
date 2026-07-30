@@ -104,7 +104,9 @@ async function main(): Promise<number> {
             console.error('   Bun installed! Restarting...\n');
             const newBunPath = await ensureBunAvailable();
             if (newBunPath) {
-              return spawnSync(newBunPath, [process.argv[1], ...argv], { stdio: 'inherit' }).status ?? 0;
+              return (
+                spawnSync(newBunPath, [process.argv[1], ...argv], { stdio: 'inherit' }).status ?? 0
+              );
             }
           }
           console.error('   Installation failed. Please install manually.\n');

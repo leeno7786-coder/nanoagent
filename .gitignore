@@ -35,6 +35,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # local caches and temp files
 .qwen-graph/
+.serena/
 fix_tools.py
 test-output.txt
 skills/test-*.json

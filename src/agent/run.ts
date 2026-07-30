@@ -6,7 +6,7 @@ import type { Message } from '../types.js';
 import { rnd, now } from '../agent-utils.js';
 import { logError } from '../log.js';
 
-const MAX_REASONING_ONLY = 5;
+const DEFAULT_MAX_REASONING_ONLY = 5;
 
 export async function agentRun(
   agent: AgentCore,
@@ -16,6 +16,10 @@ export async function agentRun(
   agent.setState('thinking');
 
   agent.roundCounter++;
+  const maxReasoningOnly =
+    agent.cfg.maxReasoningOnlyRounds && agent.cfg.maxReasoningOnlyRounds > 0
+      ? agent.cfg.maxReasoningOnlyRounds
+      : DEFAULT_MAX_REASONING_ONLY;
 
   // Auto-load skills matching user input triggers
   if (!userText.trim().startsWith('/')) {
@@ -27,9 +31,7 @@ export async function agentRun(
     );
     if (autoLoaded.length > 0) {
       const names = autoLoaded.map((s) => s.name).join(', ');
-      agent.addAssistantMessage(
-        `Auto-loaded skills: ${names} — these are now active in context.`
-      );
+      agent.addAssistantMessage(`Auto-loaded skills: ${names} — these are now active in context.`);
     }
   }
 
@@ -234,19 +236,16 @@ export async function agentRun(
       return;
     }
 
-    if (agent.cfg.maxIterations > 0 && iterationCount >= agent.cfg.maxIterations) {
-      agent.addAssistantMessage(
-        `Turn limit reached (${agent.cfg.maxIterations} iterations). Resuming on your next prompt.`
-      );
-      agent.setState('idle');
-      agent.onUpdate?.();
-      return;
-    }
-
-    if (agent.maxRounds > 0 && iterationCount >= agent.maxRounds) {
-      agent.addAssistantMessage(
-        `Round limit reached (${agent.maxRounds} rounds). Resuming on your next prompt.`
-      );
+    // Effective turn limit: whichever positive cap is stricter.
+    const maxIter = agent.cfg.maxIterations > 0 ? agent.cfg.maxIterations : Infinity;
+    const maxRnd = agent.maxRounds > 0 ? agent.maxRounds : Infinity;
+    const turnLimit = Math.min(maxIter, maxRnd);
+    if (Number.isFinite(turnLimit) && iterationCount >= turnLimit) {
+      const label =
+        turnLimit === maxRnd && maxRnd < maxIter
+          ? `Round limit reached (${maxRnd} rounds)`
+          : `Turn limit reached (${turnLimit} iterations)`;
+      agent.addAssistantMessage(`${label}. Resuming on your next prompt.`);
       agent.setState('idle');
       agent.onUpdate?.();
       return;
@@ -421,15 +420,16 @@ export async function agentRun(
           assistantMsg.reasoningContent
         ) {
           reasoningOnlyStreak++;
-          if (reasoningOnlyStreak >= MAX_REASONING_ONLY) {
+          if (reasoningOnlyStreak >= maxReasoningOnly) {
             agent.addAssistantMessage(
-              `Model produced ${MAX_REASONING_ONLY} reasoning-only responses without tool calls. ` +
+              `Model produced ${maxReasoningOnly} reasoning-only responses without tool calls. ` +
                 `Try rephrasing your request or switching to a model that supports tool calling.`
             );
             agent.setState('error');
             agent.onUpdate?.();
             return;
           }
+          await new Promise((r) => setTimeout(r, 0));
           continue;
         }
 
@@ -562,15 +562,16 @@ export async function agentRun(
       if (!msg.tool_calls || msg.tool_calls.length === 0) {
         if (!msg.content && msg.reasoning_content) {
           reasoningOnlyStreak++;
-          if (reasoningOnlyStreak >= MAX_REASONING_ONLY) {
+          if (reasoningOnlyStreak >= maxReasoningOnly) {
             agent.addAssistantMessage(
-              `Model produced ${MAX_REASONING_ONLY} reasoning-only responses without tool calls. ` +
+              `Model produced ${maxReasoningOnly} reasoning-only responses without tool calls. ` +
                 `Try rephrasing your request or switching to a model that supports tool calling.`
             );
             agent.setState('error');
             agent.onUpdate?.();
             return;
           }
+          await new Promise((r) => setTimeout(r, 0));
           continue;
         }
         agent.setState('idle');
@@ -618,6 +619,9 @@ export async function agentRun(
     for (const tc of sequential) {
       await agent.executeToolSequential(tc, signal);
     }
+
+    // Yield so abort signals and TUI updates can process between tool rounds.
+    await new Promise((r) => setTimeout(r, 0));
   }
 
   agent.setState('idle');

@@ -88,7 +88,10 @@ export async function handleMcpAddCommand(args: string, ctx: SlashCommandContext
   }
 }
 
-export async function handleMcpRemoveCommand(args: string, ctx: SlashCommandContext): Promise<void> {
+export async function handleMcpRemoveCommand(
+  args: string,
+  ctx: SlashCommandContext
+): Promise<void> {
   const { agent } = ctx;
   if (!args) {
     pushAssistant(

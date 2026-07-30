@@ -51,7 +51,7 @@ export function saveApiKeyToEnv(envVarName: string, apiKey: string, envPath?: st
       updatedLines.push(`${varName}${apiKey}`);
     }
     writeFileSync(targetPath, updatedLines.join('\n'), 'utf-8');
-    dotenvConfig({ path: resolve(targetPath) });
+    dotenvConfig({ path: resolve(targetPath), quiet: true });
     process.env[envVarName] = apiKey;
     return true;
   } catch (error) {

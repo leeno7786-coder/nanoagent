@@ -87,4 +87,40 @@ describe('PermissionManager', () => {
     pm.clearRules();
     expect(Object.keys(pm.getRules()).length).toBe(0);
   });
+
+  it('should categorize mcp_* tools as mcp and auto-allow outside read_only', () => {
+    const tool = 'mcp_serena_find_symbol';
+    expect(pm.getCategory(tool)).toBe('mcp');
+
+    const askRes = pm.checkPermission(tool);
+    expect(askRes.category).toBe('mcp');
+    expect(askRes.level).toBe('allow');
+    expect(askRes.allowed).toBe(true);
+    expect(askRes.requiresConfirmation).toBe(false);
+
+    pm.setMode('allow_edits');
+    expect(pm.checkPermission(tool).level).toBe('allow');
+
+    pm.setMode('always_allow');
+    expect(pm.checkPermission(tool).level).toBe('allow');
+
+    pm.setMode('read_only');
+    expect(pm.checkPermission(tool).level).toBe('deny');
+    expect(pm.checkPermission(tool).allowed).toBe(false);
+  });
+
+  it('should still ask for shell commands while auto-allowing MCP tools', () => {
+    expect(pm.checkPermission('mcp_serena_read_file').level).toBe('allow');
+    expect(pm.checkPermission('execute_command', { command: 'bun test' }).level).toBe('ask');
+  });
+
+  it('should honor explicit rules that override MCP auto-allow', () => {
+    pm.setRule('mcp_serena_replace_symbol_body', 'ask');
+    const res = pm.checkPermission('mcp_serena_replace_symbol_body');
+    expect(res.level).toBe('ask');
+    expect(res.requiresConfirmation).toBe(true);
+
+    pm.setRule('mcp_serena_replace_symbol_body', 'deny');
+    expect(pm.checkPermission('mcp_serena_replace_symbol_body').level).toBe('deny');
+  });
 });

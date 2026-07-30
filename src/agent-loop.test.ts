@@ -331,3 +331,70 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(agent.state).toBe('idle');
   }, 15000);
 });
+
+describe('AgentCore run loop error paths', () => {
+  let ws: string;
+  let agents: InstanceType<typeof AgentCore>[];
+  let errServer: Server;
+  let errBaseURL = '';
+
+  beforeEach(async () => {
+    ws = mkdtempSync(join(tmpdir(), 'agent-loop-err-'));
+    agents = [];
+  });
+
+  afterEach(async () => {
+    for (const a of agents) {
+      await a.shutdown().catch(() => {});
+    }
+    if (errServer) {
+      await new Promise<void>((r) => errServer.close(() => r()));
+    }
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('surfaces non-200 LLM responses and returns to idle', async () => {
+    errServer = createServer((_req, res) => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'stub server boom' } }));
+    });
+    await new Promise<void>((resolvePromise) => {
+      errServer.listen(0, '127.0.0.1', () => {
+        const addr = errServer.address();
+        const port = typeof addr === 'object' && addr ? addr.port : 0;
+        errBaseURL = `http://127.0.0.1:${port}/v1`;
+        resolvePromise();
+      });
+    });
+
+    const agent = new AgentCore(makeConfig(ws, { baseURL: errBaseURL, retryCount: 0 }));
+    agents.push(agent);
+    await agent.init();
+
+    await agent.run('hi');
+
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.role).toBe('assistant');
+    expect(last.content.toLowerCase()).toMatch(/error|fail|500|boom|request/);
+    expect(agent.state === 'idle' || agent.state === 'error').toBe(true);
+  });
+
+  it('handles unreachable LLM endpoint without hanging', async () => {
+    const agent = new AgentCore(
+      makeConfig(ws, {
+        baseURL: 'http://127.0.0.1:1/v1',
+        retryCount: 0,
+        timeout: 1000,
+      })
+    );
+    agents.push(agent);
+    await agent.init();
+
+    await agent.run('hi');
+
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.role).toBe('assistant');
+    expect(last.content.length).toBeGreaterThan(0);
+    expect(agent.state === 'idle' || agent.state === 'error').toBe(true);
+  }, 10000);
+});

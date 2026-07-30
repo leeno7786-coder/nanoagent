@@ -86,51 +86,51 @@ export function CommandDropdown({
   const filteredBuiltin = filtered.filter((c) => BUILTIN_COMMANDS.some((bc) => bc.name === c.name));
   const filteredSkills = filtered.filter((c) => !BUILTIN_COMMANDS.some((bc) => bc.name === c.name));
 
-  // Combine for display with headers
+  // Combine for display with headers. Attach commandIndex so selection/scroll
+  // stay O(1) without repeated findIndex scans.
   const displayItems = useMemo(() => {
     const items: Array<{
       type: 'header' | 'command';
       name: string;
       description: string;
       isSkill?: boolean;
+      commandIndex?: number;
     }> = [];
 
+    let commandIndex = 0;
     if (filteredBuiltin.length > 0) {
       items.push({ type: 'header', name: 'Built-in Commands', description: '' });
-      filteredBuiltin.forEach((c) => {
-        items.push({ type: 'command', name: c.name, description: c.description });
-      });
+      for (const c of filteredBuiltin) {
+        items.push({
+          type: 'command',
+          name: c.name,
+          description: c.description,
+          commandIndex: commandIndex++,
+        });
+      }
     }
 
     if (filteredSkills.length > 0) {
       if (filteredBuiltin.length > 0) {
         items.push({ type: 'header', name: 'Skills', description: '' });
       }
-      filteredSkills.forEach((c) => {
-        items.push({ type: 'command', name: c.name, description: c.description, isSkill: true });
-      });
+      for (const c of filteredSkills) {
+        items.push({
+          type: 'command',
+          name: c.name,
+          description: c.description,
+          isSkill: true,
+          commandIndex: commandIndex++,
+        });
+      }
     }
 
     return items;
   }, [filteredBuiltin, filteredSkills]);
 
-  // Map display index to filtered index
-  const getActualIndex = useCallback(
-    (displayIndex: number): number => {
-      let count = 0;
-      for (const item of displayItems) {
-        if (item.type === 'command') {
-          if (count === displayIndex) {
-            return filtered.findIndex(
-              (c) => c.name === item.name && c.description === item.description
-            );
-          }
-          count++;
-        }
-      }
-      return 0;
-    },
-    [displayItems, filtered]
+  const commandCount = useMemo(
+    () => displayItems.reduce((n, i) => n + (i.type === 'command' ? 1 : 0), 0),
+    [displayItems]
   );
 
   useEffect(() => {
@@ -138,29 +138,37 @@ export function CommandDropdown({
   }, [inputValue]);
 
   useEffect(() => {
-    if (scrollRef.current && displayItems.length > 0) {
-      const actualIndex = getActualIndex(selected);
-      if (actualIndex >= 0) {
-        try {
-          scrollRef.current.scrollChildIntoView(itemId(actualIndex));
-        } catch {
-          // Ignore if node is not yet mounted in the OpenTUI layout tree
-        }
+    if (scrollRef.current && commandCount > 0) {
+      const idx = Math.min(Math.max(selected, 0), commandCount - 1);
+      try {
+        scrollRef.current.scrollChildIntoView(itemId(idx));
+      } catch {
+        // Ignore if node is not yet mounted in the OpenTUI layout tree
       }
     }
-  }, [selected, displayItems, getActualIndex]);
+  }, [selected, commandCount]);
 
-  // Count only command items for navigation
-  const commandCount = useMemo(() => {
-    return displayItems.filter((i) => i.type === 'command').length;
-  }, [displayItems]);
+  const isEnterKey = (name: string | undefined) =>
+    name === 'return' || name === 'Enter' || name === 'linefeed' || name === 'kpenter';
+
+  const pickSelectedCommand = useCallback(
+    (suffix = '') => {
+      if (commandCount === 0) return false;
+      const idx = Math.min(Math.max(selected, 0), commandCount - 1);
+      const item = displayItems.find((i) => i.type === 'command' && i.commandIndex === idx);
+      if (!item) return false;
+      onPick(item.name + suffix);
+      return true;
+    },
+    [commandCount, selected, displayItems, onPick]
+  );
 
   useKeyboard(
     (keyEvent) => {
       if (!open) return;
 
       if (commandCount === 0) {
-        if (keyEvent.name === 'return' || keyEvent.name === 'Enter') {
+        if (isEnterKey(keyEvent.name)) {
           keyEvent.preventDefault?.();
           keyEvent.stopPropagation?.();
           onSubmit?.(inputValue);
@@ -176,39 +184,15 @@ export function CommandDropdown({
         setSelected((s) => Math.min(commandCount - 1, s + 1));
         keyEvent.preventDefault?.();
         keyEvent.stopPropagation?.();
-      } else if (keyEvent.name === 'return' || keyEvent.name === 'Enter') {
-        // Find the command at the selected index (skip headers)
-        let count = 0;
-        for (const item of displayItems) {
-          if (item.type === 'command') {
-            if (count === selected) {
-              const cmd = filtered.find((c) => c.name === item.name);
-              if (cmd) {
-                onPick(cmd.name);
-                keyEvent.preventDefault?.();
-                keyEvent.stopPropagation?.();
-              }
-              break;
-            }
-            count++;
-          }
+      } else if (isEnterKey(keyEvent.name)) {
+        if (pickSelectedCommand()) {
+          keyEvent.preventDefault?.();
+          keyEvent.stopPropagation?.();
         }
       } else if (keyEvent.name === 'tab' || keyEvent.name === 'Tab') {
-        // Find the selected command for tab completion
-        let count = 0;
-        for (const item of displayItems) {
-          if (item.type === 'command') {
-            if (count === selected) {
-              const cmd = filtered.find((c) => c.name === item.name);
-              if (cmd) {
-                onPick(cmd.name + ' ');
-                keyEvent.preventDefault?.();
-                keyEvent.stopPropagation?.();
-              }
-              break;
-            }
-            count++;
-          }
+        if (pickSelectedCommand(' ')) {
+          keyEvent.preventDefault?.();
+          keyEvent.stopPropagation?.();
         }
       }
     },
@@ -262,17 +246,13 @@ export function CommandDropdown({
         }
 
         if (item.type === 'command') {
-          // Find the actual index in filtered array
-          const actualIndex = filtered.findIndex(
-            (c) => c.name === item.name && c.description === item.description
-          );
-          const isSel = actualIndex === selected;
+          const isSel = item.commandIndex === selected;
           const padded = item.name.padEnd(pad, ' ');
 
           return (
             <text
               key={item.name}
-              id={itemId(actualIndex)}
+              id={itemId(item.commandIndex ?? 0)}
               fg={isSel ? theme.headerFg : item.isSkill ? theme.agentFg : theme.inputFg}
               bg={isSel ? theme.bgSelected : undefined}
             >

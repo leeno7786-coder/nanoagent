@@ -1,11 +1,6 @@
 import { createClient } from '../llm.js';
 import type { ChatMessage } from '../llm.js';
-import {
-  toOpenAI,
-  ToolCacheManager,
-  createToolCacheManager,
-  getAllTools,
-} from '../tools/index.js';
+import { toOpenAI, ToolCacheManager, createToolCacheManager, getAllTools } from '../tools/index.js';
 import type { SubAgentProgressEvent } from '../tools/index.js';
 import { SkillManager } from '../skill-manager.js';
 import type { Config, Message, ToolResult, AgentState, Todo } from '../types.js';
@@ -95,11 +90,18 @@ export class AgentCore {
   /** @internal Accessed by agent/run.ts. */
   public buildToolSchemas(activeSkills: Set<string>): ReturnType<typeof toOpenAI> {
     const all = getAllTools();
-    const key = `${all.length}|${[...activeSkills].sort().join(',')}`;
+    // Include tool names (not just count) so MCP reconnects with same cardinality
+    // but different schemas still invalidate the cache.
+    const key = `${all.map((t) => t.name).join(',')}|${[...activeSkills].sort().join(',')}`;
     if (this.toolSchemaCache?.key === key) return this.toolSchemaCache.tools;
     const tools = toOpenAI(all, this.cfg, activeSkills);
     this.toolSchemaCache = { key, tools };
     return tools;
+  }
+
+  /** Drop cached tool schemas (e.g. after MCP connect/disconnect). */
+  public invalidateToolSchemaCache(): void {
+    this.toolSchemaCache = undefined;
   }
 
   /** Resolve the remote sub-agent pool, memoized against the relevant config. */

@@ -23,11 +23,7 @@ export {
 
 export { createClient } from './client.js';
 
-export {
-  markEndpointRateLimited,
-  awaitEndpointRateLimit,
-  errorMessage,
-} from './rate-limit.js';
+export { markEndpointRateLimited, awaitEndpointRateLimit, errorMessage } from './rate-limit.js';
 
 export { chat } from './chat.js';
 export { streamChat } from './stream.js';

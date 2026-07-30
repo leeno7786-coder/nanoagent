@@ -26,7 +26,11 @@ export async function checkAndAutoCompact(
   }
 }
 
-export function pushAssistant(agent: AgentCore, content: string, setMessages: (m: Message[]) => void) {
+export function pushAssistant(
+  agent: AgentCore,
+  content: string,
+  setMessages: (m: Message[]) => void
+) {
   agent.messages.push({
     id: Math.random().toString(36).slice(2, 10),
     role: 'assistant',

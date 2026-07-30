@@ -21,5 +21,5 @@
 - Detects loaded model size and context from LM Studio dynamically.
 - OpenRouter sub-agents reuse `OPENROUTER_API_KEY` when the main agent also uses OpenRouter.
 - Tests run with `bun test` (`npm test` aliases it; the suite imports `bun:test` and cannot run under plain `node --test`).
-- MCP servers from a PROJECT-LOCAL config are NOT auto-connected (RCE/key-exfil guard). Trust = global home-dir config, explicit config path, or `NANOGENT_TRUST_PROJECT_MCP=1`. MCP tools require permission confirmation (category `command`).
+- MCP servers from a PROJECT-LOCAL config are NOT auto-connected (RCE/key-exfil guard). Trust = global home-dir config, explicit config path, or `NANOGENT_TRUST_PROJECT_MCP=1`. MCP tools use category `mcp` and are auto-allowed except in `read_only` (shell/`execute_command` still asks). Put MCP servers in `~/.nanogent.json`.
 - `dist/` is not tracked in git; `prepack` builds it. bun.lock is the canonical lockfile (`bun install --frozen-lockfile` must stay green for CI).

@@ -151,6 +151,7 @@ export function ChatScreen({
 }: ChatScreenProps) {
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef<ScrollBoxRenderable>(null);
+  const lastSubmitRef = useRef<{ text: string; at: number } | null>(null);
   const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
 
   const toolMap = useMemo(() => {
@@ -215,13 +216,16 @@ export function ChatScreen({
     (value: string) => {
       const v = value.trim();
       if (!v) return;
+      // Deduplicate when both CommandDropdown and <input onSubmit> fire Enter.
+      const now = Date.now();
+      const prev = lastSubmitRef.current;
+      if (prev && prev.text === v && now - prev.at < 250) return;
+      lastSubmitRef.current = { text: v, at: now };
       setTimeout(() => setInputValue(''), 0);
       onSubmit(v);
     },
     [onSubmit]
   );
-
-  const dropdownOpen = inputValue.startsWith('/');
 
   const filteredMessages = useMemo(
     () =>
@@ -360,9 +364,12 @@ export function ChatScreen({
             (v: unknown) => {
               const text =
                 typeof v === 'string' ? v : String((v as { value?: string })?.value ?? '');
-              if (!dropdownOpen && text.trim()) handleSubmitLocal(text);
+              // Always submit from the input. CommandDropdown may also handle
+              // Enter (and preventDefault); if it doesn't, this is the fallback
+              // so slash commands are never silently dropped.
+              if (text.trim()) handleSubmitLocal(text);
             },
-            [dropdownOpen, handleSubmitLocal]
+            [handleSubmitLocal]
           )}
           focused
         />

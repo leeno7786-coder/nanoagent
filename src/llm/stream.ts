@@ -5,7 +5,13 @@ import { logError } from '../log.js';
 import { ApiError } from './types.js';
 import type { ChatMessage, ChatRequestOptions } from './types.js';
 import { normalizeContent, getMaxOutputTokens, extractDeltaText } from './utils.js';
-import { awaitEndpointRateLimit, awaitRateLimitToken, errorMessage, shouldRetry, markEndpointRateLimited } from './rate-limit.js';
+import {
+  awaitEndpointRateLimit,
+  awaitRateLimitToken,
+  errorMessage,
+  shouldRetry,
+  markEndpointRateLimited,
+} from './rate-limit.js';
 import { calculateBackoffDelay, sleepWithSignal } from './utils.js';
 
 export async function* streamChat(
@@ -196,7 +202,11 @@ export async function* streamChat(
       lastError = err as Error;
 
       const isRateLimit =
-        errStatus === 400 || errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
+        errStatus === 400 ||
+        errStatus === 429 ||
+        errStatus === 503 ||
+        errStatus === 529 ||
+        errStatus === 504;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
 
       if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {

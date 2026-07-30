@@ -4,7 +4,13 @@ import { logError } from '../log.js';
 import { ApiError } from './types.js';
 import type { ChatMessage, ChatResponse, ChatRequestOptions } from './types.js';
 import { normalizeContent, getMaxOutputTokens } from './utils.js';
-import { awaitEndpointRateLimit, awaitRateLimitToken, errorMessage, shouldRetry, markEndpointRateLimited } from './rate-limit.js';
+import {
+  awaitEndpointRateLimit,
+  awaitRateLimitToken,
+  errorMessage,
+  shouldRetry,
+  markEndpointRateLimited,
+} from './rate-limit.js';
 import { calculateBackoffDelay } from './utils.js';
 import { sleepWithSignal } from './utils.js';
 
@@ -111,7 +117,11 @@ export async function chat(
       const errStatus = e.status || e.status_code || e.response?.status || 0;
 
       const isRateLimit =
-        errStatus === 400 || errStatus === 429 || errStatus === 503 || errStatus === 529 || errStatus === 504;
+        errStatus === 400 ||
+        errStatus === 429 ||
+        errStatus === 503 ||
+        errStatus === 529 ||
+        errStatus === 504;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
 
       if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {

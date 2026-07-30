@@ -49,9 +49,16 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const pendingPermissionReq = useAppStore((s) => s.pendingPermissionReq);
 
   const {
-    setOverlay, setShowTodos,
-    syncFromAgent, setMessages, setToolResults,
-    setSessions, setCurrentSessionId, setElapsedMs, setSkills, setSkillCommands,
+    setOverlay,
+    setShowTodos,
+    syncFromAgent,
+    setMessages,
+    setToolResults,
+    setSessions,
+    setCurrentSessionId,
+    setElapsedMs,
+    setSkills,
+    setSkillCommands,
   } = store.getState();
 
   const agentRef = useRef<AgentCore | null>(null);
@@ -64,9 +71,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     const cfg = loadConfig();
     const agent = new AgentCore(cfg);
     agent.todos = [];
-    agent.onUpdate = () => {
-      syncFromAgent(agent);
-    };
     agent.onToolResult = (r) => {
       store.getState().pushToolResult(r);
     };
@@ -76,10 +80,25 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         store.getState().setPermissionResolver(resolve);
       });
     };
-    agent.init().then(() => {
-      agentRef.current = agent;
+    // Assign before init so slash commands work while MCP (e.g. Serena) connects.
+    // Gate onUpdate until init finishes so partial MCP/tool state doesn't thrash the UI.
+    const initDone = { current: false };
+    agent.onUpdate = () => {
+      if (!initDone.current) return;
       syncFromAgent(agent);
-    });
+    };
+    agentRef.current = agent;
+    agent
+      .init()
+      .then(() => {
+        initDone.current = true;
+        syncFromAgent(agent);
+      })
+      .catch((err) => {
+        initDone.current = true;
+        console.error('Agent init failed:', err instanceof Error ? err.message : String(err));
+        syncFromAgent(agent);
+      });
 
     const loadedSkills = loadSkills();
     store.getState().setSkills(loadedSkills);
@@ -245,68 +264,65 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     setMessages([...agent.messages]);
   }, []);
 
-  const handleRename = useCallback(
-    (newName: string) => {
-      const agent = agentRef.current;
-      if (!agent) return;
-      const name = newName.trim();
-      const csId = store.getState().currentSessionId;
-      if (!name) {
-        agent.messages.push({
-          id: Math.random().toString(36).slice(2, 10),
-          role: 'system',
-          content: 'Usage: /rename [new-name]. Provide a new name for the current session.',
-          timestamp: Date.now(),
-        });
-        setMessages([...agent.messages]);
-        return;
-      }
-      if (csId) {
-        const success = renameSession(csId, name);
-        if (success) {
-          setCurrentSessionId(name);
-          setSessions(loadSessions());
-          agent.messages.push({
-            id: Math.random().toString(36).slice(2, 10),
-            role: 'system',
-            content: `Session renamed from ${csId} to ${name}.`,
-            timestamp: Date.now(),
-          });
-        } else {
-          agent.messages.push({
-            id: Math.random().toString(36).slice(2, 10),
-            role: 'system',
-            content: `Failed to rename session. Session '${csId}' not found.`,
-            timestamp: Date.now(),
-          });
-        }
-      } else {
-        const sessId = name;
-        const session: Session = {
-          id: sessId,
-          messages: agent.messages,
-          todos: agent.todos.filter((t) => !t.done),
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          model: agent.cfg.model,
-          baseURL: agent.cfg.baseURL,
-          provider: agent.cfg.provider,
-          config: buildConfigSnapshot(agent.cfg),
-        };
-        saveSession(session);
-        setSessions(loadSessions());
-        setCurrentSessionId(sessId);
-        agent.messages.push({
-          id: Math.random().toString(36).slice(2, 10),
-          role: 'system',
-          content: `Session saved as ${sessId} (Model: \`${agent.cfg.model}\`).`,
-          timestamp: Date.now(),
-        });
-      }
+  const handleRename = useCallback((newName: string) => {
+    const agent = agentRef.current;
+    if (!agent) return;
+    const name = newName.trim();
+    const csId = store.getState().currentSessionId;
+    if (!name) {
+      agent.messages.push({
+        id: Math.random().toString(36).slice(2, 10),
+        role: 'system',
+        content: 'Usage: /rename [new-name]. Provide a new name for the current session.',
+        timestamp: Date.now(),
+      });
       setMessages([...agent.messages]);
-    },
-    []
-  );
+      return;
+    }
+    if (csId) {
+      const success = renameSession(csId, name);
+      if (success) {
+        setCurrentSessionId(name);
+        setSessions(loadSessions());
+        agent.messages.push({
+          id: Math.random().toString(36).slice(2, 10),
+          role: 'system',
+          content: `Session renamed from ${csId} to ${name}.`,
+          timestamp: Date.now(),
+        });
+      } else {
+        agent.messages.push({
+          id: Math.random().toString(36).slice(2, 10),
+          role: 'system',
+          content: `Failed to rename session. Session '${csId}' not found.`,
+          timestamp: Date.now(),
+        });
+      }
+    } else {
+      const sessId = name;
+      const session: Session = {
+        id: sessId,
+        messages: agent.messages,
+        todos: agent.todos.filter((t) => !t.done),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        model: agent.cfg.model,
+        baseURL: agent.cfg.baseURL,
+        provider: agent.cfg.provider,
+        config: buildConfigSnapshot(agent.cfg),
+      };
+      saveSession(session);
+      setSessions(loadSessions());
+      setCurrentSessionId(sessId);
+      agent.messages.push({
+        id: Math.random().toString(36).slice(2, 10),
+        role: 'system',
+        content: `Session saved as ${sessId} (Model: \`${agent.cfg.model}\`).`,
+        timestamp: Date.now(),
+      });
+    }
+    setMessages([...agent.messages]);
+  }, []);
 
   const handleLoad = useCallback(async (session: Session) => {
     const agent = agentRef.current;
@@ -353,14 +369,20 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const handleSubmit = useCallback(
     async (text: string) => {
       const agent = agentRef.current;
-      if (!agent || state !== 'idle') return;
+      if (!agent) return;
+
+      const isSlash = text.startsWith('/');
+      // Slash commands must work even after errors / while waiting for permission.
+      // Regular chat still waits for a ready state.
+      const ready = state === 'idle' || state === 'error' || state === 'waiting_for_user';
+      if (!isSlash && !ready) return;
 
       abortControllerRef.current?.abort();
       abortControllerRef.current = new AbortController();
       const signal = abortControllerRef.current.signal;
 
       try {
-        if (text.startsWith('/')) {
+        if (isSlash) {
           const st = store.getState();
           await handleSlashCommand(text, {
             agent,
@@ -404,7 +426,12 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             content: `Command error: ${err instanceof Error ? err.message : String(err)}`,
             timestamp: Date.now(),
           });
+          agent.setState('idle');
           setMessages([...agent.messages]);
+          store.getState().syncFromAgent(agent);
+        } else if (isAborted && agent) {
+          agent.setState('idle');
+          store.getState().syncFromAgent(agent);
         }
       }
     },
@@ -435,7 +462,11 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   }, []);
 
   const handleConnectSelect = useCallback(
-    async (provider: import('../types.js').RuntimeProvider, model: import('../types.js').ModelInfo, apiKey?: string) => {
+    async (
+      provider: import('../types.js').RuntimeProvider,
+      model: import('../types.js').ModelInfo,
+      apiKey?: string
+    ) => {
       const agent = agentRef.current;
       if (agent) {
         const newConfig: Partial<Config> = {
@@ -455,7 +486,9 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           ? ` \u00B7 ${Math.round(agent.cfg.modelContextLength / 1000)}k ctx`
           : '';
         const paramNote =
-          agent.cfg.modelParamBillions !== undefined ? ` \u00B7 ~${agent.cfg.modelParamBillions}B` : '';
+          agent.cfg.modelParamBillions !== undefined
+            ? ` \u00B7 ~${agent.cfg.modelParamBillions}B`
+            : '';
         agent.messages.push({
           id: Math.random().toString(36).slice(2, 10),
           role: 'assistant',
@@ -520,7 +553,12 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         keyEvent.preventDefault?.();
         return;
       }
-      if (keyEvent.name === 'n' || keyEvent.name === 'N' || keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
+      if (
+        keyEvent.name === 'n' ||
+        keyEvent.name === 'N' ||
+        keyEvent.name === 'escape' ||
+        keyEvent.name === 'Escape'
+      ) {
         const resolve = st.permissionResolver;
         st.setPermissionResolver(null);
         st.setPendingPermissionReq(null);
@@ -557,7 +595,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       const agent = agentRef.current;
       if (agent) {
         agent.messages = agent.messages.filter((m) => m.role === 'system');
+        agent.todos = [];
         st.setMessages([...agent.messages]);
+        st.setTodos([]);
+        st.setToolResults([]);
       }
     } else if (keyEvent.name === 'f4' || keyEvent.name === 'F4') {
       st.toggleShowTodos();

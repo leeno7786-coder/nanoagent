@@ -116,8 +116,6 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
   maxBatchFiles: 50,
 };
 
-
-
 /**
  * Security manager for validating commands and file access.
  */

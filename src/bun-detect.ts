@@ -50,8 +50,12 @@ function searchBunPackage(): string | null {
 function searchOvenPackage(): string | null {
   return walkUpNodeModules((nm) => {
     const platformPkg = `@oven/bun-${platform().replace('win32', 'windows')}-${archDir()}`;
-    return tryPath(join(nm, platformPkg, BUN_EXE)) ??
-      tryPath(join(nm, '@oven', `bun-${platform().replace('win32', 'windows')}-${archDir()}`, BUN_EXE));
+    return (
+      tryPath(join(nm, platformPkg, BUN_EXE)) ??
+      tryPath(
+        join(nm, '@oven', `bun-${platform().replace('win32', 'windows')}-${archDir()}`, BUN_EXE)
+      )
+    );
   });
 }
 
@@ -79,8 +83,7 @@ function searchHomeDir(): string | null {
 function searchNpmPrefix(): string | null {
   try {
     const prefix = execSync('npm root -g', { encoding: 'utf8' }).trim();
-    return tryPath(join(prefix, '.bin', BUN_EXE)) ??
-      tryPath(join(prefix, 'bun', 'bin', BUN_EXE));
+    return tryPath(join(prefix, '.bin', BUN_EXE)) ?? tryPath(join(prefix, 'bun', 'bin', BUN_EXE));
   } catch {
     return null;
   }
@@ -105,9 +108,10 @@ export async function ensureBunAvailable(): Promise<string | null> {
 
 export function installBun(): boolean {
   try {
-    const cmd = platform() === 'win32'
-      ? 'powershell -c "irm bun.sh/install.ps1|iex"'
-      : 'curl -fsSL https://bun.sh/install | bash';
+    const cmd =
+      platform() === 'win32'
+        ? 'powershell -c "irm bun.sh/install.ps1|iex"'
+        : 'curl -fsSL https://bun.sh/install | bash';
     execSync(cmd, { stdio: 'inherit', env: { ...process.env, BUN_INSTALL: '' } });
     return true;
   } catch {

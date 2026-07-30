@@ -164,6 +164,7 @@ export async function initAgent(agent: AgentCore) {
       agent.mcpStates = await agent.mcpManager.connectAll();
       const mcpTools = agent.mcpManager.getTools();
       registerExternalTools(mcpTools);
+      agent.invalidateToolSchemaCache();
       if (process.env.QWEN_DEBUG_LLM) {
         logError(
           '[QWEN_DEBUG] MCP:',
@@ -226,7 +227,7 @@ export async function initAgent(agent: AgentCore) {
       .filter((s) => s.status === 'connected')
       .map((s) => `${s.name} (${s.toolCount} tools)`)
       .join(', ');
-    system += `\nMCP tools connected: ${serverNames}. MCP tool names are prefixed with "mcp_<server>_".`;
+    system += `\nMCP tools connected: ${serverNames}. MCP tool names are prefixed with "mcp_<server>_". MCP tools are auto-allowed (except in read_only); prefer them when they fit the task.`;
   }
   agent.messages = [{ id: 'system-base', role: 'system', content: system, timestamp: now() }];
   syncTodoMessage(agent);

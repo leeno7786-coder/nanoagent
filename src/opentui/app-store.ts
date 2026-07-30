@@ -1,8 +1,17 @@
 import { create } from 'zustand';
-import type { Message, AgentState, Todo, ToolResult, Session, Skill, SkillCommand } from '../types.js';
+import type {
+  Message,
+  AgentState,
+  Todo,
+  ToolResult,
+  Session,
+  Skill,
+  SkillCommand,
+} from '../types.js';
 import type { PermissionRequest } from '../security/index.js';
 import type { SubAgentSnapshot } from '../agent-subagents.js';
 import type { Theme } from './theme.js';
+import { DEFAULT_THEME } from './theme.js';
 import type { AgentCore } from '../agent.js';
 
 type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'todo' | null;
@@ -67,7 +76,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   overlay: null,
   showTodos: false,
   mouseEnabled: true,
-  theme: null as unknown as Theme,
+  theme: DEFAULT_THEME,
   selectedMessageIndex: null,
   pendingPermissionReq: null,
   permissionResolver: null,
@@ -89,7 +98,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
   skillCommands: [],
 
   setOverlay: (o) => set({ overlay: o }),
-  setShowTodos: (s) => set(typeof s === 'function' ? { showTodos: s(get().showTodos) } : { showTodos: s }),
+  setShowTodos: (s) =>
+    set(typeof s === 'function' ? { showTodos: s(get().showTodos) } : { showTodos: s }),
   toggleShowTodos: () => set((st) => ({ showTodos: !st.showTodos })),
   setMouseEnabled: (e) => set({ mouseEnabled: e }),
   setTheme: (t) => set({ theme: t }),
@@ -99,7 +109,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
       const next = names[(idx + 1) % names.length];
       return { theme: themes[next] };
     }),
-  setSelectedMessageIndex: (i) => set(typeof i === 'function' ? { selectedMessageIndex: i(get().selectedMessageIndex) } : { selectedMessageIndex: i }),
+  setSelectedMessageIndex: (i) =>
+    set(
+      typeof i === 'function'
+        ? { selectedMessageIndex: i(get().selectedMessageIndex) }
+        : { selectedMessageIndex: i }
+    ),
 
   setPendingPermissionReq: (r) => set({ pendingPermissionReq: r }),
   setPermissionResolver: (r) => set({ permissionResolver: r }),
@@ -108,8 +123,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setState: (s) => set({ state: s }),
   setTodos: (t) => set({ todos: t }),
   setToolResults: (r) => set({ toolResults: r }),
-  pushToolResult: (r) =>
-    set((st) => ({ toolResults: [...st.toolResults.slice(-99), r] })),
+  pushToolResult: (r) => set((st) => ({ toolResults: [...st.toolResults.slice(-99), r] })),
   setElapsedMs: (ms) => set({ elapsedMs: ms }),
   setCurrentTool: (t) => set({ currentTool: t }),
   setLastUsage: (u) => set({ lastUsage: u }),

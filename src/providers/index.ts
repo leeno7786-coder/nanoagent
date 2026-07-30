@@ -13,8 +13,4 @@ export {
   providerRequiresAuth,
   getApiKeyEnvVar,
 } from './lookup.js';
-export {
-  fetchLocalModels,
-  checkRuntimeHealth,
-  fetchOpenRouterModels,
-} from './runtime.js';
+export { fetchLocalModels, checkRuntimeHealth, fetchOpenRouterModels } from './runtime.js';

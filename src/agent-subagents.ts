@@ -66,6 +66,16 @@ export function getSubAgentSnapshot(agent: AgentCore): SubAgentSnapshot[] {
  * progress through `onSubAgentProgress`. The run loop later blocks in
  * `awaitAllBackgroundSubAgents` until every task resolves.
  */
+function subAgentDisplayName(prompt: string, fallbackId: string, max = 60): string {
+  const line =
+    prompt
+      .split(/\r?\n/)
+      .find((l) => l.trim())
+      ?.trim() || prompt.trim();
+  if (!line) return fallbackId;
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
 export function spawnBackgroundSubAgent(
   agent: AgentCore,
   prompt: string,
@@ -108,7 +118,7 @@ export function spawnBackgroundSubAgent(
       if (!pool) {
         handle.status = 'error';
         handle.result = {
-          name: id,
+          name: subAgentDisplayName(prompt, id),
           model: '',
           baseURL: '',
           ok: false,
@@ -132,12 +142,22 @@ export function spawnBackgroundSubAgent(
         undefined,
         buildSubAgentHooks(agent, id)
       );
+      // Prefer a human-readable prompt label when the worker only returned an id.
+      if (
+        handle.result &&
+        (!handle.result.name || /^sa-/.test(handle.result.name) || handle.result.name === 'pool')
+      ) {
+        handle.result = {
+          ...handle.result,
+          name: subAgentDisplayName(prompt, handle.result.name || id),
+        };
+      }
       handle.status = handle.result.ok ? 'done' : 'error';
     } catch (e: unknown) {
       const err = e as { message?: string };
       handle.status = 'error';
       handle.result = {
-        name: id,
+        name: subAgentDisplayName(prompt, id),
         model: '',
         baseURL: '',
         ok: false,
@@ -154,7 +174,7 @@ export function spawnBackgroundSubAgent(
     logError('Background sub-agent error:', err);
     handle.status = 'error';
     handle.result = {
-      name: id,
+      name: subAgentDisplayName(prompt, id),
       model: '',
       baseURL: '',
       ok: false,

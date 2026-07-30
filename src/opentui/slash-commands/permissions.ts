@@ -1,7 +1,10 @@
 import type { SlashCommandContext } from './types.js';
 import { pushAssistant } from './utils.js';
 
-export async function handlePermissionsCommand(args: string, ctx: SlashCommandContext): Promise<void> {
+export async function handlePermissionsCommand(
+  args: string,
+  ctx: SlashCommandContext
+): Promise<void> {
   const { agent } = ctx;
   const pm = agent.securityManager.permissionManager;
   const trimmedArgs = args ? args.trim() : '';
@@ -11,9 +14,7 @@ export async function handlePermissionsCommand(args: string, ctx: SlashCommandCo
     const rules = pm.getRules();
     const ruleEntries = Object.entries(rules);
     const rulesText =
-      ruleEntries.length > 0
-        ? ruleEntries.map(([t, l]) => `- \`${t}\`: ${l}`).join('\n')
-        : 'None';
+      ruleEntries.length > 0 ? ruleEntries.map(([t, l]) => `- \`${t}\`: ${l}`).join('\n') : 'None';
 
     pushAssistant(
       agent,
@@ -30,7 +31,8 @@ export async function handlePermissionsCommand(args: string, ctx: SlashCommandCo
         }\n` +
         `  - Commands (execute_command, run_tests, etc.): ${
           mode === 'read_only' ? 'DENIED' : mode === 'always_allow' ? 'ALLOWED' : 'ASK'
-        }\n\n` +
+        }\n` +
+        `  - MCP tools (mcp_*): ${mode === 'read_only' ? 'DENIED' : 'ALLOWED'} (trusted servers; override with \`/permissions deny mcp_…\`)\n\n` +
         `### Custom Rules\n${rulesText}\n\n` +
         `### Commands\n` +
         `- Set Mode: \`/permissions read_only\` | \`/permissions ask\` | \`/permissions allow_edits\` | \`/permissions always_allow\`\n` +

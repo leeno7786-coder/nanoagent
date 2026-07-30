@@ -54,6 +54,7 @@ export function getDefault(): Config {
     apiKey: null,
     maxIterations: 50,
     maxToolRoundsBeforeCheckin: 0,
+    maxReasoningOnlyRounds: 5,
     workspace: process.cwd(),
     temperature: 0.3,
     maxTokens: 4096,

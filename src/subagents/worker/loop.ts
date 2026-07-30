@@ -210,7 +210,11 @@ async function runSingleSubAgent(
           const currentToolCallCount = toolCallCount + index + 1;
           const parsedArgs = tc.function.arguments;
           let args: Record<string, unknown>;
-          try { args = JSON.parse(String(parsedArgs)); } catch { args = {}; }
+          try {
+            args = JSON.parse(String(parsedArgs));
+          } catch {
+            args = {};
+          }
           const sig = `${tc.function.name}:${JSON.stringify(args)}`;
           const filePath = args?.path || args?.file;
 

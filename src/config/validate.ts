@@ -38,6 +38,14 @@ export function validateConfig(cfg: Config): {
   if (cfg.maxIterations < 1 || cfg.maxIterations > 200) {
     errors.push(`maxIterations must be between 1 and 200, got ${cfg.maxIterations}`);
   }
+  if (
+    cfg.maxReasoningOnlyRounds !== undefined &&
+    (cfg.maxReasoningOnlyRounds < 1 || cfg.maxReasoningOnlyRounds > 50)
+  ) {
+    errors.push(
+      `maxReasoningOnlyRounds must be between 1 and 50, got ${cfg.maxReasoningOnlyRounds}`
+    );
+  }
 
   try {
     const stats = statSync(cfg.workspace);
@@ -56,7 +64,9 @@ export function validateConfig(cfg: Config): {
 
   if (cfg.maxRequestsPerMinute !== undefined) {
     if (cfg.maxRequestsPerMinute < 0 || cfg.maxRequestsPerMinute > 10000) {
-      errors.push(`maxRequestsPerMinute must be between 0 and 10000, got ${cfg.maxRequestsPerMinute}`);
+      errors.push(
+        `maxRequestsPerMinute must be between 0 and 10000, got ${cfg.maxRequestsPerMinute}`
+      );
     }
   }
 

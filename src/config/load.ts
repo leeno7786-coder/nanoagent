@@ -16,7 +16,7 @@ function loadEnv(workspace: string) {
   ];
   for (const p of candidates) {
     if (existsSync(p)) {
-      dotenvConfig({ path: resolve(p) });
+      dotenvConfig({ path: resolve(p), quiet: true });
     }
   }
 }

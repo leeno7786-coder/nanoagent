@@ -1,5 +1,11 @@
 import {
-  existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+  rmSync,
+  copyFileSync,
 } from 'fs';
 import { join, dirname, basename } from 'path';
 import { logError } from './log.js';
@@ -24,7 +30,7 @@ export class VersionedStore<T extends object> {
     this.backupCount = opts?.backupCount ?? DEFAULT_BACKUP_COUNT;
   }
 
-  read(): T & VersionedEnvelope | null {
+  read(): (T & VersionedEnvelope) | null {
     try {
       if (!existsSync(this.filePath)) return null;
       const raw = readFileSync(this.filePath, 'utf-8');
@@ -54,7 +60,9 @@ export class VersionedStore<T extends object> {
     }
   }
 
-  readWithMigration(migrate: (raw: T & VersionedEnvelope, version: number) => T): T & VersionedEnvelope | null {
+  readWithMigration(
+    migrate: (raw: T & VersionedEnvelope, version: number) => T
+  ): (T & VersionedEnvelope) | null {
     const data = this.read();
     if (!data) return null;
 
@@ -79,7 +87,7 @@ export class VersionedStore<T extends object> {
     }
   }
 
-  recoverFromBackup(): T & VersionedEnvelope | null {
+  recoverFromBackup(): (T & VersionedEnvelope) | null {
     const backups = this.listBackups();
     for (const backup of backups.reverse()) {
       try {
@@ -111,14 +119,20 @@ export class VersionedStore<T extends object> {
     if (existsSync(this.filePath)) {
       try {
         copyFileSync(this.filePath, backup);
-      } catch { /* best effort */ }
+      } catch {
+        /* best effort */
+      }
     }
 
     const allBackups = this.listBackups();
     while (allBackups.length > this.backupCount) {
       const oldest = allBackups.shift();
       if (oldest) {
-        try { rmSync(oldest); } catch { /* best effort */ }
+        try {
+          rmSync(oldest);
+        } catch {
+          /* best effort */
+        }
       }
     }
   }
@@ -126,7 +140,7 @@ export class VersionedStore<T extends object> {
 
 export function migrateSessionV0toV1(
   raw: Record<string, unknown>,
-  _version: number,
+  _version: number
 ): Record<string, unknown> {
   return {
     ...raw,
