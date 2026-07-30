@@ -14,7 +14,7 @@ import type { Theme } from './theme.js';
 import { DEFAULT_THEME } from './theme.js';
 import type { AgentCore } from '../agent.js';
 
-type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'todo' | null;
+type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'todo' | 'permission-mode' | null;
 
 interface AppState {
   overlay: Overlay;
@@ -42,6 +42,7 @@ interface AppState {
   skillCommands: SkillCommand[];
 
   setOverlay: (o: Overlay) => void;
+  setShowPermissionMode: (show: boolean) => void;
   setShowTodos: (s: boolean | ((prev: boolean) => boolean)) => void;
   toggleShowTodos: () => void;
   setMouseEnabled: (e: boolean) => void;
@@ -74,6 +75,7 @@ interface AppState {
 
 export const useAppStore = create<AppState>()((set, get) => ({
   overlay: null,
+  showPermissionMode: false,
   showTodos: false,
   mouseEnabled: true,
   theme: DEFAULT_THEME,
@@ -98,6 +100,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   skillCommands: [],
 
   setOverlay: (o) => set({ overlay: o }),
+  setShowPermissionMode: (show) => set({ showPermissionMode: show }),
   setShowTodos: (s) =>
     set(typeof s === 'function' ? { showTodos: s(get().showTodos) } : { showTodos: s }),
   toggleShowTodos: () => set((st) => ({ showTodos: !st.showTodos })),

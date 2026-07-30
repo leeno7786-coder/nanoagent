@@ -23,7 +23,7 @@ import { checkAndAutoCompact, pushAssistant } from './utils.js';
 import { handlePermissionsCommand } from './permissions.js';
 import { handleMcpCommand, handleMcpAddCommand, handleMcpRemoveCommand } from './mcp.js';
 
-export { checkAndAutoCompact } from './utils.js';
+export { checkAndAutoCompact, pushAssistant } from './utils.js';
 
 export async function handleSlashCommand(text: string, ctx: SlashCommandContext): Promise<void> {
   const {
