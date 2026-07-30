@@ -62,9 +62,15 @@ describe('effectiveContextSize', () => {
     expect(size).toBeGreaterThanOrEqual(128000);
   });
 
-  it('may clamp context for remote APIs with small maxTokens', () => {
+  it('does not shrink the context window by max output tokens for cloud APIs', () => {
+    // maxTokens is an output cap — compaction must use the real prompt window
     const size = effectiveContextSize('gpt-4o', 4096, 'https://api.openai.com/v1');
-    expect(size).toBeLessThanOrEqual(16384);
+    expect(size).toBe(128000);
+  });
+
+  it('uses OpenRouter Hunyuan context heuristics', () => {
+    expect(effectiveContextSize('tencent/hunyuan-a13b-instruct')).toBe(131072);
+    expect(effectiveContextSize('tencent/hunyuan-a13b-instruct:free')).toBe(32768);
   });
 });
 

@@ -1,5 +1,6 @@
 import type { SlashCommandContext } from './types.js';
 import { pushAssistant } from './utils.js';
+import { useAppStore } from '../app-store.js';
 
 export async function handlePermissionsCommand(
   args: string,
@@ -49,6 +50,7 @@ export async function handlePermissionsCommand(
 
   if (sub === 'read_only' || sub === 'readonly') {
     pm.setMode('read_only');
+    useAppStore.getState().setPermissionMode('read_only');
     pushAssistant(
       agent,
       'Permission mode set to **read_only**. Write tools and command execution are now blocked.',
@@ -60,6 +62,7 @@ export async function handlePermissionsCommand(
       pushAssistant(agent, `Permission rule for \`${target}\` set to **ask**.`, ctx.setMessages);
     } else {
       pm.setMode('ask');
+      useAppStore.getState().setPermissionMode('ask');
       pushAssistant(
         agent,
         'Permission mode set to **ask**. Write tools and commands will ask for confirmation.',
@@ -68,6 +71,7 @@ export async function handlePermissionsCommand(
     }
   } else if (sub === 'allow_edits' || sub === 'allowedits') {
     pm.setMode('allow_edits');
+    useAppStore.getState().setPermissionMode('allow_edits');
     pushAssistant(
       agent,
       'Permission mode set to **allow_edits**. Read and write tools are allowed; commands will ask for confirmation.',
@@ -75,6 +79,7 @@ export async function handlePermissionsCommand(
     );
   } else if (sub === 'always_allow' || sub === 'alwaysallow') {
     pm.setMode('always_allow');
+    useAppStore.getState().setPermissionMode('always_allow');
     pushAssistant(
       agent,
       'Permission mode set to **always_allow**. All read, write, and command operations are auto-allowed.',

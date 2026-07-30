@@ -9,6 +9,35 @@ import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
 
+/** Map one internal message to the LLM chat payload shape (non-system). */
+function toChatMessage(m: Message): ChatMessage {
+  if (m.role === 'tool') {
+    return {
+      role: 'tool' as const,
+      content: m.content,
+      tool_call_id: m.toolCallId!,
+    };
+  }
+  if (m.role === 'assistant' && m.toolCalls) {
+    return {
+      role: 'assistant' as const,
+      content: m.content,
+      tool_calls: m.toolCalls.map((tc) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      })),
+    };
+  }
+  if (m.role === 'assistant' && m.reasoningContent) {
+    return {
+      role: 'assistant' as const,
+      content: m.content,
+    };
+  }
+  return { role: m.role, content: m.content };
+}
+
 /** Convert internal messages to the format expected by the LLM layer. */
 export function toChatMessages(agent: AgentCore): ChatMessage[] {
   // Ensure todo message is fresh before sending to LLM
@@ -17,40 +46,36 @@ export function toChatMessages(agent: AgentCore): ChatMessage[] {
   // Filter out internal/empty messages that can poison the next chat template turn.
   // Keep the main system prompt and the todo system message (the model needs
   // todo ids for manage_todos). Other transient system notices are filtered
-  // out because Qwen's Jinja template requires system messages at the beginning.
+  // out — they must never appear mid-history.
   const messagesToSend = agent.messages.filter(
     (m) =>
       !(m.role === 'system' && m.id !== 'system-base' && m.id !== 'system-todos') &&
       !(m.role === 'assistant' && !m.toolCalls && !m.reasoningContent && m.content.trim() === '')
   );
 
-  return messagesToSend.map((m) => {
-    if (m.role === 'tool') {
-      return {
-        role: 'tool' as const,
-        content: m.content,
-        tool_call_id: m.toolCallId!,
-      };
+  // Qwen3.5/3.6 Jinja chat templates raise:
+  //   "System message must be at the beginning."
+  // if ANY system message is not at index 0 — including a second consecutive
+  // system message (system-base + system-todos). Merge all kept system
+  // content into a single leading system message before sending.
+  const systemParts: string[] = [];
+  const rest: Message[] = [];
+  for (const m of messagesToSend) {
+    if (m.role === 'system') {
+      if (m.content.trim()) systemParts.push(m.content);
+    } else {
+      rest.push(m);
     }
-    if (m.role === 'assistant' && m.toolCalls) {
-      return {
-        role: 'assistant' as const,
-        content: m.content,
-        tool_calls: m.toolCalls.map((tc) => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: { name: tc.name, arguments: tc.arguments },
-        })),
-      };
-    }
-    if (m.role === 'assistant' && m.reasoningContent) {
-      return {
-        role: 'assistant' as const,
-        content: m.content,
-      };
-    }
-    return { role: m.role, content: m.content };
-  });
+  }
+
+  const out: ChatMessage[] = [];
+  if (systemParts.length > 0) {
+    out.push({ role: 'system', content: systemParts.join('\n\n') });
+  }
+  for (const m of rest) {
+    out.push(toChatMessage(m));
+  }
+  return out;
 }
 
 /** Append an assistant message and trigger an update. */
@@ -101,12 +126,14 @@ export function addToolMessage(agent: AgentCore, content: string, toolCallId?: s
  * Check if context needs compaction and perform it if necessary.
  * Returns true if compaction was performed.
  */
-export function checkAndCompactContext(agent: AgentCore): boolean {
-  if (!agent.contextManager.needsCompaction()) {
+export function checkAndCompactContext(agent: AgentCore, force = false): boolean {
+  if (!force && !agent.contextManager.needsCompaction()) {
     return false;
   }
 
-  const result = agent.contextManager.compact();
+  const result = force
+    ? agent.contextManager.compact({ force: true, keepCount: 4 })
+    : agent.contextManager.compact();
 
   if (result.removedCount > 0) {
     // Preserve non-base system messages (todo context, transient notices)
@@ -129,4 +156,9 @@ export function checkAndCompactContext(agent: AgentCore): boolean {
   }
 
   return false;
+}
+
+/** Force-compact after a silent context overflow (empty length finish). */
+export function forceCompactContext(agent: AgentCore): boolean {
+  return checkAndCompactContext(agent, true);
 }

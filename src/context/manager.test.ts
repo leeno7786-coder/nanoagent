@@ -132,6 +132,7 @@ describe('ContextManager', () => {
       expect(stats.messageCount).toBe(1);
       expect(stats.needsCompaction).toBe(false);
       expect(stats.compactionCount).toBe(0);
+      expect(stats.tokenSource).toBe('estimate');
     });
 
     it('should update stats when messages are added', () => {
@@ -143,6 +144,43 @@ describe('ContextManager', () => {
       const stats2 = contextManager.getStats();
       expect(stats2.messageCount).toBe(1);
       expect(stats2.currentTokens).toBeGreaterThan(stats1.currentTokens);
+    });
+
+    it('prefers API prompt_tokens over local estimates for compaction', () => {
+      const smallCfg: Config = {
+        ...cfg,
+        modelContextLength: 1000,
+        contextCompactThreshold: 0.5,
+      };
+      const mgr = createContextManager(smallCfg);
+      mgr.addMessage({ id: '1', role: 'user', content: 'hi', timestamp: Date.now() });
+
+      const before = mgr.getStats();
+      expect(before.tokenSource).toBe('estimate');
+      expect(before.needsCompaction).toBe(false);
+
+      // Simulate OpenRouter/LM Studio reporting a large prompt (tool schemas etc.)
+      mgr.reportApiUsage({ input_tokens: 800 });
+      const after = mgr.getStats();
+      expect(after.tokenSource).toBe('api');
+      expect(after.currentTokens).toBe(800);
+      expect(after.apiPromptTokens).toBe(800);
+      expect(after.needsCompaction).toBe(true); // 800/1000 > 0.5
+    });
+
+    it('adds post-report message estimates on top of API baseline', () => {
+      const mgr = createContextManager({ ...cfg, modelContextLength: 10000 });
+      mgr.reportApiUsage({ input_tokens: 1000 });
+      mgr.addMessage({
+        id: 't1',
+        role: 'tool',
+        content: 'x'.repeat(400),
+        timestamp: Date.now(),
+      });
+      const stats = mgr.getStats();
+      expect(stats.tokenSource).toBe('api');
+      expect(stats.currentTokens).toBeGreaterThan(1000);
+      expect(stats.apiPromptTokens).toBe(1000);
     });
   });
 

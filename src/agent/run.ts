@@ -229,6 +229,9 @@ export async function agentRun(
 
   let iterationCount = 0;
   let reasoningOnlyStreak = 0;
+  /** Retries after silent context overflow (finish_reason=length, 0 output). */
+  let overflowRetries = 0;
+  const MAX_OVERFLOW_RETRIES = 2;
   while (true) {
     if (signal?.aborted) {
       agent.setState('idle');
@@ -286,6 +289,7 @@ export async function agentRun(
 
         let hasToolCalls = false;
         let toolCallBuffers: Array<{ id: string; name: string; arguments: string }> = [];
+        let finishReason: string | undefined;
 
         let inThinkTag = false;
         let thinkCarry = '';
@@ -295,6 +299,10 @@ export async function agentRun(
           const chunk = iterResult.value;
           if (signal?.aborted) break;
 
+          if (chunk.finishReason) {
+            finishReason = chunk.finishReason;
+          }
+
           if (process.env.QWEN_DEBUG_LLM) {
             logError(
               '[QWEN_DEBUG] agent chunk:',
@@ -302,7 +310,9 @@ export async function agentRun(
               'reasoning:',
               JSON.stringify(chunk.reasoningContent),
               'toolCalls:',
-              chunk.toolCalls?.length
+              chunk.toolCalls?.length,
+              'finish:',
+              chunk.finishReason
             );
           }
 
@@ -378,6 +388,7 @@ export async function agentRun(
           agent.lastUsage = streamUsage;
           agent.totalUsage.input_tokens += streamUsage.input_tokens;
           agent.totalUsage.output_tokens += streamUsage.output_tokens;
+          agent.contextManager.reportApiUsage(streamUsage);
         }
 
         if (hasToolCalls && toolCallBuffers.length > 0) {
@@ -401,16 +412,45 @@ export async function agentRun(
               : `I will use a tool (${first?.name || 'tool'}) to gather the needed context.`;
         }
 
-        if (
+        const emptyOutput =
           !assistantMsg.toolCalls &&
           assistantMsg.content.trim() === '' &&
-          !assistantMsg.reasoningContent
-        ) {
+          !assistantMsg.reasoningContent;
+        // OpenRouter/OpenAI silent overflow: finish_reason=length with 0 output tokens.
+        // Without recovery, every subsequent turn stays empty and the agent looks "idle".
+        const zeroOut = !streamUsage || streamUsage.output_tokens === 0;
+        const silentOverflow =
+          emptyOutput && (finishReason === 'length' || (finishReason !== 'stop' && zeroOut));
+
+        if (emptyOutput) {
           agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
+
+          if (silentOverflow && overflowRetries < MAX_OVERFLOW_RETRIES) {
+            overflowRetries++;
+            const compacted = agent.forceCompactContext();
+            agent.addAssistantMessage(
+              compacted
+                ? `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+                : `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Retrying with current history (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+            );
+            agent.setState('thinking');
+            agent.onUpdate?.();
+            await new Promise((r) => setTimeout(r, 0));
+            continue;
+          }
+
+          agent.addAssistantMessage(
+            silentOverflow
+              ? 'Context window appears full — the model returned an empty `length` finish. Run `/compact` or `/clear`, then try again.'
+              : 'Model returned an empty response (no text or tool calls). Try again, or check the LLM server logs.'
+          );
           agent.setState('idle');
           agent.onUpdate?.();
           return;
         }
+
+        // Successful non-empty turn — reset overflow streak
+        overflowRetries = 0;
 
         agent.contextManager.addMessage(assistantMsg);
 
@@ -463,6 +503,22 @@ export async function agentRun(
 
         const status = e.status || e.status_code;
         const msg = e.message || String(err);
+        const overflowHint =
+          /context.?length|maximum context|too many tokens|prompt is too long/i.test(msg);
+
+        if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
+          agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
+          overflowRetries++;
+          agent.forceCompactContext();
+          agent.addAssistantMessage(
+            `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+          );
+          agent.setState('thinking');
+          agent.onUpdate?.();
+          await new Promise((r) => setTimeout(r, 0));
+          continue;
+        }
+
         if (status === 401) {
           const envVar = agent.cfg.baseURL?.includes('mistral.ai')
             ? 'MISTRAL_API_KEY'
@@ -519,6 +575,21 @@ export async function agentRun(
 
         const status = e.status || e.status_code;
         const msg = e.message || String(err);
+        const overflowHint =
+          /context.?length|maximum context|too many tokens|prompt is too long/i.test(msg);
+
+        if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
+          overflowRetries++;
+          agent.forceCompactContext();
+          agent.addAssistantMessage(
+            `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+          );
+          agent.setState('thinking');
+          agent.onUpdate?.();
+          await new Promise((r) => setTimeout(r, 0));
+          continue;
+        }
+
         if (status === 401) {
           const envVar = agent.cfg.baseURL?.includes('mistral.ai')
             ? 'MISTRAL_API_KEY'
@@ -541,7 +612,43 @@ export async function agentRun(
         agent.lastUsage = response.usage;
         agent.totalUsage.input_tokens += response.usage.input_tokens;
         agent.totalUsage.output_tokens += response.usage.output_tokens;
+        agent.contextManager.reportApiUsage(response.usage);
       }
+
+      const emptyNonStream =
+        (!msg.tool_calls || msg.tool_calls.length === 0) &&
+        !msg.content &&
+        !msg.reasoning_content;
+      const zeroOut = !response.usage || response.usage.output_tokens === 0;
+      const silentOverflow =
+        emptyNonStream &&
+        (response.finishReason === 'length' || (response.finishReason !== 'stop' && zeroOut));
+
+      if (emptyNonStream) {
+        if (silentOverflow && overflowRetries < MAX_OVERFLOW_RETRIES) {
+          overflowRetries++;
+          const compacted = agent.forceCompactContext();
+          agent.addAssistantMessage(
+            compacted
+              ? `Context overflow detected (empty \`${response.finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+              : `Context overflow detected. Retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+          );
+          agent.setState('thinking');
+          agent.onUpdate?.();
+          await new Promise((r) => setTimeout(r, 0));
+          continue;
+        }
+        agent.addAssistantMessage(
+          silentOverflow
+            ? 'Context window appears full — the model returned an empty `length` finish. Run `/compact` or `/clear`, then try again.'
+            : 'Model returned an empty response (no text or tool calls). Try again, or check the LLM server logs.'
+        );
+        agent.setState('idle');
+        agent.onUpdate?.();
+        return;
+      }
+
+      overflowRetries = 0;
       assistantMsg = {
         id: rnd(),
         role: 'assistant',

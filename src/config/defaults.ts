@@ -52,7 +52,7 @@ export function getDefault(): Config {
     baseURL: 'http://127.0.0.1:1234/',
     model: 'model-identifier',
     apiKey: null,
-    maxIterations: 50,
+    maxIterations: 0,
     maxToolRoundsBeforeCheckin: 0,
     maxReasoningOnlyRounds: 5,
     workspace: process.cwd(),

@@ -43,7 +43,7 @@ Options:
   -w, --workspace <path>    Working directory (default: cwd)
   -m, --model <id>          Model id
       --base-url <url>        API base URL (default: from config)
-      --max-rounds <n>        Max agent rounds per invocation (default: 30)
+      --max-rounds <n>        Max agent rounds per invocation (default: 0 = unlimited)
       --max-iterations <n>    Max tool loops per round (default: from config)
       --json                  JSON output on stdout
       --quiet                 Only print the final assistant message

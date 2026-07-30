@@ -47,11 +47,9 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const sessions = useAppStore((s) => s.sessions);
   const selectedMessageIndex = useAppStore((s) => s.selectedMessageIndex);
   const pendingPermissionReq = useAppStore((s) => s.pendingPermissionReq);
-  const showPermissionMode = useAppStore((s) => s.showPermissionMode);
 
   const {
     setOverlay,
-    setShowPermissionMode,
     setShowTodos,
     syncFromAgent,
     setMessages,
@@ -538,8 +536,15 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       return;
     }
 
-    if (keyEvent.shift && keyEvent.name === 'Tab') {
-      setShowPermissionMode((prev) => !prev);
+    if (keyEvent.shift && (keyEvent.name === 'Tab' || keyEvent.name === 'tab')) {
+      const nextMode = st.cyclePermissionMode();
+      const pm = agentRef.current?.securityManager?.permissionManager;
+      if (pm) {
+        pm.setMode(nextMode);
+      }
+      if (agentRef.current?.cfg) {
+        agentRef.current.cfg.permissionMode = nextMode;
+      }
       keyEvent.preventDefault?.();
       return;
     }
@@ -571,44 +576,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         st.setPermissionResolver(null);
         st.setPendingPermissionReq(null);
         resolve?.('deny');
-        keyEvent.preventDefault?.();
-        return;
-      }
-    }
-
-    if (st.showPermissionMode) {
-      const pm = agentRef.current?.securityManager?.permissionManager;
-      if (!pm) return;
-      if (keyEvent.name === 'r' || keyEvent.name === 'R') {
-        pm.setMode('read_only');
-        pushAssistant(agentRef.current, 'Permission mode set to **read_only**. Write tools and command execution are now blocked.', st.setMessages);
-        setShowPermissionMode(false);
-        keyEvent.preventDefault?.();
-        return;
-      }
-      if (keyEvent.name === 'a' || keyEvent.name === 'A') {
-        pm.setMode('ask');
-        pushAssistant(agentRef.current, 'Permission mode set to **ask**. Write tools and commands will ask for confirmation.', st.setMessages);
-        setShowPermissionMode(false);
-        keyEvent.preventDefault?.();
-        return;
-      }
-      if (keyEvent.name === 'e' || keyEvent.name === 'E') {
-        pm.setMode('allow_edits');
-        pushAssistant(agentRef.current, 'Permission mode set to **allow_edits**. Read and write tools are allowed; commands will ask for confirmation.', st.setMessages);
-        setShowPermissionMode(false);
-        keyEvent.preventDefault?.();
-        return;
-      }
-      if (keyEvent.name === 'w' || keyEvent.name === 'W') {
-        pm.setMode('always_allow');
-        pushAssistant(agentRef.current, 'Permission mode set to **always_allow**. All read, write, and command operations are auto-approved.', st.setMessages);
-        setShowPermissionMode(false);
-        keyEvent.preventDefault?.();
-        return;
-      }
-      if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
-        setShowPermissionMode(false);
         keyEvent.preventDefault?.();
         return;
       }
@@ -815,34 +782,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             height="100%"
             overflow="hidden"
           >
-            {showPermissionMode && (
-              <box
-                flexDirection="column"
-                borderStyle="rounded"
-                borderColor={theme.warningBorder || theme.borderColor}
-                paddingX={1}
-                paddingY={0}
-                marginY={1}
-              >
-                <text fg={theme.headerFg}>
-                  ⚡ Permission Mode — Shift+Tab to close
-                </text>
-                <box marginY={0} marginTop={1} gap={3}>
-                  <text fg={theme.errorFg}>
-                    [R] read_only — Block all writes &amp; commands
-                  </text>
-                  <text fg={theme.accent || theme.userFg}>
-                    [A] ask — Confirm each write/command
-                  </text>
-                  <text fg={theme.toolFg}>
-                    [E] allow_edits — Auto-allow writes, ask for commands
-                  </text>
-                  <text fg={theme.successFg || theme.agentFg}>
-                    [W] always_allow — Auto-approve everything
-                  </text>
-                </box>
-              </box>
-            )}
             {pendingPermissionReq && (
               <box
                 flexDirection="column"

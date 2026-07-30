@@ -189,7 +189,7 @@ export function CommandDropdown({
           keyEvent.preventDefault?.();
           keyEvent.stopPropagation?.();
         }
-      } else if (keyEvent.name === 'tab' || keyEvent.name === 'Tab') {
+      } else if ((keyEvent.name === 'tab' || keyEvent.name === 'Tab') && !keyEvent.shift) {
         if (pickSelectedCommand(' ')) {
           keyEvent.preventDefault?.();
           keyEvent.stopPropagation?.();

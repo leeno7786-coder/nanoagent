@@ -92,10 +92,10 @@ export function appendPromptExtras(base: string, ctx: PromptContext, _smallModel
     '\n\n## Todos\nBreak multi-step requests into manage_todos items. Mark complete via the tool — do not skip it.';
 
   system +=
-    '\n\n## Conferring & User Check-ins\n' +
-    '- You are pair programming with the user. Do not execute endless tool loops without conferring.\n' +
-    '- After completing major steps or when faced with architectural choices, stop to summarize your progress and ask for user confirmation/feedback.\n' +
-    '- Keep the user informed and involved in key decisions.';
+    '\n\n## Task Completion & Continuity\n' +
+    '- Work continuously to complete the user\'s requested task fully. Do not stop or cut off mid-work.\n' +
+    '- Keep working and executing required tools until the user\'s objective is completely achieved.\n' +
+    '- Provide a clear, complete summary of all completed work when the task is finished.';
 
   system +=
     '\n\n## Long-Running Commands & Downloads\n' +

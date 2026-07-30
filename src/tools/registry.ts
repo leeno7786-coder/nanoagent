@@ -55,7 +55,7 @@ export const SMALL_TOOL_DESCRIPTIONS: Record<string, string> = {
   stat_path: 'File exists? size, modified time.',
   find_files: 'Find paths by name substring or regex.',
   search_and_view: 'Search code; returns matching lines with context.',
-  execute_command: 'Run shell command in workspace (PowerShell on Windows).',
+  execute_command: 'Run shell/bash command in workspace (Git Bash enabled on Windows).',
   git_status: 'Short git status.',
   git_diff: 'Uncommitted diff.',
   git_commit: 'git add -A and commit with message.',

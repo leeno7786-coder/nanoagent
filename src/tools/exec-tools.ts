@@ -1,9 +1,96 @@
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { existsSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, join } from 'path';
 
 import type { Tool } from './shared.js';
 import { NULL_BYTE_RE, REPLACEMENT_CHAR_RE, getSanitizedEnv } from './shared.js';
+
+interface ShellInfo {
+  executable: string;
+  args: (cmd: string) => string[];
+  type: 'git-bash' | 'bash' | 'powershell' | 'cmd' | 'sh';
+}
+
+let cachedShellInfo: ShellInfo | null = null;
+
+export function getShellInfo(): ShellInfo {
+  if (cachedShellInfo) return cachedShellInfo;
+
+  if (process.platform === 'win32') {
+    const candidates = [
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+      'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+      'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+      process.env.LOCALAPPDATA
+        ? join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
+        : '',
+      process.env.PROGRAMFILES
+        ? join(process.env.PROGRAMFILES, 'Git', 'bin', 'bash.exe')
+        : '',
+      process.env['PROGRAMFILES(X86)']
+        ? join(process.env['PROGRAMFILES(X86)'], 'Git', 'bin', 'bash.exe')
+        : '',
+    ].filter((p): p is string => Boolean(p) && existsSync(p));
+
+    if (candidates.length > 0) {
+      cachedShellInfo = {
+        executable: candidates[0],
+        args: (cmd: string) => ['-c', cmd],
+        type: 'git-bash',
+      };
+      return cachedShellInfo;
+    }
+
+    try {
+      const whichRes = spawnSync('where.exe', ['bash.exe'], { encoding: 'utf8' });
+      if (whichRes.status === 0 && whichRes.stdout) {
+        const foundPath = whichRes.stdout.split(/\r?\n/)[0].trim();
+        if (foundPath && existsSync(foundPath)) {
+          cachedShellInfo = {
+            executable: foundPath,
+            args: (cmd: string) => ['-c', cmd],
+            type: 'bash',
+          };
+          return cachedShellInfo;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      const psRes = spawnSync('where.exe', ['powershell.exe'], { encoding: 'utf8' });
+      if (psRes.status === 0 && psRes.stdout) {
+        const psPath = psRes.stdout.split(/\r?\n/)[0].trim();
+        if (psPath && existsSync(psPath)) {
+          cachedShellInfo = {
+            executable: psPath,
+            args: (cmd: string) => ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', cmd],
+            type: 'powershell',
+          };
+          return cachedShellInfo;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    cachedShellInfo = {
+      executable: 'cmd.exe',
+      args: (cmd: string) => ['/c', cmd],
+      type: 'cmd',
+    };
+    return cachedShellInfo;
+  }
+
+  const defaultSh = existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh';
+  cachedShellInfo = {
+    executable: process.env.SHELL || defaultSh,
+    args: (cmd: string) => ['-c', cmd],
+    type: 'sh',
+  };
+  return cachedShellInfo;
+}
 
 /**
  * Parse a command string into executable and argument array.
@@ -123,9 +210,8 @@ function formatExecResult(ok: boolean, out: string, err?: string, code?: number 
 
 function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
   try {
-    const parsed = parseCommand(cmd);
-    if (!parsed) {
-      return JSON.stringify({ ok: false, error: 'Failed to parse command' });
+    if (!cmd.trim()) {
+      return JSON.stringify({ ok: false, error: 'Command cannot be empty' });
     }
 
     // SECURITY: Block destructive commands (rm -rf, mkfs, fork bombs, etc.)
@@ -133,33 +219,24 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
       return JSON.stringify({ ok: false, error: 'Command not allowed' });
     }
 
-    const { command, args, useShell } = parsed;
     const timeoutMs = timeoutSeconds * 1000;
-
-    // Use sanitized environment to prevent credential exposure
     const env = getSanitizedEnv();
+    const shell = getShellInfo();
 
-    // Helper to convert buffer or string to UTF-8 string
     const toString = (data: unknown): string => {
       if (Buffer.isBuffer(data)) return (data as Buffer).toString('utf-8');
       if (typeof data === 'string') return data;
       return '';
     };
 
-    // For commands that need shell features, we must use a shell
-    // but we still sanitize the environment
-    if (useShell) {
-      const result = spawnSync(
-        process.platform === 'win32' ? 'cmd.exe' : '/bin/sh',
-        [process.platform === 'win32' ? '/c' : '-c', cmd],
-        {
-          cwd: ws,
-          timeout: timeoutMs,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env,
-          shell: true,
-        }
-      );
+    if (shell.type === 'git-bash' || shell.type === 'bash' || shell.type === 'sh' || shell.type === 'powershell') {
+      const result = spawnSync(shell.executable, shell.args(cmd), {
+        cwd: ws,
+        timeout: timeoutMs,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env,
+        shell: false,
+      });
 
       if (result.error) {
         return formatExecResult(
@@ -169,15 +246,26 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
           result.status ?? null
         );
       }
-      return formatExecResult(true, toString(result.stdout));
+      if (result.status !== 0) {
+        return formatExecResult(
+          false,
+          toString(result.stdout),
+          toString(result.stderr),
+          result.status ?? null
+        );
+      }
+      return formatExecResult(true, toString(result.stdout), toString(result.stderr), result.status);
     }
 
-    // For simple commands without shell metacharacters - secure path
-    const result = spawnSync(command, args, {
+    const parsed = parseCommand(cmd);
+    const exe = parsed?.command || 'cmd.exe';
+    const args = parsed?.args || ['/c', cmd];
+    const result = spawnSync(exe, args, {
       cwd: ws,
       timeout: timeoutMs,
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
+      shell: false,
     });
 
     if (result.error) {
@@ -188,7 +276,15 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
         result.status ?? null
       );
     }
-    return formatExecResult(true, toString(result.stdout));
+    if (result.status !== 0) {
+      return formatExecResult(
+        false,
+        toString(result.stdout),
+        toString(result.stderr),
+        result.status ?? null
+      );
+    }
+    return formatExecResult(true, toString(result.stdout), toString(result.stderr), result.status);
   } catch (e: unknown) {
     return formatExecResult(
       false,
@@ -206,9 +302,8 @@ function execCmdAsync(
   signal?: AbortSignal
 ): Promise<string> {
   return new Promise((resolvePromise) => {
-    const parsed = parseCommand(cmd);
-    if (!parsed) {
-      resolvePromise(JSON.stringify({ ok: false, error: 'Failed to parse command' }));
+    if (!cmd.trim()) {
+      resolvePromise(JSON.stringify({ ok: false, error: 'Command cannot be empty' }));
       return;
     }
 
@@ -218,33 +313,31 @@ function execCmdAsync(
       return;
     }
 
-    const { command, args, useShell } = parsed;
     const timeoutMs = timeoutSeconds * 1000;
     const env = getSanitizedEnv();
+    const shell = getShellInfo();
 
     let child: ChildProcess;
 
     try {
-      // For commands that need shell features
-      if (useShell) {
-        child = spawn(
-          process.platform === 'win32' ? 'cmd.exe' : '/bin/sh',
-          [process.platform === 'win32' ? '/c' : '-c', cmd],
-          {
-            cwd: ws,
-            timeout: timeoutMs,
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env,
-            shell: true,
-          }
-        );
-      } else {
-        // For simple commands without shell metacharacters - secure path
-        child = spawn(command, args, {
+      if (shell.type === 'git-bash' || shell.type === 'bash' || shell.type === 'sh' || shell.type === 'powershell') {
+        child = spawn(shell.executable, shell.args(cmd), {
           cwd: ws,
           timeout: timeoutMs,
           stdio: ['pipe', 'pipe', 'pipe'],
           env,
+          shell: false,
+        });
+      } else {
+        const parsed = parseCommand(cmd);
+        const exe = parsed?.command || 'cmd.exe';
+        const args = parsed?.args || ['/c', cmd];
+        child = spawn(exe, args, {
+          cwd: ws,
+          timeout: timeoutMs,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env,
+          shell: false,
         });
       }
     } catch (e: unknown) {
@@ -264,13 +357,6 @@ function execCmdAsync(
       stderrBuffer += data.toString();
     });
 
-    child.on('error', (error) => {
-      if (!resolved) {
-        resolved = true;
-        resolvePromise(formatExecResult(false, stdoutBuffer, stderrBuffer || error.message, null));
-      }
-    });
-
     // Set up timeout to kill the child process explicitly
     const timeoutId = setTimeout(() => {
       if (!resolved) {
@@ -280,7 +366,6 @@ function execCmdAsync(
       }
     }, timeoutMs);
 
-    // Clear timeout when child closes or errors
     const clearTimeoutFn = () => clearTimeout(timeoutId);
 
     child.on('close', (code, _signal) => {
@@ -288,7 +373,7 @@ function execCmdAsync(
       if (!resolved) {
         resolved = true;
         if (code === 0) {
-          resolvePromise(formatExecResult(true, stdoutBuffer));
+          resolvePromise(formatExecResult(true, stdoutBuffer, stderrBuffer, code));
         } else {
           resolvePromise(formatExecResult(false, stdoutBuffer, stderrBuffer, code));
         }

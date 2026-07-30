@@ -8,7 +8,7 @@ import type {
   Skill,
   SkillCommand,
 } from '../types.js';
-import type { PermissionRequest } from '../security/index.js';
+import type { PermissionRequest, PermissionMode } from '../security/index.js';
 import type { SubAgentSnapshot } from '../agent-subagents.js';
 import type { Theme } from './theme.js';
 import { DEFAULT_THEME } from './theme.js';
@@ -16,14 +16,18 @@ import type { AgentCore } from '../agent.js';
 
 type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'todo' | 'permission-mode' | null;
 
+const PERMISSION_MODES: PermissionMode[] = ['read_only', 'ask', 'allow_edits', 'always_allow'];
+
 interface AppState {
   overlay: Overlay;
+  showPermissionMode: boolean;
   showTodos: boolean;
   mouseEnabled: boolean;
   theme: Theme;
   selectedMessageIndex: number | null;
   pendingPermissionReq: PermissionRequest | null;
   permissionResolver: ((choice: 'allow' | 'always_allow' | 'deny') => void) | null;
+  permissionMode: PermissionMode;
 
   messages: Message[];
   state: AgentState;
@@ -43,6 +47,8 @@ interface AppState {
 
   setOverlay: (o: Overlay) => void;
   setShowPermissionMode: (show: boolean) => void;
+  setPermissionMode: (m: PermissionMode) => void;
+  cyclePermissionMode: () => PermissionMode;
   setShowTodos: (s: boolean | ((prev: boolean) => boolean)) => void;
   toggleShowTodos: () => void;
   setMouseEnabled: (e: boolean) => void;
@@ -82,6 +88,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   selectedMessageIndex: null,
   pendingPermissionReq: null,
   permissionResolver: null,
+  permissionMode: 'ask',
 
   messages: [],
   state: 'idle',
@@ -101,6 +108,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   setOverlay: (o) => set({ overlay: o }),
   setShowPermissionMode: (show) => set({ showPermissionMode: show }),
+  setPermissionMode: (m) => set({ permissionMode: m }),
+  cyclePermissionMode: () => {
+    const current = get().permissionMode;
+    const idx = PERMISSION_MODES.indexOf(current);
+    const next = PERMISSION_MODES[(idx + 1) % PERMISSION_MODES.length];
+    set({ permissionMode: next });
+    return next;
+  },
   setShowTodos: (s) =>
     set(typeof s === 'function' ? { showTodos: s(get().showTodos) } : { showTodos: s }),
   toggleShowTodos: () => set((st) => ({ showTodos: !st.showTodos })),
@@ -148,5 +163,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
       lastUsage: agent.lastUsage,
       totalUsage: { ...agent.totalUsage },
       subAgents: agent.getSubAgentSnapshot(),
+      permissionMode: agent.securityManager?.permissionManager?.getMode() ?? 'ask',
     }),
 }));

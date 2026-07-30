@@ -74,12 +74,13 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.agentFg}> /mcp-remove &lt;name&gt; Remove MCP server</text>
       <text fg={theme.agentFg}> /cd [path] Change workspace directory</text>
       <text fg={theme.agentFg}> /allow [path] Approve extra tool access outside workspace</text>
-      <text fg={theme.agentFg}> /permissions Tool &amp; command permissions (Shift+Tab)</text>
+      <text fg={theme.agentFg}> /permissions Tool &amp; command permissions</text>
       <text fg={theme.agentFg}> /export Export chat to markdown file</text>
       <text fg={theme.agentFg}> /exit Quit (auto-saves session)</text>
       <text> </text>
 
       <text fg={theme.userFg}>Shortcuts:</text>
+      <text fg={theme.mutedFg}> Shift+Tab Cycle permission mode (read_only ➔ ask ➔ allow_edits ➔ always_allow)</text>
       <text fg={theme.mutedFg}> F1 Help</text>
       <text fg={theme.mutedFg}> F2 Clear chat</text>
       <text fg={theme.mutedFg}> F3 Prefill /auto</text>

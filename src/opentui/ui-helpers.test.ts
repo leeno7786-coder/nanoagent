@@ -421,4 +421,25 @@ describe('buildToolDisplayBlock', () => {
       expect(buildSummary('read_file', {}, {}, false)).toBe('failed');
     });
   });
+
+  describe('useAppStore permissionMode', () => {
+    it('should default to ask mode and cycle properly', async () => {
+      const { useAppStore } = await import('./app-store.js');
+      useAppStore.getState().setPermissionMode('ask');
+      expect(useAppStore.getState().permissionMode).toBe('ask');
+
+      const next1 = useAppStore.getState().cyclePermissionMode();
+      expect(next1).toBe('allow_edits');
+      expect(useAppStore.getState().permissionMode).toBe('allow_edits');
+
+      const next2 = useAppStore.getState().cyclePermissionMode();
+      expect(next2).toBe('always_allow');
+
+      const next3 = useAppStore.getState().cyclePermissionMode();
+      expect(next3).toBe('read_only');
+
+      const next4 = useAppStore.getState().cyclePermissionMode();
+      expect(next4).toBe('ask');
+    });
+  });
 });

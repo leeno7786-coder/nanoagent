@@ -233,8 +233,8 @@ describe('AgentCore', () => {
       expect(agent.roundCounter).toBe(5);
     });
 
-    it('should have max rounds limit', () => {
-      expect(agent.maxRounds).toBe(30);
+    it('should default maxRounds to 0 (unlimited)', () => {
+      expect(agent.maxRounds).toBe(0);
     });
   });
 

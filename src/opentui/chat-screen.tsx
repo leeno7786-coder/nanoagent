@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
 import type { ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import type { Message, ToolResult, AgentState, ToolCall } from '../types.js';
+import type { PermissionMode } from '../security/index.js';
 import type { SubAgentProgressEvent } from '../tools/index.js';
 import type { SubAgentResult } from '../subagents.js';
 import { sanitizeForTui } from './sanitize.js';
@@ -12,6 +13,7 @@ import { getSyntaxStyle } from './syntax-style.js';
 import type { Theme } from './theme.js';
 import { buildToolDisplayBlock, type ToolDisplayBlock } from './tool-display.js';
 import { ErrorBoundary } from './error-boundary.js';
+import { useAppStore } from './app-store.js';
 
 interface ChatScreenProps {
   theme: Theme;
@@ -137,6 +139,32 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+const PERM_CONFIG: Record<
+  PermissionMode,
+  { icon: string; label: string; getColor: (t: Theme) => string }
+> = {
+  read_only: {
+    icon: '🔒',
+    label: 'read_only',
+    getColor: (t) => t.errorFg,
+  },
+  ask: {
+    icon: '🛡️',
+    label: 'ask',
+    getColor: (t) => t.warningFg || t.toolFg,
+  },
+  allow_edits: {
+    icon: '✏️',
+    label: 'allow_edits',
+    getColor: (t) => t.statusTool || t.userFg,
+  },
+  always_allow: {
+    icon: '⚡',
+    label: 'always_allow',
+    getColor: (t) => t.successFg || t.agentFg,
+  },
+};
+
 export function ChatScreen({
   theme,
   messages,
@@ -153,6 +181,8 @@ export function ChatScreen({
   const scrollRef = useRef<ScrollBoxRenderable>(null);
   const lastSubmitRef = useRef<{ text: string; at: number } | null>(null);
   const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
+  const permissionMode = useAppStore((s) => s.permissionMode);
+  const permCfg = PERM_CONFIG[permissionMode] ?? PERM_CONFIG.ask;
 
   const toolMap = useMemo(() => {
     const map = new Map<string, ToolResult>();
@@ -373,6 +403,11 @@ export function ChatScreen({
           )}
           focused
         />
+        <box flexDirection="row" flexShrink={0} marginLeft={1}>
+          <text fg={permCfg.getColor(theme)}>
+            {permCfg.icon} {permCfg.label}
+          </text>
+        </box>
       </box>
     </box>
   );

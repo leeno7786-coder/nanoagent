@@ -22,6 +22,8 @@ type Chunk = {
   content?: string;
   reasoningContent?: string;
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  finishReason?: string;
+  usage?: { prompt_tokens: number; completion_tokens: number };
 };
 
 /** Queue of scripted responses; each run-loop LLM call shifts one. */
@@ -56,7 +58,9 @@ function startStubServer(): Promise<void> {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
         });
+        let lastUsage = { prompt_tokens: 10, completion_tokens: 5 };
         for (const c of chunks) {
+          if (c.usage) lastUsage = c.usage;
           const delta: Record<string, unknown> = {};
           if (c.content) delta.content = c.content;
           if (c.reasoningContent) delta.reasoning_content = c.reasoningContent;
@@ -69,11 +73,21 @@ function startStubServer(): Promise<void> {
             }));
           }
           res.write(
-            `data: ${JSON.stringify({ id: 'cmpl-test', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`
+            `data: ${JSON.stringify({
+              id: 'cmpl-test',
+              object: 'chat.completion.chunk',
+              choices: [
+                {
+                  index: 0,
+                  delta,
+                  finish_reason: c.finishReason ?? null,
+                },
+              ],
+            })}\n\n`
           );
         }
         res.write(
-          `data: ${JSON.stringify({ id: 'cmpl-test', choices: [], usage: { prompt_tokens: 10, completion_tokens: 5 } })}\n\n`
+          `data: ${JSON.stringify({ id: 'cmpl-test', choices: [], usage: lastUsage })}\n\n`
         );
         res.write('data: [DONE]\n\n');
         res.end();
@@ -98,7 +112,10 @@ function makeConfig(workspace: string, extra: Partial<Config> = {}): Config {
     temperature: 0.3,
     maxTokens: 4096,
     retryCount: 0,
+    rateLimitMs: 0,
     toolCacheEnabled: false,
+    // Keep tests hermetic — don't pull MCP servers from ~/.nanogent.json
+    mcp: {},
     ...extra,
   } as Config;
 }
@@ -128,6 +145,29 @@ describe('AgentCore run loop (behavioral)', () => {
     agents.push(a);
     return a;
   }
+
+  it('feeds API prompt_tokens into the context manager for compaction', async () => {
+    const agent = newAgent(
+      makeConfig(ws, {
+        modelContextLength: 128000,
+        contextCompactThreshold: 0.5,
+        rateLimitMs: 0,
+      })
+    );
+    await agent.init();
+
+    // Simulate a cloud/local response that billed a large prompt (tool schemas etc.)
+    scripted.push([
+      { content: 'ok', usage: { prompt_tokens: 90000, completion_tokens: 3 } },
+    ]);
+    await agent.run('hi');
+
+    const stats = agent.contextManager.getStats();
+    expect(stats.tokenSource).toBe('api');
+    expect(stats.apiPromptTokens).toBe(90000);
+    expect(stats.currentTokens).toBeGreaterThanOrEqual(90000);
+    expect(stats.needsCompaction).toBe(true); // 90k/128k > 0.5
+  }, 20000);
 
   it('completes a simple streamed text turn', async () => {
     const agent = newAgent();
@@ -185,13 +225,32 @@ describe('AgentCore run loop (behavioral)', () => {
     await agent.run('what are my todos?');
 
     expect(sentMessages.length).toBe(1);
-    const sysMsgs = (sentMessages[0] as Array<{ role: string; content: string }>).filter(
-      (m) => m.role === 'system'
-    );
-    const todoMsg = sysMsgs.find((m) => m.content.includes('Current todo list'));
-    expect(todoMsg).toBeDefined();
-    expect(todoMsg!.content).toContain('write the tests');
-    expect(todoMsg!.content).toContain('id=');
+    const payload = sentMessages[0] as Array<{ role: string; content: string }>;
+    const sysMsgs = payload.filter((m) => m.role === 'system');
+    // Qwen Jinja: exactly one system message, and it must be first.
+    expect(sysMsgs.length).toBe(1);
+    expect(payload[0]?.role).toBe('system');
+    expect(sysMsgs[0]!.content).toContain('Current todo list');
+    expect(sysMsgs[0]!.content).toContain('write the tests');
+    expect(sysMsgs[0]!.content).toContain('id=');
+  });
+
+  it('merges system-base + system-todos into a single leading system message', async () => {
+    const agent = newAgent();
+    await agent.init();
+    agent.addTodo('fix jinja');
+    agent.addTodo('keep going');
+
+    scripted.push([{ content: 'proceeding' }]);
+    await agent.run('proceed');
+
+    const payload = sentMessages[0] as Array<{ role: string; content: string }>;
+    expect(payload[0]?.role).toBe('system');
+    expect(payload.filter((m) => m.role === 'system')).toHaveLength(1);
+    // No system role after the first message
+    expect(payload.slice(1).every((m) => m.role !== 'system')).toBe(true);
+    expect(payload[0]!.content).toContain('fix jinja');
+    expect(payload[0]!.content).toContain('keep going');
   });
 
   it('drops a completely empty streamed response from history', async () => {
@@ -202,9 +261,51 @@ describe('AgentCore run loop (behavioral)', () => {
     scripted.push([]); // model streams nothing at all
     await agent.run('hi');
 
-    // the user message was added, but no phantom assistant message
-    expect(agent.messages.length).toBe(before + 1);
-    expect(agent.messages.filter((m) => m.role === 'assistant')).toEqual([]);
+    // phantom empty assistant is replaced with a visible notice
+    expect(agent.messages.length).toBe(before + 2); // user + notice
+    const assistants = agent.messages.filter((m) => m.role === 'assistant');
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]!.content).toContain('empty response');
+    expect(agent.state).toBe('idle');
+  });
+
+  it('recovers from silent context overflow (finish_reason=length, 0 output)', async () => {
+    const agent = newAgent(makeConfig(ws, { modelContextLength: 2000, rateLimitMs: 0 }));
+    await agent.init();
+
+    // Seed enough history so forceCompact has something to remove
+    for (let i = 0; i < 8; i++) {
+      const u: Message = {
+        id: `seed-u${i}`,
+        role: 'user',
+        content: `seed ${i} ` + 'x'.repeat(200),
+        timestamp: Date.now(),
+      };
+      const a: Message = {
+        id: `seed-a${i}`,
+        role: 'assistant',
+        content: `reply ${i} ` + 'y'.repeat(200),
+        timestamp: Date.now(),
+      };
+      agent.messages.push(u, a);
+      agent.contextManager.addMessage(u);
+      agent.contextManager.addMessage(a);
+    }
+    const beforeLen = agent.messages.length;
+
+    // First LLM call: silent overflow. Second: real reply after compact+retry.
+    scripted.push([
+      { finishReason: 'length', usage: { prompt_tokens: 9000, completion_tokens: 0 } },
+    ]);
+    scripted.push([{ content: 'Recovered after compact.' }]);
+
+    await agent.run('continue please');
+
+    expect(sentMessages.length).toBe(2); // overflow + retry
+    expect(agent.messages.length).toBeLessThan(beforeLen + 5); // compacted
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.role).toBe('assistant');
+    expect(last.content).toContain('Recovered after compact');
     expect(agent.state).toBe('idle');
   });
 

@@ -1,4 +1,4 @@
-import { countTokens, isLocalProvider, isSmallModel } from './utils.js';
+import { countTokens, isSmallModel } from './utils.js';
 
 export function doesChatFitInContext(
   modelId: string,
@@ -67,6 +67,10 @@ export function estimateModelContextSize(modelId: string, _maxTokens?: number): 
     return 256000;
   }
 
+  if (lowerModelId.includes('gpt-4o') || lowerModelId.includes('gpt-4.1')) {
+    return 128000;
+  }
+
   if (lowerModelId.includes('gpt-4')) {
     if (lowerModelId.includes('turbo') || lowerModelId.includes('preview')) {
       return 128000;
@@ -116,6 +120,12 @@ export function estimateModelContextSize(modelId: string, _maxTokens?: number): 
     return 65536;
   }
 
+  // Tencent Hunyuan — OpenRouter paid is 131k; :free tier is 32k
+  if (lowerModelId.includes('hunyuan') || lowerModelId.includes('tencent/')) {
+    if (lowerModelId.includes(':free')) return 32768;
+    return 131072;
+  }
+
   if (lowerModelId.includes('phi')) {
     if (lowerModelId.includes('4k')) return 4000;
     return 32000;
@@ -145,12 +155,11 @@ export function effectiveContextSize(
     return runtime.maxContextLength;
   }
 
-  const archSize = estimateModelContextSize(modelId, maxTokens);
-  if (isLocalProvider(baseURL)) return archSize;
-  if (maxTokens !== undefined) {
-    return Math.min(archSize, Math.max(maxTokens * 4, 8192));
-  }
-  return archSize;
+  // maxTokens is an *output* cap — do not use it to shrink the context window.
+  // Compaction must track the real prompt window (runtime / architecture estimate).
+  void maxTokens;
+  void baseURL;
+  return estimateModelContextSize(modelId, maxTokens);
 }
 
 export function getModelCompactionSettings(
@@ -165,6 +174,7 @@ export function getModelCompactionSettings(
   }
 ): {
   contextSize: number;
+  /** Ratio 0-1 of the context window at which auto-compaction triggers */
   compactThreshold: number;
   summaryReservedPercent: number;
   keepCount: number;
@@ -182,7 +192,10 @@ export function getModelCompactionSettings(
     (options?.modelParamBillions !== undefined
       ? options.modelParamBillions <= 8
       : isSmallModel(modelId, maxTokens, options?.smallModelMode));
-  const compactThreshold = small ? Math.floor(contextSize * 0.65) : Math.floor(contextSize * 0.8);
+  // Store as a ratio so getStats can compare against live usagePercent
+  // (including API-reported prompt_tokens). Absolute thresholds drifted when
+  // the window size changed between constructor and getStats.
+  const compactThreshold = small ? 0.65 : 0.8;
 
   let keepCount = 12;
 

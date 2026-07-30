@@ -34,6 +34,7 @@ import {
   addAssistantMessage,
   addUserMessage,
   checkAndCompactContext,
+  forceCompactContext,
 } from '../agent-messages.js';
 import { agentRun } from './run.js';
 
@@ -126,9 +127,9 @@ export class AgentCore {
   ) => Promise<'allow' | 'always_allow' | 'deny'>;
   /** Enable streaming mode — assistant content updates in real-time. */
   public streaming = true;
-  /** Round counter and maximum rounds before stopping. */
+  /** Round counter and maximum rounds before stopping (0 = unlimited). */
   public roundCounter: number = 0;
-  public maxRounds: number = 30;
+  public maxRounds: number = 0;
   /** Whether the current model is a small/quantized model (stored from init). */
   /** @internal Written by agent-lifecycle; read publicly via isSmallModel. */
   _smallModel: boolean = false;
@@ -263,6 +264,11 @@ export class AgentCore {
 
   public checkAndCompactContext(): boolean {
     return checkAndCompactContext(this);
+  }
+
+  /** Force-compact after silent context overflow (empty length finish). */
+  public forceCompactContext(): boolean {
+    return forceCompactContext(this);
   }
 
   public compactContextIfNeeded(): boolean {

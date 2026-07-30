@@ -76,9 +76,17 @@ export function StatusBar({
     maxTokens: undefined,
   };
   const smallModelIndicator = isSmallModelFromConfig(runtimeCfg) ? ' [≤8B]' : '';
-  const ctxIndicator = modelRuntime?.modelContextLength
-    ? ` · ${Math.round(modelRuntime.modelContextLength / 1000)}k`
-    : '';
+  const ctxLen = modelRuntime?.modelContextLength;
+  // Prefer live prompt usage vs window when we know both (API-reported ↑ tokens).
+  let ctxIndicator = '';
+  if (ctxLen && ctxLen > 0) {
+    if (lastUsage && lastUsage.input_tokens > 0) {
+      const pct = Math.min(100, Math.round((lastUsage.input_tokens / ctxLen) * 100));
+      ctxIndicator = ` · ${fmt(lastUsage.input_tokens)}/${fmt(ctxLen)} (${pct}%)`;
+    } else {
+      ctxIndicator = ` · ${Math.round(ctxLen / 1000)}k`;
+    }
+  }
   const elapsed = elapsedMs && elapsedMs > 0 ? `${(elapsedMs / 1000).toFixed(1)}s` : '';
   const mcpIndicator = mcpToolCount > 0 ? ` · MCP:${mcpToolCount}` : '';
   const spin = state !== 'idle' && state !== 'error' ? spinnerFrame(elapsedMs || 0) + ' ' : '';
@@ -107,7 +115,7 @@ export function StatusBar({
       </box>
       <box flexDirection="row" paddingX={1} height={1} overflow="hidden">
         <text fg={theme.mutedFg}>
-          F1 help · F3 auto · F4 todo · F9 theme · F10 exit · drag=copy · ^D abort
+          F1 help · Shift+Tab perm · F3 auto · F4 todo · F9 theme · F10 exit · drag=copy · ^D abort
         </text>
         {!mouseEnabled && <text fg={theme.statusError}> [MOUSE OFF]</text>}
       </box>

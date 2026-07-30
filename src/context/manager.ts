@@ -39,11 +39,11 @@ export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
  * Context usage statistics.
  */
 export interface ContextStats {
-  /** Current token count */
+  /** Current token count (API-observed when available, else local estimate) */
   currentTokens: number;
-  /** Maximum allowed tokens */
+  /** Maximum context window size */
   maxTokens: number;
-  /** Percentage of context used */
+  /** Percentage of context used (0-1) */
   usagePercent: number;
   /** Number of messages in history */
   messageCount: number;
@@ -51,6 +51,12 @@ export interface ContextStats {
   needsCompaction: boolean;
   /** Number of compactions performed */
   compactionCount: number;
+  /** Where currentTokens came from */
+  tokenSource: 'api' | 'estimate';
+  /** Raw local message-content estimate (excludes tool schemas / template overhead) */
+  estimatedTokens: number;
+  /** Last API-reported prompt tokens, if any */
+  apiPromptTokens?: number;
 }
 
 /**
@@ -67,6 +73,14 @@ export class ContextManager {
   // Track token counts per message index for O(1) add/remove instead of O(n) recompute
   private messageTokenCache: Map<string, number> = new Map();
   private cachedTotalTokens: number = 0;
+  /**
+   * Last prompt_tokens reported by the LLM API (includes tool schemas, chat
+   * template overhead, and whatever the provider actually billed/counted).
+   * Local message estimates alone undercount badly — especially with MCP tools.
+   */
+  private lastApiPromptTokens: number | undefined;
+  /** Estimated tokens of messages added after the last API usage report. */
+  private tokensAddedSinceApiReport = 0;
 
   constructor(cfg: Config, messages: Message[] = []) {
     this.messages = [...messages];
@@ -86,13 +100,13 @@ export class ContextManager {
       modelMaxContextLength: cfg.modelMaxContextLength,
     });
 
-    // Store the absolute compact threshold from model settings
-    const absoluteCompactThreshold = compactionSettings.compactThreshold;
+    // Store compact threshold as a ratio (0-1) from model settings
+    const compactThresholdRatio = compactionSettings.compactThreshold;
 
     this.config = {
       ...DEFAULT_CONTEXT_CONFIG,
       maxHistoryTokens: compactionSettings.contextSize,
-      compactThreshold: absoluteCompactThreshold,
+      compactThreshold: compactThresholdRatio,
       summaryReservedPercent: compactionSettings.summaryReservedPercent,
       keepCount: compactionSettings.keepCount,
     };
@@ -165,7 +179,21 @@ export class ContextManager {
   setMessages(messages: Message[]): void {
     this.messages = [...messages];
     this.reseedTokenCache();
+    // History rewrite invalidates API-observed prompt tokens
+    this.lastApiPromptTokens = undefined;
+    this.tokensAddedSinceApiReport = 0;
     this.stats = null; // Invalidate cached stats
+  }
+
+  /**
+   * Record prompt_tokens from the latest LLM response (local or cloud).
+   * This is the ground-truth context size for compaction decisions.
+   */
+  reportApiUsage(usage: { input_tokens: number; output_tokens?: number }): void {
+    if (!usage || !(usage.input_tokens > 0)) return;
+    this.lastApiPromptTokens = usage.input_tokens;
+    this.tokensAddedSinceApiReport = 0;
+    this.stats = null;
   }
 
   /**
@@ -176,20 +204,40 @@ export class ContextManager {
     this.messages.push(message);
     this.messageTokenCache.set(message.id, tokens);
     this.cachedTotalTokens += tokens;
+    if (this.lastApiPromptTokens != null) {
+      this.tokensAddedSinceApiReport += tokens;
+    }
     this.stats = null; // Invalidate cached stats
 
-    // Monitor context growth - warn when approaching maxHistoryTokens limit
-    const thresholdPercent = 0.8; // Warn at 80% usage
-    if (
-      this.config.maxHistoryTokens > 0 &&
-      this.cachedTotalTokens > this.config.maxHistoryTokens * thresholdPercent
-    ) {
+    // Monitor context growth - warn when approaching limit
+    const observed = this.getObservedTokenCount();
+    const windowSize = this.getContextWindowSize();
+    const thresholdPercent = 0.8;
+    if (windowSize > 0 && observed > windowSize * thresholdPercent) {
       logWarn(
         `[ContextManager] Context approaching limit: ` +
-          `${this.cachedTotalTokens}/${this.config.maxHistoryTokens} tokens ` +
-          `(${Math.round((this.cachedTotalTokens / this.config.maxHistoryTokens) * 100)}%)`
+          `${observed}/${windowSize} tokens ` +
+          `(${Math.round((observed / windowSize) * 100)}%)` +
+          (this.lastApiPromptTokens != null ? ' [api]' : ' [estimate]')
       );
     }
+  }
+
+  /** Context window size used for compaction (runtime/config, not max-output clamp). */
+  private getContextWindowSize(): number {
+    if (this.config.maxHistoryTokens > 0) return this.config.maxHistoryTokens;
+    return effectiveContextSize(this.modelId, undefined, this.baseURL, this.runtime);
+  }
+
+  /**
+   * Best available token count: API prompt_tokens (+ messages since) when known,
+   * otherwise the local content estimate.
+   */
+  private getObservedTokenCount(): number {
+    if (this.lastApiPromptTokens != null) {
+      return this.lastApiPromptTokens + this.tokensAddedSinceApiReport;
+    }
+    return this.cachedTotalTokens;
   }
 
   /**
@@ -200,16 +248,17 @@ export class ContextManager {
       return this.stats;
     }
 
-    const contextSize = effectiveContextSize(this.modelId, undefined, this.baseURL, this.runtime);
-
-    const currentTokens = this.countMessageTokens(this.messages);
+    const contextSize = this.getContextWindowSize();
+    const estimatedTokens = this.countMessageTokens(this.messages);
+    const currentTokens = this.getObservedTokenCount();
+    const tokenSource: 'api' | 'estimate' =
+      this.lastApiPromptTokens != null ? 'api' : 'estimate';
+    // Reserve headroom for the next completion inside the window
     const maxTokens = Math.floor(contextSize * (1 - this.config.summaryReservedPercent));
     const usagePercent = contextSize > 0 ? currentTokens / contextSize : 0;
     const availablePercent = maxTokens > 0 ? currentTokens / maxTokens : 0;
 
-    // Check if we've exceeded the absolute compact threshold
-    // If compactThreshold is a ratio (0-1), use it as such
-    // If it's an absolute number (> 1), use it as absolute token count
+    // compactThreshold may be a ratio (0-1) or an absolute token count (>1)
     const threshold = this.config.compactThreshold;
     const needsCompaction =
       threshold <= 1
@@ -218,11 +267,14 @@ export class ContextManager {
 
     this.stats = {
       currentTokens,
-      maxTokens,
+      maxTokens: contextSize,
       usagePercent,
       messageCount: this.messages.length,
       needsCompaction,
       compactionCount: this.compactionCount,
+      tokenSource,
+      estimatedTokens,
+      apiPromptTokens: this.lastApiPromptTokens,
     };
 
     return this.stats;
@@ -296,28 +348,55 @@ export class ContextManager {
   /**
    * Compact the conversation history to free up context space.
    * Removes oldest messages while preserving important context.
+   *
+   * @param opts.force — compact even when under the normal threshold (overflow recovery)
+   * @param opts.keepCount — override how many trailing messages to keep (force uses a lower default)
+   * @param opts.targetRatio — fraction of context to land under (default: compactThreshold ratio or 0.5 when forced)
    */
-  compact(): { removedCount: number; summary?: string } {
+  compact(opts?: {
+    force?: boolean;
+    keepCount?: number;
+    targetRatio?: number;
+  }): { removedCount: number; summary?: string } {
     if (!this.config.enabled) {
       return { removedCount: 0 };
     }
 
+    const force = opts?.force === true;
     const stats = this.getStats();
-    if (!stats.needsCompaction) {
+    if (!force && !stats.needsCompaction) {
       return { removedCount: 0 };
     }
 
     // Calculate how many tokens we need to free
-    const contextSize = effectiveContextSize(this.modelId, undefined, this.baseURL, this.runtime);
+    const contextSize = this.getContextWindowSize();
 
     // Determine target tokens based on whether compactThreshold is a ratio or absolute
     const threshold = this.config.compactThreshold;
-    const targetTokens = threshold <= 1 ? Math.floor(contextSize * threshold) : threshold;
+    let targetTokens: number;
+    if (opts?.targetRatio !== undefined) {
+      targetTokens = Math.floor(contextSize * opts.targetRatio);
+    } else if (force) {
+      // Overflow recovery: aim for half the window so the next turn has headroom
+      // for tool schemas (MCP tools are not counted in message tokens).
+      targetTokens = Math.floor(contextSize * 0.5);
+    } else if (threshold <= 1) {
+      targetTokens = Math.floor(contextSize * threshold);
+    } else {
+      // Absolute threshold was derived as ratio*window — land under ~80% of it
+      // so we don't immediately re-trigger. Prefer ratio of the live window.
+      targetTokens = Math.min(threshold, Math.floor(contextSize * 0.8));
+    }
 
-    const tokensToRemove = stats.currentTokens - targetTokens;
+    const tokensToRemove = Math.max(0, stats.currentTokens - targetTokens);
 
-    if (tokensToRemove <= 0) {
+    if (tokensToRemove <= 0 && !force) {
       return { removedCount: 0 };
+    }
+    // When forcing with nothing to free by token math, still drop old history —
+    // provider token counts (esp. with large tool schemas) often exceed ours.
+    if (tokensToRemove <= 0 && force) {
+      // Fall through and remove everything except system + last few messages
     }
 
     // Don't remove leading system messages (main prompt, todo context, skills)
@@ -329,20 +408,29 @@ export class ContextManager {
       firstRemovable++;
     }
 
-    // Don't remove the last keepCount messages
-    const minKeep = Math.min(this.config.keepCount, this.messages.length);
+    // Don't remove the last keepCount messages (force uses a tighter keep window)
+    const effectiveKeep =
+      opts?.keepCount ?? (force ? Math.min(4, this.config.keepCount) : this.config.keepCount);
+    const minKeep = Math.min(effectiveKeep, this.messages.length);
     const lastRemovable = Math.max(firstRemovable, this.messages.length - minKeep);
 
     // Walk a contiguous cut point forward from the first removable message
     let cut = firstRemovable;
     let removedTokens = 0;
+    const mustRemove = force && tokensToRemove <= 0;
     while (cut < lastRemovable) {
       const msgTokens = this.countMessageTokens([this.messages[cut]]);
-      if (removedTokens + msgTokens > tokensToRemove && cut > firstRemovable) {
+      if (
+        !mustRemove &&
+        removedTokens + msgTokens > tokensToRemove &&
+        cut > firstRemovable
+      ) {
         break;
       }
       removedTokens += msgTokens;
       cut++;
+      // When mustRemove, drop everything up to lastRemovable
+      if (mustRemove && cut >= lastRemovable) break;
     }
     if (cut === firstRemovable && lastRemovable > firstRemovable) {
       // First removable message is too large — remove it anyway to make progress
@@ -372,6 +460,9 @@ export class ContextManager {
         }
       }
       this.compactionCount++;
+      // History changed — drop stale API prompt count; next LLM call will re-baseline
+      this.lastApiPromptTokens = undefined;
+      this.tokensAddedSinceApiReport = 0;
     }
 
     // Generate a summary if we removed any messages
@@ -446,7 +537,7 @@ export class ContextManager {
    * Get the maximum context size.
    */
   getMaxContextSize(): number {
-    return effectiveContextSize(this.modelId, undefined, this.baseURL, this.runtime);
+    return this.getContextWindowSize();
   }
 
   /**
@@ -478,6 +569,8 @@ export class ContextManager {
     this.messages = [];
     this.messageTokenCache.clear();
     this.cachedTotalTokens = 0;
+    this.lastApiPromptTokens = undefined;
+    this.tokensAddedSinceApiReport = 0;
     this.stats = null;
     this.compactionCount = 0;
   }
