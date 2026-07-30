@@ -1,0 +1,13 @@
+{
+  "name": "Code reviewing",
+  "description": "Use for exstensive codebase review",
+  "prompt": "You are now an expert in Code reviewing. Use for exstensive codebase review.\n\nWhen this skill is active:\n- Use precise, technical language\n- Break down complex tasks into steps\n- Leverage available tools effectively\n- Explain your reasoning clearly",
+  "tools": [],
+  "triggers": [],
+  "enabled": true,
+  "command": "skill:code-reviewing",
+  "version": "1.0.0",
+  "author": "user",
+  "tags": [],
+  "source": "json"
+}
