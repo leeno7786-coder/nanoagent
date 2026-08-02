@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { extractDeltaText, isSmallModel, effectiveContextSize } from './llm.js';
+import {
+  extractDeltaText,
+  isSmallModel,
+  effectiveContextSize,
+  getModelCompactionSettings,
+} from './llm.js';
 
 const RUNTIME_128K = { contextLength: 128000 };
 
@@ -41,6 +46,11 @@ describe('isSmallModel', () => {
     expect(isSmallModel('gpt-4o')).toBe(false);
   });
 
+  it('does not treat MoE architecture tags (a3b) as param size', () => {
+    expect(isSmallModel('qwen/qwen3-next-80b-a3b-instruct')).toBe(false);
+    expect(isSmallModel('qwen/qwen3.5-35b-a3b')).toBe(false);
+  });
+
   it('respects explicit smallModelMode override', () => {
     expect(isSmallModel('gpt-4o', undefined, true)).toBe(true);
     expect(isSmallModel('qwen3-8b', undefined, false)).toBe(false);
@@ -71,6 +81,25 @@ describe('effectiveContextSize', () => {
   it('uses OpenRouter Hunyuan context heuristics', () => {
     expect(effectiveContextSize('tencent/hunyuan-a13b-instruct')).toBe(131072);
     expect(effectiveContextSize('tencent/hunyuan-a13b-instruct:free')).toBe(32768);
+  });
+
+  it('prefers runtime-reported context for compaction decisions', () => {
+    expect(
+      effectiveContextSize('openrouter/free', undefined, 'https://openrouter.ai/api/v1', {
+        contextLength: 262144,
+      })
+    ).toBe(262144);
+  });
+});
+
+describe('getModelCompactionSettings', () => {
+  it('compacts at 85% of the resolved context window', () => {
+    const settings = getModelCompactionSettings('qwen/qwen3-next-80b-a3b-instruct', 4096, {
+      modelContextLength: 262144,
+    });
+    expect(settings.contextSize).toBe(262144);
+    expect(settings.compactThreshold).toBe(0.85);
+    expect(Math.floor(settings.contextSize * settings.compactThreshold)).toBe(222822);
   });
 });
 

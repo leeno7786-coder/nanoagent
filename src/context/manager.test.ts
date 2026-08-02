@@ -340,11 +340,78 @@ describe('ContextManager', () => {
 describe('DEFAULT_CONTEXT_CONFIG', () => {
   it('should have reasonable defaults', () => {
     expect(DEFAULT_CONTEXT_CONFIG.enabled).toBe(true);
-    expect(DEFAULT_CONTEXT_CONFIG.compactThreshold).toBeGreaterThan(0);
-    expect(DEFAULT_CONTEXT_CONFIG.compactThreshold).toBeLessThanOrEqual(1);
+    expect(DEFAULT_CONTEXT_CONFIG.compactThreshold).toBe(0.85);
     expect(DEFAULT_CONTEXT_CONFIG.summaryReservedPercent).toBeGreaterThan(0);
     expect(DEFAULT_CONTEXT_CONFIG.summaryReservedPercent).toBeLessThanOrEqual(1);
     expect(DEFAULT_CONTEXT_CONFIG.keepCount).toBeGreaterThan(0);
-    expect(DEFAULT_CONTEXT_CONFIG.maxHistoryTokens).toBeGreaterThan(0);
+    expect(DEFAULT_CONTEXT_CONFIG.maxHistoryTokens).toBeGreaterThanOrEqual(256000);
+  });
+});
+
+describe('ContextManager long-context compaction', () => {
+  it('uses runtime modelContextLength and triggers only above 85%', () => {
+    const mgr = createContextManager({
+      model: 'qwen/qwen3-next-80b-a3b-instruct',
+      baseURL: 'https://openrouter.ai/api/v1',
+      workspace: '/test',
+      maxIterations: 10,
+      apiKey: 'test',
+      modelContextLength: 262144,
+    });
+    expect(mgr.getMaxContextSize()).toBe(262144);
+    expect(mgr.getConfig().compactThreshold).toBe(0.85);
+
+    // ~50% of window — must not compact
+    mgr.reportApiUsage({ input_tokens: 130000 });
+    expect(mgr.needsCompaction()).toBe(false);
+
+    // Just under 85%
+    mgr.reportApiUsage({ input_tokens: 222000 });
+    expect(mgr.needsCompaction()).toBe(false);
+
+    // Over 85% of 262144 (= 222822)
+    mgr.reportApiUsage({ input_tokens: 230000 });
+    expect(mgr.needsCompaction()).toBe(true);
+  });
+
+  it('preserves the original user request when compacting', () => {
+    const mgr = createContextManager({
+      model: 'test-model',
+      baseURL: 'http://127.0.0.1:1234/v1',
+      workspace: '/test',
+      maxIterations: 10,
+      apiKey: 'test',
+      modelContextLength: 2000,
+      contextKeepCount: 4,
+      contextCompactThreshold: 0.5,
+    });
+
+    mgr.addMessage({
+      id: 'system-base',
+      role: 'system',
+      content: 'SYS',
+      timestamp: Date.now(),
+    });
+    mgr.addMessage({
+      id: 'user-0',
+      role: 'user',
+      content: 'ORIGINAL TASK: fix the compaction system',
+      timestamp: Date.now(),
+    });
+    for (let i = 1; i < 20; i++) {
+      mgr.addMessage({
+        id: `m${i}`,
+        role: i % 2 === 0 ? 'assistant' : 'user',
+        content: Math.random().toString(36).repeat(40).slice(0, 400),
+        timestamp: Date.now(),
+      });
+    }
+
+    const result = mgr.compact({ force: true, keepCount: 4 });
+    expect(result.removedCount).toBeGreaterThan(0);
+    const messages = mgr.getMessages();
+    expect(messages[0].id).toBe('system-base');
+    expect(messages.some((m) => m.id === 'user-0')).toBe(true);
+    expect(messages.find((m) => m.id === 'user-0')?.content).toContain('ORIGINAL TASK');
   });
 });

@@ -54,10 +54,26 @@ export function estimateModelContextSize(modelId: string, _maxTokens?: number): 
   if (hasCtxToken('4k')) return 4000;
 
   if (lowerModelId.includes('qwen')) {
-    if (/\b(0\.5|1\.5|1|2|3|4|7|8)[-.]?b\b/.test(lowerModelId)) return 128000;
-    if (lowerModelId.includes('128k')) return 128000;
+    // Explicit context tokens already handled above; family defaults below.
     if (lowerModelId.includes('32k')) return 32000;
-    return 32000;
+    // Qwen3 / Qwen3.5 / Qwen3-Next on OpenRouter and recent locals are 128k–262k+.
+    // The old 32k fallback caused premature compaction around 20–30k tokens.
+    if (
+      lowerModelId.includes('qwen3-next') ||
+      lowerModelId.includes('qwen3.5') ||
+      lowerModelId.includes('qwen3.6') ||
+      lowerModelId.includes('qwen3-') ||
+      /qwen3(?:\.|$)/.test(lowerModelId)
+    ) {
+      return 262144;
+    }
+    if (/\b(0\.5|1\.5|1|2|3|4|7|8)[-.]?b\b/.test(lowerModelId)) return 128000;
+    return 128000;
+  }
+
+  // OpenRouter free router advertises ~200k; prefer that over the generic 32k default.
+  if (lowerModelId === 'openrouter/free' || lowerModelId.startsWith('openrouter/')) {
+    return 200000;
   }
 
   if (lowerModelId.includes('nemotron')) {
@@ -139,7 +155,9 @@ export function estimateModelContextSize(modelId: string, _maxTokens?: number): 
 
   if (/\b8[-.]?b\b/.test(lowerModelId)) return 128000;
 
-  return 32000;
+  // NanoAgent targets long-context local/cloud models (≥256k). Prefer runtime
+  // context_length when available; this is only the last-resort heuristic.
+  return 256000;
 }
 
 export function effectiveContextSize(
@@ -185,22 +203,22 @@ export function getModelCompactionSettings(
   });
   const lowerModelId = modelId.toLowerCase();
 
-  const summaryReservedPercent = 0.3;
+  // Reserve headroom for the next completion (tool schemas, reply).
+  const summaryReservedPercent = 0.15;
 
   const small =
     options?.smallModelMode === true ||
     (options?.modelParamBillions !== undefined
       ? options.modelParamBillions <= 8
       : isSmallModel(modelId, maxTokens, options?.smallModelMode));
-  // Store as a ratio so getStats can compare against live usagePercent
-  // (including API-reported prompt_tokens). Absolute thresholds drifted when
-  // the window size changed between constructor and getStats.
-  const compactThreshold = small ? 0.65 : 0.8;
+  // Compact at 85% of the model's resolved max context (runtime-reported when
+  // available). Same ratio for small and large — window size already scales.
+  const compactThreshold = 0.85;
 
   let keepCount = 12;
 
   if (small) {
-    keepCount = 6;
+    keepCount = 8;
   } else if (lowerModelId.includes('qwen') && lowerModelId.includes('4b')) {
     keepCount = 18;
   } else if (lowerModelId.includes('nemotron') && lowerModelId.includes('4b')) {

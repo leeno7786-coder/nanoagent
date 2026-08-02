@@ -96,6 +96,8 @@ export async function applyRuntimeProfile(agent: AgentCore) {
   agent.cfg = await enrichConfigWithRuntime(agent.cfg);
   agent._smallModel = isSmallModelFromConfig(agent.cfg);
   agent.client = createClient(agent.cfg);
+  // Compaction must use the runtime-reported window, not the constructor heuristic.
+  agent.contextManager.updateModel(agent.cfg);
 }
 
 /**

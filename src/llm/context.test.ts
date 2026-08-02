@@ -16,10 +16,16 @@ describe('estimateModelContextSize context-size tokens', () => {
   });
 
   it('does not match size-like substrings without a boundary', () => {
-    // '1m' buried inside a word is not a context size
-    expect(estimateModelContextSize('custom-abc1m-def')).toBe(32000);
+    // '1m' buried inside a word is not a context size — fall back to ≥256k default
+    expect(estimateModelContextSize('custom-abc1m-def')).toBe(256000);
     // '8khz' is a sampling rate, not a context window
-    expect(estimateModelContextSize('audio-model-8khz')).toBe(32000);
+    expect(estimateModelContextSize('audio-model-8khz')).toBe(256000);
+  });
+
+  it('defaults unknown / modern qwen ids to long-context windows', () => {
+    expect(estimateModelContextSize('qwen/qwen3-next-80b-a3b-instruct')).toBe(262144);
+    expect(estimateModelContextSize('openrouter/free')).toBe(200000);
+    expect(estimateModelContextSize('some-unknown-cloud-model')).toBe(256000);
   });
 
   it('still honors explicit numeric context markers', () => {

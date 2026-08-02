@@ -50,7 +50,7 @@ export interface Config {
   /** Parameter count in billions when reported by runtime. */
   modelParamBillions?: number;
   /** How modelContextLength / modelParamBillions were obtained. */
-  modelRuntimeSource?: 'lmstudio' | 'heuristic';
+  modelRuntimeSource?: 'lmstudio' | 'openrouter' | 'heuristic';
   /** Provider ID (e.g. "lmstudio", "ollama", "openai", "openrouter"). */
   provider?: string;
 
@@ -65,7 +65,7 @@ export interface Config {
   toolCacheMaxSize?: number;
   /** Enable context window management (default: true). */
   contextManagementEnabled?: boolean;
-  /** Threshold for context compaction (0-1, default: 0.8). */
+  /** Threshold for context compaction (0-1, default: 0.85). */
   contextCompactThreshold?: number;
   /** Percentage of context to reserve for response (0-1, default: 0.3). */
   contextSummaryReservedPercent?: number;

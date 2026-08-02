@@ -53,7 +53,9 @@ export function isSmallModel(
 
   const lower = modelId.toLowerCase();
 
-  const paramSize = /(?:^|[^\d.])(0\.5|1\.5|1|2|3|4|7|8)b(?:[^\d]|$)/;
+  // Param-size tokens like "8b" / "0.5b". Require a non-letter boundary so MoE
+  // architecture tags ("a3b", "a22b") are not mistaken for 3B/22B models.
+  const paramSize = /(?:^|[^a-z\d.])(0\.5|1\.5|1|2|3|4|7|8)b(?:[^a-z\d]|$)/;
   if (paramSize.test(lower)) return true;
   if (lower.includes('nano')) return true;
 
@@ -63,7 +65,8 @@ export function isSmallModel(
   if (lower.includes('qwen') && paramSize.test(lower)) return true;
   if (lower.includes('llama') && paramSize.test(lower)) return true;
   if (lower.includes('mistral') && lower.includes('7b')) return true;
-  if (lower.includes('deepseek') && /(?:^|[^\d.])(1\.5|7|8)b(?:[^\d]|$)/.test(lower)) return true;
+  if (lower.includes('deepseek') && /(?:^|[^a-z\d.])(1\.5|7|8)b(?:[^a-z\d]|$)/.test(lower))
+    return true;
 
   return false;
 }

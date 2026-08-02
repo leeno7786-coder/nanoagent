@@ -339,11 +339,11 @@ describe('AgentCore run loop (behavioral)', () => {
     // system prompt survives and stays first
     expect(agent.messages[0].id).toBe('system-base');
     expect(agent.messages[0].content).toBe('SYS-PROMPT');
-    // history got shorter (keepCount=12 kept messages alone exceed the tiny
-    // 2000-token test context, so compaction stops at the keep boundary)
+    // history got shorter (keepCount=12 + pinned original user request; tiny
+    // 2000-token test context means compaction stops at the keep boundary)
     const remainingUsers = agent.messages.filter((m) => m.role === 'user').length;
     expect(remainingUsers).toBeLessThan(25);
-    expect(remainingUsers).toBeLessThanOrEqual(12);
+    expect(remainingUsers).toBeLessThanOrEqual(13);
   });
 
   it('never splits assistant tool_calls from their tool results during compaction', () => {

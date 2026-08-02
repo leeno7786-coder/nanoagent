@@ -12,11 +12,11 @@ import { logWarn } from '../log.js';
  * Configuration for context management.
  */
 export interface ContextConfig {
-  /** Threshold percentage at which to trigger compaction (default: 0.8 = 80%) */
+  /** Threshold percentage at which to trigger compaction (default: 0.85 = 85%) */
   compactThreshold: number;
-  /** Percentage of context to reserve for the next response (default: 0.3 = 30%) */
+  /** Percentage of context to reserve for the next response (default: 0.15 = 15%) */
   summaryReservedPercent: number;
-  /** Minimum number of messages to keep (default: 6 for small models, 12 for large) */
+  /** Minimum number of messages to keep (default: 8 for small models, 12 for large) */
   keepCount: number;
   /** Maximum number of tokens to keep in history */
   maxHistoryTokens: number;
@@ -28,10 +28,10 @@ export interface ContextConfig {
  * Default context configuration.
  */
 export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
-  compactThreshold: 0.8,
-  summaryReservedPercent: 0.3,
+  compactThreshold: 0.85,
+  summaryReservedPercent: 0.15,
   keepCount: 12,
-  maxHistoryTokens: 128000,
+  maxHistoryTokens: 256000,
   enabled: true,
 };
 
@@ -168,10 +168,24 @@ export class ContextManager {
 
     this.config = {
       ...this.config,
-      maxHistoryTokens: compactionSettings.contextSize,
-      compactThreshold: compactionSettings.compactThreshold,
-      summaryReservedPercent: compactionSettings.summaryReservedPercent,
-      keepCount: compactionSettings.keepCount,
+      maxHistoryTokens:
+        cfg.contextMaxHistoryTokens !== undefined
+          ? cfg.contextMaxHistoryTokens
+          : compactionSettings.contextSize,
+      compactThreshold:
+        cfg.contextCompactThreshold !== undefined
+          ? cfg.contextCompactThreshold
+          : compactionSettings.compactThreshold,
+      summaryReservedPercent:
+        cfg.contextSummaryReservedPercent !== undefined
+          ? cfg.contextSummaryReservedPercent
+          : compactionSettings.summaryReservedPercent,
+      keepCount:
+        cfg.contextKeepCount !== undefined ? cfg.contextKeepCount : compactionSettings.keepCount,
+      enabled:
+        cfg.contextManagementEnabled !== undefined
+          ? cfg.contextManagementEnabled
+          : this.config.enabled,
     };
 
     // Token accounting depends on the model — reseed per-message caches and
@@ -225,7 +239,7 @@ export class ContextManager {
     const thresholdPercent =
       this.config.compactThreshold > 0 && this.config.compactThreshold <= 1
         ? this.config.compactThreshold
-        : 0.8;
+        : 0.85;
     if (windowSize > 0 && observed > windowSize * thresholdPercent) {
       if (!this.warnThresholdCrossed) {
         this.warnThresholdCrossed = true;
@@ -397,11 +411,11 @@ export class ContextManager {
       // for tool schemas (MCP tools are not counted in message tokens).
       targetTokens = Math.floor(contextSize * 0.5);
     } else if (threshold <= 1) {
-      targetTokens = Math.floor(contextSize * threshold);
+      // Land under the trigger so the next turn has headroom (85% → ~70%).
+      targetTokens = Math.floor(contextSize * Math.max(0.5, threshold - 0.15));
     } else {
-      // Absolute threshold was derived as ratio*window — land under ~80% of it
-      // so we don't immediately re-trigger. Prefer ratio of the live window.
-      targetTokens = Math.min(threshold, Math.floor(contextSize * 0.8));
+      // Absolute threshold — land under ~70% of the live window.
+      targetTokens = Math.min(threshold, Math.floor(contextSize * 0.7));
     }
 
     const tokensToRemove = Math.max(0, stats.currentTokens - targetTokens);
@@ -421,6 +435,11 @@ export class ContextManager {
       firstRemovable < this.messages.length &&
       this.messages[firstRemovable].role === 'system'
     ) {
+      firstRemovable++;
+    }
+
+    // Pin the original user request so compaction cannot erase the task.
+    if (firstRemovable < this.messages.length && this.messages[firstRemovable].role === 'user') {
       firstRemovable++;
     }
 

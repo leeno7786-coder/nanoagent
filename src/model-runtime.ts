@@ -1,7 +1,8 @@
 import type { Config, ModelInfo } from './types.js';
 import { isLocalProvider, isSmallModel } from './llm.js';
+import { logWarn } from './log.js';
 
-/** Resolved capabilities from LM Studio (or future local runtimes). */
+/** Resolved capabilities from LM Studio / OpenRouter (or future runtimes). */
 export interface ModelRuntimeInfo {
   modelId: string;
   displayName?: string;
@@ -11,10 +12,19 @@ export interface ModelRuntimeInfo {
   paramBillions?: number;
   isLoaded?: boolean;
   quantization?: string;
-  source: 'lmstudio' | 'heuristic';
+  source: 'lmstudio' | 'openrouter' | 'heuristic';
+}
+
+function isOpenRouterURL(baseURL?: string): boolean {
+  if (!baseURL) return false;
+  return baseURL.toLowerCase().includes('openrouter.ai');
 }
 
 const FETCH_TIMEOUT_MS = 4000;
+
+/** Cached OpenRouter model → context_length (session-scoped). */
+let openRouterContextCache: { fetchedAt: number; byId: Map<string, number> } | undefined;
+const OPENROUTER_CACHE_TTL_MS = 30 * 60 * 1000;
 
 export function isLMStudioURL(baseURL?: string): boolean {
   if (!baseURL) return false;
@@ -233,29 +243,88 @@ export function isSmallModelFromConfig(
 }
 
 /**
- * Merge LM Studio runtime fields into config (local providers only).
+ * Look up context_length for one OpenRouter model id (catalog is cached).
+ */
+export async function fetchOpenRouterModelContext(
+  modelId: string,
+  apiKey?: string | null
+): Promise<number | undefined> {
+  const now = Date.now();
+  if (openRouterContextCache && now - openRouterContextCache.fetchedAt < OPENROUTER_CACHE_TTL_MS) {
+    return openRouterContextCache.byId.get(modelId.toLowerCase());
+  }
+
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+    const response = await fetch('https://openrouter.ai/api/v1/models', {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      logWarn('[runtime] OpenRouter models fetch failed:', response.status);
+      return openRouterContextCache?.byId.get(modelId.toLowerCase());
+    }
+
+    const body = (await response.json()) as {
+      data?: Array<{ id?: string; context_length?: number }>;
+    };
+    const byId = new Map<string, number>();
+    for (const m of body.data ?? []) {
+      if (m.id && typeof m.context_length === 'number' && m.context_length > 0) {
+        byId.set(m.id.toLowerCase(), m.context_length);
+      }
+    }
+    openRouterContextCache = { fetchedAt: now, byId };
+    return byId.get(modelId.toLowerCase());
+  } catch (err) {
+    logWarn('[runtime] OpenRouter context lookup failed:', err);
+    return openRouterContextCache?.byId.get(modelId.toLowerCase());
+  }
+}
+
+/**
+ * Merge runtime context/param metadata into config.
+ * - LM Studio: loaded instance context_length
+ * - OpenRouter: catalog context_length for the selected model
+ * Prefers already-set modelContextLength (e.g. from Connect UI) unless missing.
  */
 export async function enrichConfigWithRuntime(cfg: Config): Promise<Config> {
-  if (!isLocalProvider(cfg.baseURL) || !cfg.model) return cfg;
+  if (!cfg.model) return cfg;
 
-  if (isLMStudioURL(cfg.baseURL)) {
+  if (isLMStudioURL(cfg.baseURL) && isLocalProvider(cfg.baseURL)) {
     const runtime = await fetchLMStudioModelRuntime(cfg.baseURL, cfg.model);
     if (!runtime) return cfg;
 
     const paramSmall = runtime.paramBillions !== undefined && runtime.paramBillions <= 8;
     const smallModelMode = cfg.smallModelMode ?? (paramSmall || isSmallModel(cfg.model));
 
-    const next: Config = {
+    return {
       ...cfg,
       model: runtime.modelId,
-      modelContextLength: runtime.contextLength,
-      modelMaxContextLength: runtime.maxContextLength,
-      modelParamBillions: runtime.paramBillions,
+      modelContextLength: runtime.contextLength ?? cfg.modelContextLength,
+      modelMaxContextLength: runtime.maxContextLength ?? cfg.modelMaxContextLength,
+      modelParamBillions: runtime.paramBillions ?? cfg.modelParamBillions,
       modelRuntimeSource: 'lmstudio',
       smallModelMode,
     };
+  }
 
-    return next;
+  if (isOpenRouterURL(cfg.baseURL)) {
+    // Connect UI may already have set context; only fetch when missing.
+    if (cfg.modelContextLength && cfg.modelContextLength > 0) {
+      return { ...cfg, modelRuntimeSource: cfg.modelRuntimeSource ?? 'openrouter' };
+    }
+    const ctx = await fetchOpenRouterModelContext(cfg.model, cfg.apiKey);
+    if (!ctx) return cfg;
+    return {
+      ...cfg,
+      modelContextLength: ctx,
+      modelMaxContextLength: ctx,
+      modelRuntimeSource: 'openrouter',
+    };
   }
 
   return cfg;

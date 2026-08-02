@@ -6,6 +6,7 @@ import {
   modelIdsMatch,
   isLMStudioURL,
   lmStudioRestBase,
+  enrichConfigWithRuntime,
 } from './model-runtime.js';
 
 describe('parseParamBillions', () => {
@@ -113,6 +114,49 @@ describe('isLMStudioURL', () => {
 
   it('returns false for undefined', () => {
     expect(isLMStudioURL(undefined)).toBe(false);
+  });
+});
+
+describe('enrichConfigWithRuntime OpenRouter', () => {
+  it('fills modelContextLength from the OpenRouter catalog', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: 'qwen/qwen3-next-80b-a3b-instruct', context_length: 262144 },
+            { id: 'openrouter/free', context_length: 200000 },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )) as typeof fetch;
+
+    try {
+      const enriched = await enrichConfigWithRuntime({
+        model: 'qwen/qwen3-next-80b-a3b-instruct',
+        baseURL: 'https://openrouter.ai/api/v1',
+        workspace: '/tmp',
+        maxIterations: 10,
+        apiKey: 'test-key',
+      });
+      expect(enriched.modelContextLength).toBe(262144);
+      expect(enriched.modelMaxContextLength).toBe(262144);
+      expect(enriched.modelRuntimeSource).toBe('openrouter');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('keeps an already-set contextLength from Connect UI', async () => {
+    const enriched = await enrichConfigWithRuntime({
+      model: 'qwen/qwen3-next-80b-a3b-instruct',
+      baseURL: 'https://openrouter.ai/api/v1',
+      workspace: '/tmp',
+      maxIterations: 10,
+      apiKey: 'test-key',
+      modelContextLength: 256000,
+    });
+    expect(enriched.modelContextLength).toBe(256000);
   });
 });
 
