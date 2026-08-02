@@ -152,6 +152,29 @@ export function checkSmallModel(cfg?: Config): boolean {
   return isSmallModelFromConfig(cfg);
 }
 
+/** Max length for a model-supplied regex pattern. */
+export const MAX_REGEX_PATTERN_LENGTH = 256;
+
+// A quantified group that itself contains a quantifier, followed by another
+// quantifier — e.g. `(a+)+`, `(\w*){2,}` — the classic ReDoS shape.
+const NESTED_QUANTIFIER_RE = /(\([^)]*[+*][^)]*\))[+*{]/;
+// Adjacent quantifiers — e.g. `a+*`, `a{2,}+` (invalid or pathological in JS).
+const CONSECUTIVE_QUANTIFIER_RE = /[+*]{2,}|\{\d*,?\d*\}[+*{]/;
+
+/**
+ * Guard against ReDoS from model-supplied regex patterns.
+ * Returns an error message when the pattern is unsafe, or null when it is OK.
+ */
+export function validateSearchPattern(q: string): string | null {
+  if (q.length > MAX_REGEX_PATTERN_LENGTH) {
+    return `Regex pattern too long (${q.length} chars, max ${MAX_REGEX_PATTERN_LENGTH}). Simplify the pattern and try again.`;
+  }
+  if (NESTED_QUANTIFIER_RE.test(q) || CONSECUTIVE_QUANTIFIER_RE.test(q)) {
+    return 'Regex pattern rejected: nested or adjacent quantifiers can cause catastrophic backtracking. Simplify the pattern (e.g. drop the nested group or use a plain text search).';
+  }
+  return null;
+}
+
 /**
  * Validate and resolve a path relative to the workspace.
  * Throws if the path attempts to escape the workspace boundary.
@@ -241,6 +264,24 @@ export function isAccessBlocked(p: string, cfg: Config | undefined): boolean {
   return !cfg.securityManager.validateFileAccess(p, 'read').ok;
 }
 
+// Basenames that always match the default security blockedPaths. Used as a
+// cheap pre-filter so walk() can skip the expensive validateFileAccess
+// (realpath/existsSync/statSync) checks for obviously-sensitive entries.
+const BLOCKED_BASENAMES = new Set([
+  '.env',
+  '.env.local',
+  '.env.development',
+  '.env.production',
+  '.env.test',
+  'id_rsa',
+  'id_ed25519',
+  'id_ecdsa',
+  'known_hosts',
+  'authorized_keys',
+  '.npmrc',
+  '.yarnrc',
+]);
+
 export function walk(
   root: string,
   ws: string,
@@ -260,7 +301,9 @@ export function walk(
       }
       continue;
     }
-    // Never expose blocked/sensitive files (.env, keys, ...) to search tools
+    // Never expose blocked/sensitive files (.env, keys, ...) to search tools.
+    // Cheap name-based pre-filter first; full security check otherwise.
+    if (entry.isFile() && cfg?.securityManager && BLOCKED_BASENAMES.has(entry.name)) continue;
     if (entry.isFile() && isAccessBlocked(p, cfg)) continue;
     if (entry.isFile() && visit(p) === false) return true;
   }

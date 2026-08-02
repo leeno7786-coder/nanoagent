@@ -27,7 +27,7 @@ import { TodoPage } from './todo-page.js';
 import { THEMES, DEFAULT_THEME } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
 import { getProviderBaseURL } from '../providers.js';
-import { handleSlashCommand, checkAndAutoCompact, pushAssistant } from './slash-commands.js';
+import { handleSlashCommand, checkAndAutoCompact } from './slash-commands.js';
 import { useAppStore } from './app-store.js';
 
 export function App({ renderer }: { renderer: CliRenderer }) {
@@ -47,6 +47,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const sessions = useAppStore((s) => s.sessions);
   const selectedMessageIndex = useAppStore((s) => s.selectedMessageIndex);
   const pendingPermissionReq = useAppStore((s) => s.pendingPermissionReq);
+  const elapsedMs = useAppStore((s) => s.elapsedMs);
+  const skills = useAppStore((s) => s.skills);
 
   const {
     setOverlay,
@@ -66,6 +68,17 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const compactTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Resolve (or deny) a pending permission request so agent.run can never
+  // hang waiting on an orphaned promise.
+  const resolvePendingPermission = useCallback((choice: 'allow' | 'always_allow' | 'deny') => {
+    const st = store.getState();
+    if (!st.pendingPermissionReq) return;
+    const resolve = st.permissionResolver;
+    st.setPermissionResolver(null);
+    st.setPendingPermissionReq(null);
+    resolve?.(choice);
+  }, []);
 
   useEffect(() => {
     const cfg = loadConfig();
@@ -142,6 +155,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
     return () => {
       process.off('SIGINT', handleSigint);
+      resolvePendingPermission('deny');
       abortControllerRef.current?.abort();
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -156,7 +170,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       }
       delete (globalThis as Record<string, unknown>)['__refreshSkills'];
     };
-  }, []);
+  }, [resolvePendingPermission]);
 
   useEffect(() => {
     if (state === 'idle' || state === 'error' || state === 'waiting_for_user') {
@@ -331,7 +345,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     agent.messages = session.messages;
     agent.todos = session.todos || [];
 
-    const savedConfig = session.config || {};
+    const savedConfig = { ...(session.config || {}) };
+    // Snapshots no longer persist apiKey; never let a redacted/empty key
+    // clobber the user's currently configured one.
+    if (!savedConfig.apiKey) delete savedConfig.apiKey;
     const newModel = session.model || savedConfig.model || agent.cfg.model;
     const newBaseURL = session.baseURL || savedConfig.baseURL || agent.cfg.baseURL;
 
@@ -377,6 +394,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       const ready = state === 'idle' || state === 'error' || state === 'waiting_for_user';
       if (!isSlash && !ready) return;
 
+      resolvePendingPermission('deny');
       abortControllerRef.current?.abort();
       abortControllerRef.current = new AbortController();
       const signal = abortControllerRef.current.signal;
@@ -435,7 +453,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         }
       }
     },
-    [state, handleSave]
+    [state, handleSave, resolvePendingPermission]
   );
 
   const closeOverlay = useCallback(() => setOverlay(null), []);
@@ -529,6 +547,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     if (keyEvent.ctrl && (keyEvent.name === 'd' || keyEvent.name === 'D')) {
       const busy = st.state !== 'idle' && st.state !== 'error' && st.state !== 'waiting_for_user';
       if (busy) {
+        resolvePendingPermission('deny');
         abortControllerRef.current?.abort();
         agentRef.current?.setState('idle');
       }
@@ -550,33 +569,31 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     }
 
     if (st.pendingPermissionReq) {
-      if (keyEvent.name === 'y' || keyEvent.name === 'Y') {
-        const resolve = st.permissionResolver;
-        st.setPermissionResolver(null);
-        st.setPendingPermissionReq(null);
-        resolve?.('allow');
+      // While a permission request is pending, y/a/n/Escape belong exclusively
+      // to the permission banner: swallow them (preventDefault keeps the key
+      // out of the focused chat input) and ignore modified variants (Ctrl+Y
+      // etc.) so typing can't silently approve/deny.
+      const bare = !keyEvent.ctrl && !keyEvent.meta && !keyEvent.option;
+      if (bare && (keyEvent.name === 'y' || keyEvent.name === 'Y')) {
+        resolvePendingPermission('allow');
         keyEvent.preventDefault?.();
+        keyEvent.stopPropagation?.();
         return;
       }
-      if (keyEvent.name === 'a' || keyEvent.name === 'A') {
-        const resolve = st.permissionResolver;
-        st.setPermissionResolver(null);
-        st.setPendingPermissionReq(null);
-        resolve?.('always_allow');
+      if (bare && (keyEvent.name === 'a' || keyEvent.name === 'A')) {
+        resolvePendingPermission('always_allow');
         keyEvent.preventDefault?.();
+        keyEvent.stopPropagation?.();
         return;
       }
       if (
-        keyEvent.name === 'n' ||
-        keyEvent.name === 'N' ||
+        (bare && (keyEvent.name === 'n' || keyEvent.name === 'N')) ||
         keyEvent.name === 'escape' ||
         keyEvent.name === 'Escape'
       ) {
-        const resolve = st.permissionResolver;
-        st.setPermissionResolver(null);
-        st.setPendingPermissionReq(null);
-        resolve?.('deny');
+        resolvePendingPermission('deny');
         keyEvent.preventDefault?.();
+        keyEvent.stopPropagation?.();
         return;
       }
     }
@@ -630,10 +647,17 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       st.cycleTheme(Object.keys(THEMES), THEMES);
     } else if (keyEvent.name === 'f10' || keyEvent.name === 'F10') {
       const agent = agentRef.current;
+      keyEvent.preventDefault?.();
       if (agent) {
         autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
+        // Graceful shutdown (same as SIGINT): tear down MCP children etc.
+        agent
+          .shutdown()
+          .catch(() => {})
+          .finally(() => process.exit(0));
+      } else {
+        process.exit(0);
       }
-      process.exit(0);
     } else if (keyEvent.name === 'f12' || keyEvent.name === 'F12') {
       st.setOverlay('todo');
       keyEvent.preventDefault?.();
@@ -716,7 +740,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
           <SkillsOverlay
             theme={theme}
-            skills={useAppStore.getState().skills}
+            skills={skills}
             onSkillsChange={handleSkillsChange}
             onClose={handleSkillsClose}
             onSkillSelect={handleSkillSelect}
@@ -755,7 +779,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           currentTool={currentTool}
           lastUsage={lastUsage}
           totalUsage={totalUsage}
-          elapsedMs={useAppStore.getState().elapsedMs}
+          elapsedMs={elapsedMs}
           theme={theme}
           mouseEnabled={mouseEnabled}
           mcpToolCount={agentRef.current?.mcpManager?.totalTools ?? 0}
@@ -811,7 +835,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               state={state}
               model={agentRef.current?.cfg.model || ''}
               todoCount={todos.length}
-              elapsedMs={useAppStore.getState().elapsedMs}
+              elapsedMs={elapsedMs}
               currentTool={currentTool}
               lastUsage={lastUsage}
               totalUsage={totalUsage}

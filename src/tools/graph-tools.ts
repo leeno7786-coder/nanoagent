@@ -31,7 +31,9 @@ export const queryMemoryGraphTool: Tool = {
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
   executeAsync: async (args, ws) => {
     try {
-      await MemoryGraphTools.build_memory_graph({ workspace: ws });
+      // Do NOT rebuild unconditionally: query_memory_graph goes through
+      // getMemoryGraph, which reuses the cached/on-disk graph and only
+      // rebuilds when the stored graph-hash no longer matches the workspace.
       return JSON.stringify(
         await MemoryGraphTools.query_memory_graph({ workspace: ws, query: args.query })
       );

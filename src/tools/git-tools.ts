@@ -6,7 +6,8 @@ import { NULL_BYTE_RE, getSanitizedEnv } from './shared.js';
 /**
  * Run a git command directly (bypasses PowerShell translation for speed on Windows).
  * Sets GIT_OPTIONAL_LOCKS=0 to avoid lock contention during read-only operations.
- * Sets GIT_SKIP_HOOKS=1 to prevent malicious git hooks from executing.
+ * Hooks are intentionally NOT disabled: git honors no "skip hooks" env var, and
+ * passing --no-verify would suppress legitimate project hooks (lint/tests).
  * Async (spawn) so the TUI event loop never freezes on slow git operations.
  */
 function execGit(
@@ -18,7 +19,6 @@ function execGit(
     const env = {
       ...getSanitizedEnv(),
       GIT_OPTIONAL_LOCKS: '0',
-      GIT_SKIP_HOOKS: '1', // Security: Prevent git hooks from executing
     };
 
     let child: ChildProcess;

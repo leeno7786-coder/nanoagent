@@ -49,14 +49,24 @@ export const listDirTool: Tool = {
       const p = safe(args.path || '.', ws, cfg);
       const entries = readdirSync(p, { withFileTypes: true })
         .slice(0, Math.max(1, Number(args.limit || 200)))
-        .map((e) => {
+        .flatMap((e) => {
           const ep = resolve(p, e.name);
-          const st = statSync(ep);
-          return {
-            name: e.name,
-            type: e.isDirectory() ? 'dir' : e.isFile() ? 'file' : 'other',
-            size: st.size,
-          };
+          // Hide blocked entries (.env, keys, ...) entirely — read_file and
+          // stat_path deny them, so list_dir must not leak their names/sizes.
+          if (isAccessBlocked(ep, cfg)) return [];
+          let st;
+          try {
+            st = statSync(ep);
+          } catch {
+            return []; // Broken symlink etc. — skip instead of aborting the listing
+          }
+          return [
+            {
+              name: e.name,
+              type: e.isDirectory() ? 'dir' : e.isFile() ? 'file' : 'other',
+              size: st.size,
+            },
+          ];
         });
       return JSON.stringify({ ok: true, path: rel(p, ws), entries });
     } catch (e: unknown) {

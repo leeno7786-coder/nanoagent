@@ -93,16 +93,16 @@ export function appendPromptExtras(base: string, ctx: PromptContext, _smallModel
 
   system +=
     '\n\n## Task Completion & Continuity\n' +
-    '- Work continuously to complete the user\'s requested task fully. Do not stop or cut off mid-work.\n' +
-    '- Keep working and executing required tools until the user\'s objective is completely achieved.\n' +
+    "- Work continuously to complete the user's requested task fully. Do not stop or cut off mid-work.\n" +
+    "- Keep working and executing required tools until the user's objective is completely achieved.\n" +
     '- Provide a clear, complete summary of all completed work when the task is finished.';
 
   system +=
     '\n\n## Long-Running Commands & Downloads\n' +
     'For downloads, package installations, or long build tasks (e.g. `curl`, `wget`, `git clone`, `pip`, `uv`, `npm/bun install`, `docker`):\n' +
     '- Execute them using `execute_command`. Extended timeouts (up to 600s) apply automatically.\n' +
-    '- Long commands execute in the background — the system will automatically notify ("ping") you with the output when execution finishes.\n' +
-    '- Do NOT repeatedly poll or rerun duplicate commands while waiting; output a brief status to the user and wait for the system completion ping.';
+    '- Commands are awaited synchronously: the tool call blocks until the command finishes or the timeout kills it, then the output is returned directly to you.\n' +
+    '- Do NOT repeatedly poll or rerun duplicate commands; make ONE call with an adequate `timeout` value and work with the returned output.';
 
   system +=
     '\n\n## Remote sub-agents\n' +

@@ -1,7 +1,6 @@
 import { findTool } from '../tools/index.js';
 import type { ToolExecutionHooks } from '../tools/index.js';
 import type { AgentCore } from '../agent.js';
-import { rnd, now } from '../agent-utils.js';
 import { addToolMessage } from '../agent-messages.js';
 import { logDebug, logError } from '../log.js';
 import { parseToolArgs, checkSubAgentConsent, handleSpecialToolResults } from './utils.js';
@@ -150,11 +149,15 @@ export async function executeToolSequential(
     };
 
     if (tool?.executeAsync) {
+      // Synthetic UI-mirror handles for sync explore_subagent runs. They must
+      // be removed once the parent tool call completes or they leak forever.
+      const syntheticSaIds = new Set<string>();
       const subHooks: ToolExecutionHooks | undefined =
         tc.name === 'explore_subagent'
           ? {
               onSubAgentProgress: (progress) => {
                 const saId = progress.agent || `sa-sync-${tc.id}`;
+                syntheticSaIds.add(saId);
                 let handle = agent.backgroundSubAgents.get(saId);
                 if (!handle) {
                   let pPrompt = tc.arguments;
@@ -197,13 +200,17 @@ export async function executeToolSequential(
               },
             }
           : undefined;
-      output = await tool.executeAsync(
-        args,
-        agent.cfg.workspace,
-        configWithSecurity,
-        signal,
-        subHooks
-      );
+      try {
+        output = await tool.executeAsync(
+          args,
+          agent.cfg.workspace,
+          configWithSecurity,
+          signal,
+          subHooks
+        );
+      } finally {
+        for (const id of syntheticSaIds) agent.backgroundSubAgents.delete(id);
+      }
     } else {
       output = tool
         ? tool.execute(args, agent.cfg.workspace, configWithSecurity)
@@ -233,13 +240,10 @@ export async function executeToolSequential(
     }
   }
 
-  agent.messages.push({
-    id: rnd(),
-    role: 'tool',
-    content: output,
-    timestamp: now(),
-    toolCallId: tc.id,
-  });
+  // Route through addToolMessage so the ContextManager token cache stays in
+  // sync — a raw push bypasses compaction accounting and leaves dangling
+  // tool_calls after compaction.
+  addToolMessage(agent, output, tc.id);
 
   handleSpecialToolResults(agent, tc.name, output, tc.id);
 
@@ -355,11 +359,15 @@ export async function executeToolsParallel(
       };
 
       if (tool?.executeAsync) {
+        // Synthetic UI-mirror handles for sync explore_subagent runs — removed
+        // when the parent tool call completes so they don't leak.
+        const syntheticSaIds = new Set<string>();
         const subHooks: ToolExecutionHooks | undefined =
           tc.name === 'explore_subagent'
             ? {
                 onSubAgentProgress: (progress) => {
                   const saId = progress.agent || `sa-sync-${tc.id}`;
+                  syntheticSaIds.add(saId);
                   let handle = agent.backgroundSubAgents.get(saId);
                   if (!handle) {
                     let pPrompt = tc.arguments;
@@ -393,13 +401,17 @@ export async function executeToolsParallel(
                 },
               }
             : undefined;
-        output = await tool.executeAsync(
-          args,
-          agent.cfg.workspace,
-          configWithSecurity,
-          signal,
-          subHooks
-        );
+        try {
+          output = await tool.executeAsync(
+            args,
+            agent.cfg.workspace,
+            configWithSecurity,
+            signal,
+            subHooks
+          );
+        } finally {
+          for (const id of syntheticSaIds) agent.backgroundSubAgents.delete(id);
+        }
       } else {
         output = tool
           ? tool.execute(args, agent.cfg.workspace, configWithSecurity)

@@ -1,5 +1,5 @@
 import { existsSync, accessSync, constants } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, delimiter } from 'path';
 import { platform } from 'os';
 import { execSync } from 'child_process';
 
@@ -30,8 +30,8 @@ function walkUpNodeModules(fn: (nodeModules: string) => string | null): string |
   return null;
 }
 
-function searchPathEnv(): string | null {
-  const pathDirs = (process.env.PATH || '').split(';').filter(Boolean);
+export function searchPathEnv(pathEnv: string = process.env.PATH || ''): string | null {
+  const pathDirs = pathEnv.split(delimiter).filter(Boolean);
   for (const dir of pathDirs) {
     const candidate = join(dir, BUN_EXE);
     if (tryPath(candidate)) return candidate;
@@ -82,7 +82,7 @@ function searchHomeDir(): string | null {
 
 function searchNpmPrefix(): string | null {
   try {
-    const prefix = execSync('npm root -g', { encoding: 'utf8' }).trim();
+    const prefix = execSync('npm root -g', { encoding: 'utf8', timeout: 3000 }).trim();
     return tryPath(join(prefix, '.bin', BUN_EXE)) ?? tryPath(join(prefix, 'bun', 'bin', BUN_EXE));
   } catch {
     return null;
@@ -112,7 +112,7 @@ export function installBun(): boolean {
       platform() === 'win32'
         ? 'powershell -c "irm bun.sh/install.ps1|iex"'
         : 'curl -fsSL https://bun.sh/install | bash';
-    execSync(cmd, { stdio: 'inherit', env: { ...process.env, BUN_INSTALL: '' } });
+    execSync(cmd, { stdio: 'inherit' });
     return true;
   } catch {
     return false;

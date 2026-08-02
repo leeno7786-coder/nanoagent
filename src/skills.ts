@@ -1,4 +1,12 @@
-import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { homedir } from 'os';
 import { join, basename, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
@@ -289,11 +297,59 @@ function scanDirForSkills(dir: string): Map<string, Skill> {
   return map;
 }
 
+// --- Skills cache -------------------------------------------------------
+// loadSkills() used to rescan every skill directory on EVERY call (and it is
+// called on every user message). Cache the result keyed by a cheap
+// fingerprint of the scan inputs: each skills dir's entries + entry mtimes
+// (incl. SKILL.md files) and the user skill-config mtime. No deep hashing.
+let skillsCache: { key: string; map: Map<string, Skill> } | null = null;
+
+/** Force the next loadSkills() to rescan (called after skill mutations). */
+export function invalidateSkillsCache(): void {
+  skillsCache = null;
+}
+
+function fingerprintSkillsInputs(dirs: string[]): string {
+  const parts: string[] = [];
+  for (const dir of dirs) {
+    try {
+      if (!existsSync(dir)) {
+        parts.push(`${dir}:missing`);
+        continue;
+      }
+      const entries = readdirSync(dir).sort();
+      const sigs = entries.map((name) => {
+        try {
+          const st = statSync(join(dir, name));
+          let sig = `${name}:${st.mtimeMs}`;
+          // Skill bodies live in <dir>/<name>/SKILL.md — include its mtime
+          // so content edits invalidate the cache.
+          if (st.isDirectory()) {
+            const skillMd = join(dir, name, 'SKILL.md');
+            if (existsSync(skillMd)) sig += `:${statSync(skillMd).mtimeMs}`;
+          }
+          return sig;
+        } catch {
+          return `${name}:?`;
+        }
+      });
+      parts.push(`${dir}[${sigs.join(',')}]`);
+    } catch {
+      parts.push(`${dir}:err`);
+    }
+  }
+  try {
+    parts.push(
+      `cfg:${existsSync(SKILL_CONFIG_FILE) ? statSync(SKILL_CONFIG_FILE).mtimeMs : 'none'}`
+    );
+  } catch {
+    parts.push('cfg:?');
+  }
+  return parts.join('|');
+}
+
 export function loadSkills(): Map<string, Skill> {
   ensureSkillDirs();
-
-  const userPrefs = loadSkillConfig();
-  const map = new Map<string, Skill>();
 
   // Built-ins first so local/user skills can override
   // Use process.cwd() + "skills" as the primary skills directory
@@ -305,10 +361,26 @@ export function loadSkills(): Map<string, Skill> {
     allDirs = [BUILTIN_SKILL_DIR, ...SKILL_DIRS];
   }
 
+  const cacheKey = fingerprintSkillsInputs(allDirs);
+  if (skillsCache && skillsCache.key === cacheKey) {
+    // Shallow copy so callers can't mutate the cached map.
+    return new Map(skillsCache.map);
+  }
+
+  const userPrefs = loadSkillConfig();
+  const map = new Map<string, Skill>();
+
   for (const dir of allDirs) {
     if (!existsSync(dir)) continue;
+    // TRUST: skills loaded from the PROJECT-local skills dir (<cwd>/skills)
+    // ship with the repo and can inject prompts, so they default to DISABLED
+    // regardless of format (SKILL.md or legacy .json). Home-dir/user-scope
+    // and bundled skills keep their existing defaults. Users opt in
+    // explicitly (persisted in the user-level skill-config.json).
+    const isProjectLocal = dir === projectSkillsDir;
     const dirSkills = scanDirForSkills(dir);
     for (const [name, skill] of dirSkills) {
+      if (isProjectLocal) skill.enabled = false;
       // Apply user preference from config
       if (userPrefs[name] !== undefined) {
         skill.enabled = userPrefs[name];
@@ -317,7 +389,8 @@ export function loadSkills(): Map<string, Skill> {
     }
   }
 
-  return map;
+  skillsCache = { key: cacheKey, map };
+  return new Map(map);
 }
 
 function escapeRegExp(s: string): string {
@@ -429,6 +502,7 @@ export function saveSkill(skill: Skill): string {
   };
 
   writeFileSync(path, JSON.stringify(fullSkill, null, 2), 'utf-8');
+  invalidateSkillsCache();
   return path;
 }
 
@@ -445,6 +519,7 @@ export function deleteSkill(name: string): boolean {
         const normDir = dir.replace(/\\/g, '/');
         if (!normSrc.startsWith(normDir)) continue;
         rmSync(skill.sourcePath, { force: true });
+        invalidateSkillsCache();
         return true;
       } catch {
         /* skill not deletable */
@@ -454,6 +529,7 @@ export function deleteSkill(name: string): boolean {
     const path = join(dir, filename);
     try {
       rmSync(path, { force: true });
+      invalidateSkillsCache();
       return true;
     } catch {
       /* skill dir not writable */
@@ -471,6 +547,7 @@ export function toggleSkill(name: string): boolean {
   const config = loadSkillConfig();
   config[name] = skill.enabled;
   saveSkillConfig(config);
+  invalidateSkillsCache();
 
   return true;
 }

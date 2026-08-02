@@ -3,6 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'bun:test';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { ToolCacheManager, generateCacheKey, DEFAULT_CACHE_CONFIG } from './cache.js';
 
 describe('ToolCacheManager', () => {
@@ -204,5 +207,48 @@ describe('DEFAULT_CACHE_CONFIG', () => {
     expect(excluded.has('execute_command')).toBe(true);
     expect(excluded.has('write_file')).toBe(true);
     expect(excluded.has('git_commit')).toBe(true);
+  });
+
+  it('should exclude live git-state tools (git_status, git_diff)', () => {
+    const excluded = DEFAULT_CACHE_CONFIG.excludedTools;
+    expect(excluded.has('git_status')).toBe(true);
+    expect(excluded.has('git_diff')).toBe(true);
+
+    const c = new ToolCacheManager();
+    c.set('git_status', {}, '/workspace', JSON.stringify({ ok: true }), 10, true);
+    c.set('git_diff', {}, '/workspace', JSON.stringify({ ok: true }), 10, true);
+    expect(c.get('git_status', {}, '/workspace')).toBeUndefined();
+    expect(c.get('git_diff', {}, '/workspace')).toBeUndefined();
+  });
+});
+
+describe('directory dependency staleness', () => {
+  it('invalidates a directory-dependent entry when a child file is edited', () => {
+    const ws = mkdtempSync(join(tmpdir(), 'toolcache-'));
+    const c = new ToolCacheManager({}, ws);
+    try {
+      const child = join(ws, 'child.txt');
+      writeFileSync(child, 'v1');
+      // Force mtimes into the past so the cache entry's timestamp is newer
+      // (avoids sub-millisecond mtime granularity races on fresh files).
+      const past = new Date(Date.now() - 10_000);
+      utimesSync(child, past, past);
+      utimesSync(ws, past, past);
+      const args = { path: '.' };
+      c.set('grep_search', args, ws, JSON.stringify({ ok: true, results: [] }), 10, true);
+
+      // Cache hit while nothing changed
+      expect(c.get('grep_search', args, ws)).toBeDefined();
+
+      // Editing a child file does not bump the directory mtime — force the
+      // child's mtime into the future to simulate an edit after caching.
+      const future = new Date(Date.now() + 10_000);
+      utimesSync(child, future, future);
+
+      expect(c.get('grep_search', args, ws)).toBeUndefined();
+    } finally {
+      c.clear(); // stops fs watchers
+      rmSync(ws, { recursive: true, force: true });
+    }
   });
 });

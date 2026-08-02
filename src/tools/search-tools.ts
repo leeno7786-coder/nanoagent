@@ -9,8 +9,23 @@ import {
   isAccessBlocked,
   rel,
   safe,
+  validateSearchPattern,
   walk,
 } from './shared.js';
+
+/**
+ * Build a case-insensitive RegExp from model input.
+ * Returns an error string when the pattern is unsafe (ReDoS guard).
+ */
+function buildModelRegex(q: string): { re: RegExp } | { error: string } {
+  const patternError = validateSearchPattern(q);
+  if (patternError) return { error: patternError };
+  try {
+    return { re: new RegExp(q, 'i') };
+  } catch (e: unknown) {
+    return { error: `Invalid regex: ${(e as { message?: string }).message}` };
+  }
+}
 
 export const mapProjectTreeTool: Tool = {
   name: 'map_project_tree',
@@ -167,7 +182,12 @@ export const searchAndViewTool: Tool = {
       const root = safe(args.path || '.', ws, cfg);
       const q = String(args.pattern || '');
       if (!q) return JSON.stringify({ ok: false, error: 'pattern cannot be empty' });
-      const re = args.regex ? new RegExp(q, 'i') : null;
+      let re: RegExp | null = null;
+      if (args.regex) {
+        const built = buildModelRegex(q);
+        if ('error' in built) return JSON.stringify({ ok: false, error: built.error });
+        re = built.re;
+      }
       const fileFilter = String(args.file_pattern || '').toLowerCase();
       const ctxLines = Math.max(0, Math.min(20, Number(args.context_lines ?? 3)));
       const isSmall = checkSmallModel(cfg);
@@ -244,7 +264,12 @@ export const findFilesTool: Tool = {
     try {
       const root = safe(args.path || '.', ws, cfg);
       const q = String(args.query || '');
-      const re = args.regex ? new RegExp(q, 'i') : null;
+      let re: RegExp | null = null;
+      if (args.regex) {
+        const built = buildModelRegex(q);
+        if ('error' in built) return JSON.stringify({ ok: false, error: built.error });
+        re = built.re;
+      }
       const isSmall = checkSmallModel(cfg);
       // Reduce max results for small models
       const maxResults = isSmall ? 20 : MAX_SEARCH_RESULTS;
@@ -324,7 +349,12 @@ export const grepSearchTool: Tool = {
         if (isAccessBlocked(root, cfg)) {
           return JSON.stringify({ ok: false, error: 'Access denied (blocked path)' });
         }
-        const re = args.regex ? new RegExp(q, 'i') : null;
+        let re: RegExp | null = null;
+        if (args.regex) {
+          const built = buildModelRegex(q);
+          if ('error' in built) return JSON.stringify({ ok: false, error: built.error });
+          re = built.re;
+        }
         const results: Array<{ path: string; line: number; text: string }> = [];
         let text = '';
         try {
@@ -349,7 +379,12 @@ export const grepSearchTool: Tool = {
         });
       }
       const q = String(args.query || '');
-      const re = args.regex ? new RegExp(q, 'i') : null;
+      let re: RegExp | null = null;
+      if (args.regex) {
+        const built = buildModelRegex(q);
+        if ('error' in built) return JSON.stringify({ ok: false, error: built.error });
+        re = built.re;
+      }
       const fileFilter = String(args.file_glob || '').toLowerCase();
       const isSmall = checkSmallModel(cfg);
       // Reduce max results for small models

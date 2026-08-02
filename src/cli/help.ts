@@ -48,6 +48,8 @@ Options:
       --json                  JSON output on stdout
       --quiet                 Only print the final assistant message
       --verbose               Log tool calls to stderr
+  -y, --yes                   Auto-approve all tool/command permissions (headless)
+      --permission-mode <m>   Permission mode: read_only|ask|allow_edits|always_allow
   -h, --help                  Show help
 
 Examples:

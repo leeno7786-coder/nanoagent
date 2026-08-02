@@ -7,7 +7,10 @@ export function sanitizeBaseURL(url: string): string {
   try {
     let sanitized = url.replace(/(https?:\/\/)[^/]+:[^@]+@/, '$1');
 
-    sanitized = sanitized.replace(/([?&])(api_key|key)=[^&]+/gi, '$1');
+    sanitized = sanitized.replace(
+      /([?&])(api_key|key|token|access_token|sig|signature)=[^&]+/gi,
+      '$1'
+    );
 
     sanitized = sanitized.replace(/\?&/g, '?');
     sanitized = sanitized.replace(/&&+/g, '&');

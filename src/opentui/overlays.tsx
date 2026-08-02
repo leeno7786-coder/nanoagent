@@ -80,7 +80,10 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text> </text>
 
       <text fg={theme.userFg}>Shortcuts:</text>
-      <text fg={theme.mutedFg}> Shift+Tab Cycle permission mode (read_only ➔ ask ➔ allow_edits ➔ always_allow)</text>
+      <text fg={theme.mutedFg}>
+        {' '}
+        Shift+Tab Cycle permission mode (read_only ➔ ask ➔ allow_edits ➔ always_allow)
+      </text>
       <text fg={theme.mutedFg}> F1 Help</text>
       <text fg={theme.mutedFg}> F2 Clear chat</text>
       <text fg={theme.mutedFg}> F3 Prefill /auto</text>

@@ -465,9 +465,11 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           agent.cfg = newConfig;
         }
 
+        // Never echo secrets into the chat history (it is autosaved to disk).
+        const displayVal = /key|token|secret|password/i.test(key) ? '••••••' : String(parsedVal);
         pushAssistant(
           agent,
-          `✅ Updated \`${key}\` to \`${String(parsedVal)}\` in **${targetPath}** (${scope}). Config reloaded.`,
+          `✅ Updated \`${key}\` to \`${displayVal}\` in **${targetPath}** (${scope}). Config reloaded.`,
           setMessages
         );
         return;
@@ -483,7 +485,9 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
     }
     case 'exit':
       if (agent) {
-        autoSaveSession(agent.messages, agent.todos, cfg.workspace);
+        autoSaveSession(agent.messages, agent.todos, cfg.workspace, agent.cfg);
+        // Graceful shutdown (same as SIGINT): tear down MCP children etc.
+        await agent.shutdown().catch(() => {});
       }
       process.exit(0);
       return;

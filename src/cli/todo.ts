@@ -20,10 +20,13 @@ interface TodoItem {
   createdAt: number;
 }
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
-const STORAGE_FILE_PATH = fileURLToPath(new URL('.todos.json', import.meta.url));
+const DATA_DIR = join(homedir(), '.qwen-agent-tui');
+export const TODO_STORAGE_PATH = join(DATA_DIR, 'todos.json');
+const STORAGE_FILE_PATH = TODO_STORAGE_PATH;
 
 function loadTodos(): TodoItem[] {
   try {
@@ -38,6 +41,7 @@ function loadTodos(): TodoItem[] {
 
 function saveTodos(todos: TodoItem[]) {
   try {
+    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(STORAGE_FILE_PATH, JSON.stringify(todos, null, 2), 'utf-8');
   } catch {
     /* ignore */

@@ -6,6 +6,8 @@ export async function checkSubAgentConsent(
   agent: AgentCore,
   _tcId: string
 ): Promise<'allow' | 'deny'> {
+  // INTENTIONALLY PERMISSIVE: sub-agent dispatch is auto-approved for now.
+  // A test enshrines this behavior — do not tighten without product sign-off.
   if (agent.subAgentSessionApproved) return 'allow';
   agent.subAgentSessionApproved = true;
   return 'allow';
@@ -44,7 +46,12 @@ export function handleSpecialToolResults(
     try {
       const result = JSON.parse(output);
       if (result.ok && result.workspace) {
-        void agent.reconfigure({ workspace: result.workspace });
+        // Attach .catch so a failed reconfigure is logged, not an unhandled rejection.
+        agent.reconfigure({ workspace: result.workspace }).catch((e: unknown) => {
+          console.error(
+            `[agent] reconfigure failed after change_workspace: ${(e as { message?: string }).message ?? String(e)}`
+          );
+        });
         agent.todos = [];
         syncTodoMessage(agent);
         agent.onUpdate?.();
@@ -81,8 +88,12 @@ export function handleSpecialToolResults(
           agent.onUpdate?.();
         } else if (result.action === 'complete') {
           const target = agent.todos.find((t) => t.id === result.id);
-          if (target) {
-            agent.toggleTodo(result.id);
+          if (target && !target.done) {
+            // Set done directly — 'complete' must never re-open an already-done
+            // todo (agent.toggleTodo would flip it back to pending).
+            target.done = true;
+            syncTodoMessage(agent);
+            agent.onUpdate?.();
           }
         } else if (result.action === 'remove') {
           const target = agent.todos.find((t) => t.id === result.id);

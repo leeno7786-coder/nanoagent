@@ -1,6 +1,21 @@
 import type { SlashCommandContext } from './types.js';
 import { pushAssistant } from './utils.js';
 
+/** Render a manage_mcp JSON tool result as a user-facing message. */
+function formatManageMcpResult(result: string | undefined, fallback: string): string {
+  if (!result) return fallback;
+  try {
+    const parsed = JSON.parse(result);
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.error) return `Error: ${parsed.error}`;
+      if (parsed.message) return parsed.message;
+    }
+  } catch {
+    /* not JSON — show as-is */
+  }
+  return result;
+}
+
 export async function handleMcpCommand(args: string, ctx: SlashCommandContext): Promise<void> {
   const { agent } = ctx;
   const states = agent.mcpStates;
@@ -61,7 +76,11 @@ export async function handleMcpAddCommand(args: string, ctx: SlashCommandContext
       type: 'local',
       command: cmdParts,
     });
-    pushAssistant(agent, result ?? 'Added. Restart to connect.', ctx.setMessages);
+    pushAssistant(
+      agent,
+      formatManageMcpResult(result, 'Added. Restart to connect.'),
+      ctx.setMessages
+    );
   } else if (type === 'remote') {
     const url = parts[2];
     if (!url) {
@@ -78,7 +97,11 @@ export async function handleMcpAddCommand(args: string, ctx: SlashCommandContext
       type: 'remote',
       url,
     });
-    pushAssistant(agent, result ?? 'Added. Restart to connect.', ctx.setMessages);
+    pushAssistant(
+      agent,
+      formatManageMcpResult(result, 'Added. Restart to connect.'),
+      ctx.setMessages
+    );
   } else {
     pushAssistant(
       agent,
@@ -105,5 +128,9 @@ export async function handleMcpRemoveCommand(
     action: 'remove',
     name: args.trim(),
   });
-  pushAssistant(agent, result ?? 'Removed. Restart to apply.', ctx.setMessages);
+  pushAssistant(
+    agent,
+    formatManageMcpResult(result, 'Removed. Restart to apply.'),
+    ctx.setMessages
+  );
 }

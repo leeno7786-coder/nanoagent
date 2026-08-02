@@ -12,6 +12,7 @@ import { loadSkills } from './skills.js';
 import { buildSystemPrompt } from './prompt.js';
 import { enrichConfigWithRuntime, isSmallModelFromConfig } from './model-runtime.js';
 import { loadConfig, applySubAgentDefaults } from './config.js';
+import { getRealEnv } from './config/load.js';
 import type { Config } from './types.js';
 import { autoSaveSession } from './store.js';
 import type { AgentCore } from './agent.js';
@@ -81,6 +82,11 @@ export async function reconfigureAgent(agent: AgentCore, newCfg: Partial<Config>
       blockedPaths: agent.cfg.securityBlockedPaths,
     });
   }
+
+  // Propagate permission mode changes into the live PermissionManager
+  if (newCfg.permissionMode !== undefined) {
+    agent.securityManager.permissionManager.setMode(newCfg.permissionMode);
+  }
 }
 
 /**
@@ -121,7 +127,7 @@ export async function reloadAgentFromDisk(agent: AgentCore) {
 
   // Recreate cache manager with new config
   agent.toolCache.stopAllWatchers();
-  agent.toolCache = createToolCacheManager(agent.cfg);
+  agent.toolCache = createToolCacheManager(agent.cfg, agent.cfg.workspace);
 
   // Preserve security manager across config reload
   agent.cfg.securityManager = agent.securityManager;
@@ -145,8 +151,19 @@ export async function initAgent(agent: AgentCore) {
   if (agent.cfg.mcp && Object.keys(agent.cfg.mcp).length > 0) {
     const { homedir } = await import('os');
     const source = agent.cfg.configFilePath;
-    const isProjectConfig = !!source && !source.startsWith(homedir());
-    const trustOverride = process.env.NANOGENT_TRUST_PROJECT_MCP === '1';
+    // An explicitly-passed config path is trusted regardless of location
+    // (documented trust model: explicit path = trusted).
+    const explicitPath = !!(agent.cfg as Config & { configPathExplicit?: boolean })
+      .configPathExplicit;
+    // Home-dir comparison must be case-insensitive on Windows.
+    const norm = (s: string) => {
+      const fwd = s.replace(/\\/g, '/');
+      return process.platform === 'win32' ? fwd.toLowerCase() : fwd;
+    };
+    const isProjectConfig = !!source && !explicitPath && !norm(source).startsWith(norm(homedir()));
+    // Read the trust override from the REAL (pre-.env) environment — a
+    // workspace .env must not be able to grant itself MCP trust.
+    const trustOverride = getRealEnv('NANOGENT_TRUST_PROJECT_MCP') === '1';
 
     if (isProjectConfig && !trustOverride) {
       agent.mcpStates = Object.keys(agent.cfg.mcp).map((name) => ({

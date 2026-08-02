@@ -71,8 +71,8 @@ export function validateConfig(cfg: Config): {
   }
 
   if (cfg.timeout !== undefined) {
-    if (cfg.timeout < 1000 || cfg.timeout > 300000) {
-      errors.push(`timeout must be between 1 and 300 seconds (1000-300000ms), got ${cfg.timeout}`);
+    if (cfg.timeout < 1000 || cfg.timeout > 900000) {
+      errors.push(`timeout must be between 1 and 900 seconds (1000-900000ms), got ${cfg.timeout}`);
     }
   }
 

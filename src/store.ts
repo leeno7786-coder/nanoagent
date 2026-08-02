@@ -8,10 +8,11 @@ import { VersionedStore } from './storage.js';
 const SESSION_VERSION = 1;
 
 export function buildConfigSnapshot(cfg: Config): Partial<Config> {
+  // apiKey is deliberately excluded: session files are persisted to disk and
+  // must not contain secrets.
   return {
     model: cfg.model,
     baseURL: cfg.baseURL,
-    apiKey: cfg.apiKey,
     permissionMode: cfg.permissionMode,
     permissionRules: cfg.permissionRules,
     maxIterations: cfg.maxIterations,
@@ -118,21 +119,40 @@ export function deleteSession(id: string): void {
   }
 }
 
+/**
+ * Sanitize a session id so it is safe to use as a filename: strips path
+ * separators and other reserved characters, rejects dots-only names, and
+ * caps the length. Returns '' when nothing usable remains.
+ */
+export function sanitizeSessionId(id: string): string {
+  const cleaned = id
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .trim()
+    .slice(0, 64);
+  if (!cleaned || /^\.+$/.test(cleaned)) return '';
+  return cleaned;
+}
+
 export function renameSession(oldId: string, newId: string): boolean {
   ensureDir();
-  const oldPath = join(SESSION_DIR, `${oldId}.json`);
+  const safeOldId = sanitizeSessionId(oldId);
+  const safeNewId = sanitizeSessionId(newId);
+  if (!safeOldId || !safeNewId) {
+    return false;
+  }
+  const oldPath = join(SESSION_DIR, `${safeOldId}.json`);
   if (!existsSync(oldPath)) {
     return false;
   }
 
   try {
-    const session = loadSession(oldId);
+    const session = loadSession(safeOldId);
     if (!session) {
       return false;
     }
-    session.id = newId;
+    session.id = safeNewId;
     session.updatedAt = Date.now();
-    const store = sessionStore(newId);
+    const store = sessionStore(safeNewId);
     store.write(session);
     rmSync(oldPath);
     return true;

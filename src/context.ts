@@ -19,6 +19,9 @@ function walkTopFiles(dir: string, maxFiles: number): string[] {
     for (const e of entries) {
       if (result.length >= maxFiles) break;
       if (SKIP.has(e.name)) continue;
+      // Never list dotfiles (.env, .npmrc, ...) — they may name secrets and
+      // must not appear in prompts.
+      if (e.name.startsWith('.')) continue;
       if (e.isFile()) {
         result.push(e.name);
       } else if (e.isDirectory()) {
@@ -27,6 +30,7 @@ function walkTopFiles(dir: string, maxFiles: number): string[] {
           const sub = readdirSync(resolve(dir, e.name), { withFileTypes: true });
           for (const se of sub) {
             if (result.length >= maxFiles) break;
+            if (se.name.startsWith('.')) continue;
             if (se.isFile() && !SKIP.has(se.name)) {
               result.push(e.name + '/' + se.name);
             }
@@ -50,12 +54,13 @@ export function detectContext(workspace: string): RepoContext {
     primaryLanguage: 'unknown',
   };
   try {
-    execSync('git rev-parse --git-dir', { cwd: workspace, stdio: 'ignore' });
+    execSync('git rev-parse --git-dir', { cwd: workspace, stdio: 'ignore', timeout: 5000 });
     ctx.isGit = true;
     ctx.branch = execSync('git branch --show-current', {
       cwd: workspace,
       encoding: 'utf-8',
       stdio: 'pipe',
+      timeout: 5000,
     }).trim();
   } catch {
     /* not git */

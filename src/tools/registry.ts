@@ -43,6 +43,7 @@ import {
   getAnalysisReportTool,
 } from './graph-tools.js';
 import { manageTodosTool, exploreSubagentTool } from './misc-tools.js';
+import { manageMcpTool } from './mcp-manage.js';
 
 /** Shorter tool descriptions for ≤8B models (full params stay in JSON schema). */
 export const SMALL_TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -61,6 +62,7 @@ export const SMALL_TOOL_DESCRIPTIONS: Record<string, string> = {
   git_commit: 'git add -A and commit with message.',
   change_workspace: 'Change working directory.',
   manage_todos: 'add | complete | remove | list subtasks.',
+  manage_mcp: 'add | remove | list MCP servers in the global config.',
   // Short descriptions for tools excluded from small models (kept for reference)
   grep_search: 'Search text patterns across files.',
   map_project_tree: 'Project structure tree.',
@@ -94,6 +96,7 @@ export const tools: Tool[] = [
   runCommandTool,
   typecheckTool,
   manageTodosTool,
+  manageMcpTool,
   buildMemoryGraphTool,
   queryMemoryGraphTool,
   getGraphStatsTool,
@@ -148,20 +151,8 @@ export const PARALLEL_SAFE_TOOLS = new Set([
   'git_diff',
   'map_project_tree',
   'batch_read_files',
-  // Graph read queries — read-only, safe to parallelize
-  'get_graph_stats',
-  'search_nodes_by_type',
-  'search_nodes_by_name',
-  'search_nodes_by_path',
-  'find_dependencies',
-  'find_path',
-  'pattern_search',
-  'query_memory_graph',
-  'get_file_info',
-  'get_communities',
-  'get_god_nodes',
-  'get_surprising_connections',
-  'get_analysis_report',
+  // NOTE: memory-graph query tools are deliberately NOT parallel-safe — they
+  // can trigger full graph rebuilds, so they must run sequentially.
   // Remote sub-agent dispatch — each call hits a different model; running
   // multiple in one message fans them out to up to 3 concurrent workers.
   'explore_subagent',
@@ -179,6 +170,7 @@ export const SEQUENTIAL_ONLY_TOOLS = new Set([
   'typecheck',
   'change_workspace',
   'manage_todos',
+  'manage_mcp',
   'write_file',
   // Graph build is expensive and mutates state
   'build_memory_graph',

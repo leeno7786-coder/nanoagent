@@ -15,7 +15,6 @@ export async function agentRun(
 ): Promise<void> {
   agent.setState('thinking');
 
-  agent.roundCounter++;
   const maxReasoningOnly =
     agent.cfg.maxReasoningOnlyRounds && agent.cfg.maxReasoningOnlyRounds > 0
       ? agent.cfg.maxReasoningOnlyRounds
@@ -232,6 +231,10 @@ export async function agentRun(
   /** Retries after silent context overflow (finish_reason=length, 0 output). */
   let overflowRetries = 0;
   const MAX_OVERFLOW_RETRIES = 2;
+  /** Stuck-loop guard: consecutive rounds issuing identical tool-call signatures. */
+  let lastToolSignature: string | undefined;
+  let sameSignatureStreak = 0;
+  const MAX_SAME_SIGNATURE_STREAK = 3;
   while (true) {
     if (signal?.aborted) {
       agent.setState('idle');
@@ -297,7 +300,11 @@ export async function agentRun(
         let iterResult = await iter.next();
         while (!iterResult.done) {
           const chunk = iterResult.value;
-          if (signal?.aborted) break;
+          if (signal?.aborted) {
+            // Tear down the SSE stream so the server connection is released.
+            await iter.return?.({});
+            break;
+          }
 
           if (chunk.finishReason) {
             finishReason = chunk.finishReason;
@@ -391,6 +398,20 @@ export async function agentRun(
           agent.contextManager.reportApiUsage(streamUsage);
         }
 
+        if (signal?.aborted) {
+          // Aborted mid-stream: never persist tool calls that were never
+          // executed — dangling tool_calls poison the next request.
+          delete assistantMsg.toolCalls;
+          if (!assistantMsg.content.trim() && !assistantMsg.reasoningContent) {
+            agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
+          } else {
+            agent.contextManager.addMessage(assistantMsg);
+          }
+          agent.setState('idle');
+          agent.onUpdate?.();
+          return;
+        }
+
         if (hasToolCalls && toolCallBuffers.length > 0) {
           assistantMsg.toolCalls = toolCallBuffers;
           reasoningOnlyStreak = 0;
@@ -418,7 +439,9 @@ export async function agentRun(
           !assistantMsg.reasoningContent;
         // OpenRouter/OpenAI silent overflow: finish_reason=length with 0 output tokens.
         // Without recovery, every subsequent turn stays empty and the agent looks "idle".
-        const zeroOut = !streamUsage || streamUsage.output_tokens === 0;
+        // Only treat 0 completion tokens as overflow when usage was actually reported —
+        // a missing usage block is not evidence of overflow.
+        const zeroOut = streamUsage !== undefined && streamUsage.output_tokens === 0;
         const silentOverflow =
           emptyOutput && (finishReason === 'length' || (finishReason !== 'stop' && zeroOut));
 
@@ -535,10 +558,8 @@ export async function agentRun(
         return;
       }
     } else {
-      // Non-streaming mode
+      // Non-streaming mode (context was already compact-checked at the top of the loop)
       let response: Awaited<ReturnType<typeof chat>>;
-
-      agent.checkAndCompactContext();
 
       try {
         const activeSkills = new Set(
@@ -616,10 +637,8 @@ export async function agentRun(
       }
 
       const emptyNonStream =
-        (!msg.tool_calls || msg.tool_calls.length === 0) &&
-        !msg.content &&
-        !msg.reasoning_content;
-      const zeroOut = !response.usage || response.usage.output_tokens === 0;
+        (!msg.tool_calls || msg.tool_calls.length === 0) && !msg.content && !msg.reasoning_content;
+      const zeroOut = response.usage !== undefined && response.usage.output_tokens === 0;
       const silentOverflow =
         emptyNonStream &&
         (response.finishReason === 'length' || (response.finishReason !== 'stop' && zeroOut));
@@ -696,8 +715,30 @@ export async function agentRun(
 
     if (tcs.length === 0) {
       agent.consecutiveToolRounds = 0;
+      sameSignatureStreak = 0;
+      lastToolSignature = undefined;
     } else {
       agent.consecutiveToolRounds++;
+
+      // Stuck-loop guard: break when the model keeps issuing the exact same
+      // tool calls round after round (mirrors the sub-agent worker guard).
+      const signature = tcs.map((tc) => `${tc.name}(${tc.arguments})`).join('|');
+      if (signature === lastToolSignature) {
+        sameSignatureStreak++;
+      } else {
+        sameSignatureStreak = 1;
+        lastToolSignature = signature;
+      }
+      if (sameSignatureStreak >= MAX_SAME_SIGNATURE_STREAK) {
+        agent.addAssistantMessage(
+          `⚠️ Stuck loop detected: the model issued the identical tool call(s) ${MAX_SAME_SIGNATURE_STREAK} rounds in a row. ` +
+            `Stopping here to avoid an infinite loop — rephrase your request or take over manually.`
+        );
+        agent.setState('idle');
+        agent.onUpdate?.();
+        return;
+      }
+
       const checkinLimit = agent.cfg.maxToolRoundsBeforeCheckin ?? 0;
       if (checkinLimit > 0 && agent.consecutiveToolRounds >= checkinLimit) {
         agent.consecutiveToolRounds = 0;

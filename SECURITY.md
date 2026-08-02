@@ -14,6 +14,29 @@ All security features are **enabled by default** and can be configured or disabl
 
 ---
 
+## Trust Model
+
+Anything shipped inside a cloned repository is **untrusted** — a malicious repo must not be
+able to escalate privileges just by being opened in the agent:
+
+- **Workspace `.env` files are untrusted.** Trust-sensitive variables —
+  `NANOGENT_TRUST_PROJECT_MCP`, `QWEN_SECURITY_*`, `QWEN_BASE_URL`, and all `*_API_KEY`
+  overrides — are only honored from the **real process environment** (or the trusted
+  home-directory `.env`), never from a workspace/project `.env` loaded via dotenv.
+  This prevents a repo from disabling security, redirecting the API endpoint
+  (key exfiltration), or auto-trusting its own MCP servers.
+- **Project-local MCP configs never auto-connect.** Trust = global `~/.nanogent.json`,
+  an explicitly-passed config path, or `NANOGENT_TRUST_PROJECT_MCP=1` set in the real
+  environment. (RCE guard — MCP servers are arbitrary local processes.)
+- **Project-local skills are disabled by default.** Skills loaded from the workspace
+  `skills/` directory (both `.json` and `SKILL.md`) start `enabled: false` and must be
+  explicitly enabled, because skill prompts are injected into the system prompt.
+  Home-directory/user-scope skills keep their previous defaults.
+- **Explicit paths are trusted.** A config file passed explicitly by path is treated as
+  user-approved, regardless of where it lives on disk.
+
+---
+
 ## Configuration
 
 Security settings can be configured via:

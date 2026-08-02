@@ -3,6 +3,13 @@
  * progress hooks, batch awaiting, and TUI snapshots. Each function takes the
  * agent instance as its first parameter; the class keeps thin delegate
  * methods so the public API is unchanged.
+ *
+ * @deprecated The detached background spawn machinery
+ * (`spawnBackgroundSubAgent` / `awaitAllBackgroundSubAgents`) is legacy:
+ * `explore_subagent` now executes synchronously and mirrors progress through
+ * synthetic handles created in `src/agent-tools/execute.ts` (removed when the
+ * parent tool call completes). Kept for API compatibility — other code still
+ * references these delegates. Do not extend; prefer the execute.ts path.
  */
 import type { ToolExecutionHooks, SubAgentProgressEvent } from './tools/index.js';
 import { exploreWithSubAgent, formatSubAgentResults, type SubAgentResult } from './subagents.js';

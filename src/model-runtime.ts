@@ -129,7 +129,9 @@ export async function fetchLMStudioModelRuntime(
   modelId: string
 ): Promise<ModelRuntimeInfo | null> {
   const rest = lmStudioRestBase(baseURL);
-  const encoded = encodeURIComponent(modelId);
+  // LM Studio model keys are path-like ("publisher/model") — encode each
+  // segment so '/' survives (encodeURIComponent would turn it into %2F → 404).
+  const encoded = modelId.split('/').map(encodeURIComponent).join('/');
 
   const single = await fetchJson(`${rest}/api/v0/models/${encoded}`);
   if (single && typeof single === 'object' && !Array.isArray(single)) {

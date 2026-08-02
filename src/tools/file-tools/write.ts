@@ -117,8 +117,10 @@ export const editFileTool: Tool = {
       if (!text.includes(oldText)) {
         const oldLines = oldText.split(/\r?\n/);
         const fileLines = text.split(/\r?\n/);
-        let matchStart = -1;
-        let matchEnd = -1;
+        // Whitespace-insensitive (trim) fuzzy match. Collect ALL candidate
+        // regions — applying it when more than one matches would corrupt the
+        // file, so multiple matches require replace_all or more context.
+        const matchStarts: number[] = [];
 
         for (let i = 0; i <= fileLines.length - oldLines.length; i++) {
           let allMatch = true;
@@ -128,18 +130,25 @@ export const editFileTool: Tool = {
               break;
             }
           }
-          if (allMatch) {
-            matchStart = i;
-            matchEnd = i + oldLines.length;
-            break;
-          }
+          if (allMatch) matchStarts.push(i);
         }
 
-        if (matchStart >= 0) {
+        if (matchStarts.length > 1 && !args.replace_all) {
+          const linesList = matchStarts.map((s) => s + 1).join(', ');
+          return JSON.stringify({
+            ok: false,
+            error: `old_text matches ${matchStarts.length} regions (starting at lines ${linesList}) after whitespace-insensitive matching. Include more surrounding context to make it unique, or set replace_all: true to update all of them.`,
+          });
+        }
+
+        if (matchStarts.length > 0) {
           const newTextValue = String(args.new_text ?? '');
-          const before = fileLines.slice(0, matchStart);
-          const after = fileLines.slice(matchEnd);
-          const next = [...before, newTextValue, ...after].join('\n');
+          const nextLines = [...fileLines];
+          // Splice from the bottom up so earlier indexes stay valid.
+          for (let m = matchStarts.length - 1; m >= 0; m--) {
+            nextLines.splice(matchStarts[m], oldLines.length, newTextValue);
+          }
+          const next = nextLines.join('\n');
           writeFileSync(p, next, 'utf-8');
           const relPath = rel(p, ws);
           const { added, removed, diff } = fileChangeDiff(relPath, text, next);
@@ -150,7 +159,7 @@ export const editFileTool: Tool = {
             added,
             removed,
             diff,
-            replacements: 1,
+            replacements: matchStarts.length,
             fuzzy_match: true,
           });
         }

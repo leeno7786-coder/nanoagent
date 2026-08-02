@@ -52,6 +52,10 @@ export const DEFAULT_CACHE_CONFIG: ToolCacheConfig = {
   excludedTools: new Set([
     'execute_command',
     'git_commit',
+    // git_status/git_diff reflect live repo state with no file dependencies to
+    // track, so a cached result would go stale within the 30s TTL window.
+    'git_status',
+    'git_diff',
     'write_file',
     'edit_file',
     'edit_file_lines',
@@ -268,11 +272,23 @@ export class ToolCacheManager {
 
   /**
    * Check if a file has changed since a given timestamp.
+   * For directories, editing a file inside does NOT bump the directory mtime,
+   * so also sample the mtimes of direct child entries (up to 50).
    */
   private hasFileChanged(filePath: string, sinceTimestamp: number): boolean {
     try {
       const stats = statSync(filePath);
-      return stats.mtimeMs > sinceTimestamp;
+      if (stats.mtimeMs > sinceTimestamp) return true;
+      if (stats.isDirectory()) {
+        for (const entry of readdirSync(filePath).slice(0, 50)) {
+          try {
+            if (statSync(resolve(filePath, entry)).mtimeMs > sinceTimestamp) return true;
+          } catch {
+            return true; // Child vanished mid-check — assume changed
+          }
+        }
+      }
+      return false;
     } catch {
       return true; // If we can't stat the file, assume it changed
     }

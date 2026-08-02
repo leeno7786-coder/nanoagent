@@ -92,7 +92,7 @@ async function runSingleSubAgent(
       };
     }
 
-    if (i === 14 && toolCallCount > 0) {
+    if (i === Math.floor(maxIter * 0.6) && toolCallCount > 0) {
       messages.push({
         role: 'user',
         content: `You are on turn ${i + 1} of ${maxIter}. Start writing your final report now. Use batch_read_files if you need to read more files, then summarize.`,
@@ -127,6 +127,7 @@ async function runSingleSubAgent(
     }
 
     let streamError: string | undefined;
+    let turnTimedOut = false;
     try {
       const stream = streamChat(wctx.client, wctx.cfg, messages, toolDefs, turnController.signal, {
         enableThinking: false,
@@ -166,6 +167,9 @@ async function runSingleSubAgent(
       }
     } catch (e: unknown) {
       if (turnController.signal.aborted) {
+        // Per-turn 60s timeout (or parent abort) fired mid-stream. Track it so
+        // an empty result is reported as an error, never as a silent success.
+        turnTimedOut = true;
         emit({
           type: 'subagent_chunk',
           agent: wctx.endpoint.name,
@@ -383,13 +387,14 @@ async function runSingleSubAgent(
 
     const answer = msg.content || '';
 
-    if (streamError && !answer && toolCallCount === 0) {
+    if (!answer && (streamError || turnTimedOut)) {
+      const reason = streamError ?? 'turn timed out';
       emit({
         type: 'subagent_done',
         agent: wctx.endpoint.name,
         model: wctx.cfg.model,
         ok: false,
-        output: streamError,
+        output: reason,
         toolCalls: toolCallCount,
       });
       return {
@@ -398,7 +403,7 @@ async function runSingleSubAgent(
         baseURL: wctx.cfg.baseURL,
         ok: false,
         output: '',
-        error: streamError,
+        error: reason,
         durationMs: Math.round(performance.now() - start),
         toolCalls: toolCallCount,
       };
@@ -487,10 +492,13 @@ export async function exploreWithSubAgent(
       toolCalls: 0,
     };
   }
+  const wctx = buildWorkerContext(ep, base);
   try {
-    const wctx = buildWorkerContext(ep, base);
     return await runSingleSubAgent(wctx, task, signal, hooks);
   } finally {
+    // The per-dispatch ToolCacheManager starts fs.watch handles on cached
+    // dependencies — close them so each dispatch doesn't leak watchers.
+    wctx.cache.stopAllWatchers();
     scheduler.release(ep.name);
   }
 }

@@ -55,6 +55,8 @@ const COMMAND_TOOLS = new Set([
   'git_reset',
   'git_checkout',
   'change_workspace',
+  // manage_mcp writes the trusted global config — require command confirmation.
+  'manage_mcp',
 ]);
 
 export class PermissionManager {

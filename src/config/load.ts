@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
 import { config as dotenvConfig } from 'dotenv';
@@ -8,16 +8,72 @@ import { logError, logWarn } from '../log.js';
 import { getDefault, sanitizeBaseURL, MODELS } from './defaults.js';
 import { validateConfig } from './validate.js';
 
+/**
+ * Trust-sensitive environment variables. Workspace/project .env files are
+ * UNTRUSTED — any cloned repo can plant one — so these variables are only
+ * honored when they come from the real environment (process launch) or the
+ * trusted home-dir .env (~/.qwen-agent-tui/.env). They cover the MCP trust
+ * override, security toggles, the API endpoint, and API-key overrides.
+ */
+const TRUST_SENSITIVE_ENV_VARS = new Set([
+  'NANOGENT_TRUST_PROJECT_MCP',
+  'QWEN_BASE_URL',
+  'OPENAI_BASE_URL',
+]);
+
+function isTrustSensitiveEnvVar(key: string): boolean {
+  return (
+    TRUST_SENSITIVE_ENV_VARS.has(key) ||
+    key.startsWith('QWEN_SECURITY_') ||
+    key.endsWith('_API_KEY')
+  );
+}
+
+// Snapshot of the real environment at module load, before any .env file
+// could have been merged in by loadEnv().
+const REAL_ENV: NodeJS.ProcessEnv = { ...process.env };
+
+/**
+ * Read a trust-sensitive variable from the REAL environment: values present
+ * at process start, or values still in process.env after loadEnv() scrubbed
+ * anything injected by an untrusted workspace .env.
+ */
+export function getRealEnv(key: string): string | undefined {
+  return REAL_ENV[key] ?? process.env[key];
+}
+
 function loadEnv(workspace: string) {
-  const candidates = [
-    join(process.cwd(), '.env'),
-    join(workspace, '.env'),
-    join(homedir(), '.qwen-agent-tui', '.env'),
-  ];
-  for (const p of candidates) {
+  // Trusted home-dir .env first (user-managed; where saveApiKeyToEnv writes).
+  const trustedPath = join(homedir(), '.qwen-agent-tui', '.env');
+  if (existsSync(trustedPath)) {
+    dotenvConfig({ path: resolve(trustedPath), quiet: true });
+  }
+  // Snapshot before merging UNTRUSTED workspace .env files. dotenv never
+  // overrides existing keys, so anything already set here is trusted.
+  const trustedEnv = { ...process.env };
+  const untrusted = [join(process.cwd(), '.env'), join(workspace, '.env')];
+  for (const p of untrusted) {
     if (existsSync(p)) {
       dotenvConfig({ path: resolve(p), quiet: true });
     }
+  }
+  // Scrub trust-sensitive variables that only appeared via the untrusted
+  // .env files — a cloned repo must not disable security, redirect the API
+  // endpoint, grant itself MCP trust, or swap API keys via a planted .env.
+  for (const key of Object.keys(process.env)) {
+    if (!(key in trustedEnv) && isTrustSensitiveEnvVar(key)) {
+      delete process.env[key];
+    }
+  }
+}
+
+/** Return the path only if it exists AND is a regular file. */
+function asConfigFile(p: string | undefined): string | undefined {
+  if (!p) return undefined;
+  try {
+    return statSync(p).isFile() ? p : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -40,7 +96,9 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
 
   loadEnv(cfg.workspace);
 
-  const configPath = typeof pathOrConfig === 'string' ? pathOrConfig : undefined;
+  // A string argument is only a config path if it points at an existing FILE;
+  // passing the workspace directory here must not mask the real candidates.
+  const configPath = asConfigFile(typeof pathOrConfig === 'string' ? pathOrConfig : undefined);
   const candidates = [
     configPath,
     join(invocationCwd, '.nanoagent.json'),
@@ -56,21 +114,24 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   ].filter(Boolean) as string[];
 
   for (const p of candidates) {
-    if (existsSync(p)) {
-      try {
-        const parsed = JSON.parse(readFileSync(p, 'utf-8'));
-        if (p.startsWith(homedir()) && !explicitWorkspace) {
-          delete parsed.workspace;
-        }
-        Object.assign(cfg, parsed);
-        cfg.configFilePath = p;
-      } catch (err) {
-        logWarn(
-          `Warning: failed to parse config file ${p}:`,
-          err instanceof Error ? err.message : String(err)
-        );
+    if (!existsSync(p)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(p, 'utf-8'));
+      if (p.startsWith(homedir()) && !explicitWorkspace) {
+        delete parsed.workspace;
       }
+      Object.assign(cfg, parsed);
+      cfg.configFilePath = p;
+      // An explicitly-passed config path is trusted regardless of location.
+      (cfg as Config & { configPathExplicit?: boolean }).configPathExplicit = p === configPath;
       break;
+    } catch (err) {
+      // Warn and CONTINUE: a corrupt higher-precedence file must not mask a
+      // valid lower-precedence one.
+      logWarn(
+        `Warning: failed to parse config file ${p}:`,
+        err instanceof Error ? err.message : String(err)
+      );
     }
   }
 
@@ -97,6 +158,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   if (
     !process.env.QWEN_BASE_URL &&
     !isDefaultLocal &&
+    !cfg.apiKey &&
     process.env.OPENAI_API_KEY &&
     isOpenAIEndpoint
   ) {
@@ -147,7 +209,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     const n = parseInt(process.env.QWEN_MAX_ITERATIONS, 10);
     if (!Number.isNaN(n)) cfg.maxIterations = n;
   }
-  if (process.env.QWEN_WORKSPACE) cfg.workspace = process.env.QWEN_WORKSPACE;
+  if (process.env.QWEN_WORKSPACE) cfg.workspace = resolve(process.env.QWEN_WORKSPACE);
   if (process.env.QWEN_RETRY_COUNT) {
     const n = parseInt(process.env.QWEN_RETRY_COUNT, 10);
     if (!Number.isNaN(n)) cfg.retryCount = n;

@@ -27,14 +27,18 @@ export async function awaitEndpointRateLimit(
   signal?: AbortSignal
 ): Promise<void> {
   if (!baseURL) return;
-  cleanExpiredRateLimits();
   const key = baseURL.toLowerCase().replace(/\/+$/, '');
-  const until = endpointRateLimitedUntil.get(key);
-  if (!until) return;
-  const remaining = until - Date.now();
-  if (remaining > 0) {
+  // Sleep in capped chunks until the rate-limit window actually expires — a
+  // single capped sleep can return while the endpoint is still limited.
+  while (true) {
+    cleanExpiredRateLimits();
+    const until = endpointRateLimitedUntil.get(key);
+    if (!until) return;
+    const remaining = until - Date.now();
+    if (remaining <= 0) return;
     if (signal?.aborted) return;
     await sleepWithSignal(Math.min(remaining, 60000), signal);
+    if (signal?.aborted) return;
   }
 }
 

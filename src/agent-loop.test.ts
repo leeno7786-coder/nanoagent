@@ -157,9 +157,7 @@ describe('AgentCore run loop (behavioral)', () => {
     await agent.init();
 
     // Simulate a cloud/local response that billed a large prompt (tool schemas etc.)
-    scripted.push([
-      { content: 'ok', usage: { prompt_tokens: 90000, completion_tokens: 3 } },
-    ]);
+    scripted.push([{ content: 'ok', usage: { prompt_tokens: 90000, completion_tokens: 3 } }]);
     await agent.run('hi');
 
     const stats = agent.contextManager.getStats();

@@ -22,7 +22,10 @@ export function sanitizeBaseURL(url: string): string {
   if (!url) return url;
   try {
     let sanitized = url.replace(/(https?:\/\/)[^/]+:[^@]+@/, '$1');
-    sanitized = sanitized.replace(/([?&])(api_key|key)=[^&]+/gi, '$1');
+    sanitized = sanitized.replace(
+      /([?&])(api_key|key|token|access_token|sig|signature)=[^&]+/gi,
+      '$1'
+    );
     sanitized = sanitized.replace(/\?&/g, '?');
     sanitized = sanitized.replace(/&&+/g, '&');
     sanitized = sanitized.replace(/[?&]$/, '');
@@ -52,7 +55,7 @@ export function getDefault(): Config {
     baseURL: 'http://127.0.0.1:1234/',
     model: 'model-identifier',
     apiKey: null,
-    maxIterations: 0,
+    maxIterations: 50,
     maxToolRoundsBeforeCheckin: 0,
     maxReasoningOnlyRounds: 5,
     workspace: process.cwd(),

@@ -46,6 +46,24 @@ describe("sanitizeBaseURL", () => {
       expect(sanitized).toBe("https://api.mistral.ai/v1");
     });
 
+    it("should remove token from query string", () => {
+      const url = "https://api.example.com/v1?token=secret123";
+      const sanitized = sanitizeBaseURL(url);
+      expect(sanitized).toBe("https://api.example.com/v1");
+    });
+
+    it("should remove access_token from query string", () => {
+      const url = "https://api.example.com/v1?foo=1&access_token=secret123&bar=2";
+      const sanitized = sanitizeBaseURL(url);
+      expect(sanitized).toBe("https://api.example.com/v1?foo=1&bar=2");
+    });
+
+    it("should remove sig and signature from query string", () => {
+      const url = "https://api.example.com/v1?sig=abc&signature=def";
+      const sanitized = sanitizeBaseURL(url);
+      expect(sanitized).toBe("https://api.example.com/v1");
+    });
+
     it("should remove api_key from middle of query string", () => {
       const url = "https://api.mistral.ai/v1?param1=value&api_key=sk-abc123&param2=value";
       const sanitized = sanitizeBaseURL(url);

@@ -5,6 +5,7 @@ import {
   writeFileSync,
   readdirSync,
   rmSync,
+  renameSync,
   copyFileSync,
 } from 'fs';
 import { join, dirname, basename } from 'path';
@@ -52,7 +53,11 @@ export class VersionedStore<T extends object> {
     } as T & VersionedEnvelope;
     try {
       this.rotateBackups();
-      writeFileSync(this.filePath, JSON.stringify(envelope, null, 2), 'utf-8');
+      // Atomic write: serialize to a temp file, then rename over the target
+      // so a crash mid-write can't leave a truncated JSON file.
+      const tmpPath = `${this.filePath}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(envelope, null, 2), 'utf-8');
+      renameSync(tmpPath, this.filePath);
       return true;
     } catch (err) {
       logError('Storage write failed:', this.filePath, err);

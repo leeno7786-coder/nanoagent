@@ -24,9 +24,7 @@ export function getShellInfo(): ShellInfo {
       process.env.LOCALAPPDATA
         ? join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
         : '',
-      process.env.PROGRAMFILES
-        ? join(process.env.PROGRAMFILES, 'Git', 'bin', 'bash.exe')
-        : '',
+      process.env.PROGRAMFILES ? join(process.env.PROGRAMFILES, 'Git', 'bin', 'bash.exe') : '',
       process.env['PROGRAMFILES(X86)']
         ? join(process.env['PROGRAMFILES(X86)'], 'Git', 'bin', 'bash.exe')
         : '',
@@ -229,7 +227,12 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
       return '';
     };
 
-    if (shell.type === 'git-bash' || shell.type === 'bash' || shell.type === 'sh' || shell.type === 'powershell') {
+    if (
+      shell.type === 'git-bash' ||
+      shell.type === 'bash' ||
+      shell.type === 'sh' ||
+      shell.type === 'powershell'
+    ) {
       const result = spawnSync(shell.executable, shell.args(cmd), {
         cwd: ws,
         timeout: timeoutMs,
@@ -254,7 +257,12 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
           result.status ?? null
         );
       }
-      return formatExecResult(true, toString(result.stdout), toString(result.stderr), result.status);
+      return formatExecResult(
+        true,
+        toString(result.stdout),
+        toString(result.stderr),
+        result.status
+      );
     }
 
     const parsed = parseCommand(cmd);
@@ -320,7 +328,12 @@ function execCmdAsync(
     let child: ChildProcess;
 
     try {
-      if (shell.type === 'git-bash' || shell.type === 'bash' || shell.type === 'sh' || shell.type === 'powershell') {
+      if (
+        shell.type === 'git-bash' ||
+        shell.type === 'bash' ||
+        shell.type === 'sh' ||
+        shell.type === 'powershell'
+      ) {
         child = spawn(shell.executable, shell.args(cmd), {
           cwd: ws,
           timeout: timeoutMs,
@@ -362,7 +375,13 @@ function execCmdAsync(
       if (!resolved) {
         resolved = true;
         child.kill();
-        resolvePromise(formatExecResult(false, stdoutBuffer, stderrBuffer, null));
+        resolvePromise(
+          JSON.stringify({
+            ...JSON.parse(formatExecResult(false, stdoutBuffer, stderrBuffer, null)),
+            timed_out: true,
+            error: `Command timed out after ${timeoutSeconds}s`,
+          })
+        );
       }
     }, timeoutMs);
 
@@ -425,7 +444,7 @@ function isDangerous(cmd: string): boolean {
 export const executeCommandTool: Tool = {
   name: 'execute_command',
   description:
-    'Run a shell command in the workspace. Automatically supports extended timeouts (up to 600s) for downloads (curl, wget, git clone) and package installs (pip, uv, npm, bun). The system will notify ("ping") with results when execution finishes.',
+    'Run a shell command in the workspace. Automatically supports extended timeouts (up to 600s) for downloads (curl, wget, git clone) and package installs (pip, uv, npm, bun). The command is awaited synchronously — the result is returned directly when it finishes or the timeout is hit.',
   parameters: {
     type: 'object',
     properties: {
@@ -462,7 +481,19 @@ export const executeCommandTool: Tool = {
       return JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
     }
 
-    return execCmd(cmd, ws);
+    // Sync path honors the timeout arg too (same caps as the async path).
+    const isDownloadOrBuildCmd =
+      /^(?:curl|wget|git\s+clone|npm|bun|pnpm|pip|pip3|uv|cargo|docker|huggingface-cli)\b/i.test(
+        cmd
+      );
+    const syncTimeout =
+      typeof args.timeout === 'number' && args.timeout > 0
+        ? Math.min(args.timeout, isDownloadOrBuildCmd ? 600 : 300)
+        : isDownloadOrBuildCmd
+          ? 600
+          : 60;
+
+    return execCmd(cmd, ws, syncTimeout);
   },
   executeAsync: async (args, ws, cfg, signal) => {
     const cmd = String(args.command || '').trim();

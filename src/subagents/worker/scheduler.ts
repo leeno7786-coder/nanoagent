@@ -11,7 +11,7 @@ export const MAX_CONCURRENT_SUBAGENTS = 3;
 export class SubAgentScheduler {
   private inUse = new Set<string>();
   private cursor = 0;
-  private queue: Array<() => void> = [];
+  private queue: Array<{ fired: boolean; wake: () => void }> = [];
 
   async acquire(
     endpoints: SubAgentEndpoint[],
@@ -30,11 +30,22 @@ export class SubAgentScheduler {
       if (elapsed >= timeoutMs) return undefined;
 
       await new Promise<void>((res) => {
-        const timer = setTimeout(res, Math.min(1000, timeoutMs - elapsed));
-        this.queue.push(() => {
+        const waiter: { fired: boolean; wake: () => void } = { fired: false, wake: () => {} };
+        const timer = setTimeout(
+          () => {
+            if (waiter.fired) return;
+            waiter.fired = true;
+            res();
+          },
+          Math.min(1000, timeoutMs - elapsed)
+        );
+        waiter.wake = () => {
+          if (waiter.fired) return;
+          waiter.fired = true;
           clearTimeout(timer);
           res();
-        });
+        };
+        this.queue.push(waiter);
       });
       ep = this.tryAcquire(usable, preferred);
     }
@@ -59,8 +70,15 @@ export class SubAgentScheduler {
 
   release(name: string) {
     this.inUse.delete(name);
-    const next = this.queue.shift();
-    if (next) next();
+    // Skip stale waiters whose 1s poll timer already fired — waking one of
+    // those would consume the release while a live waiter keeps waiting.
+    while (this.queue.length > 0) {
+      const next = this.queue.shift();
+      if (next && !next.fired) {
+        next.wake();
+        break;
+      }
+    }
   }
 }
 

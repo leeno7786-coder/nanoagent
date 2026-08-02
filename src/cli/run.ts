@@ -3,6 +3,9 @@ import { resolve } from 'path';
 import { AgentCore } from '../agent.js';
 import { loadConfig } from '../config.js';
 import { printRunHelp, cliError } from './help.js';
+import type { PermissionMode } from '../security/index.js';
+
+const PERMISSION_MODES: PermissionMode[] = ['read_only', 'ask', 'allow_edits', 'always_allow'];
 
 export interface RunResult {
   ok: boolean;
@@ -27,6 +30,8 @@ export async function cmdRun(argv: string[]): Promise<number> {
       json: { type: 'boolean', default: false },
       quiet: { type: 'boolean', default: false },
       verbose: { type: 'boolean', default: false },
+      yes: { type: 'boolean', short: 'y', default: false },
+      'permission-mode': { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
     allowPositionals: false,
@@ -74,12 +79,36 @@ export async function cmdRun(argv: string[]): Promise<number> {
     if (!Number.isNaN(n)) cfg.maxIterations = n;
   }
 
+  if (values['permission-mode']) {
+    const mode = values['permission-mode'] as PermissionMode;
+    if (!PERMISSION_MODES.includes(mode)) {
+      cliError(
+        `Invalid --permission-mode "${values['permission-mode']}".`,
+        `  Valid modes: ${PERMISSION_MODES.join(', ')}`
+      );
+    }
+    cfg.permissionMode = mode;
+  }
+  if (values.yes) cfg.permissionMode = 'always_allow';
+
   const agent = new AgentCore(cfg);
   if (values['max-rounds']) {
     const n = parseInt(values['max-rounds'], 10);
     if (!Number.isNaN(n)) agent.maxRounds = n;
   }
   agent.streaming = false;
+
+  // Headless runs can't prompt interactively: auto-deny anything that needs
+  // confirmation and tell the user how to approve it instead of hanging.
+  if (cfg.permissionMode !== 'always_allow') {
+    agent.onPermissionRequest = async (req) => {
+      console.error(
+        `Permission denied (headless): ${req.tool}${req.command ? ` — "${req.command}"` : ''}.\n` +
+          '  Re-run with --yes to auto-approve all, or --permission-mode <read_only|ask|allow_edits|always_allow>.'
+      );
+      return 'deny';
+    };
+  }
 
   const toolCalls: RunResult['tool_calls'] = [];
 

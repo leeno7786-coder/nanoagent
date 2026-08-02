@@ -81,6 +81,8 @@ export class ContextManager {
   private lastApiPromptTokens: number | undefined;
   /** Estimated tokens of messages added after the last API usage report. */
   private tokensAddedSinceApiReport = 0;
+  /** Set once the usage warning fires; reset when usage drops back below the threshold. */
+  private warnThresholdCrossed = false;
 
   constructor(cfg: Config, messages: Message[] = []) {
     this.messages = [...messages];
@@ -171,6 +173,14 @@ export class ContextManager {
       summaryReservedPercent: compactionSettings.summaryReservedPercent,
       keepCount: compactionSettings.keepCount,
     };
+
+    // Token accounting depends on the model — reseed per-message caches and
+    // drop the API usage baseline from the previous model.
+    this.reseedTokenCache();
+    this.lastApiPromptTokens = undefined;
+    this.tokensAddedSinceApiReport = 0;
+    this.warnThresholdCrossed = false;
+    this.stats = null;
   }
 
   /**
@@ -209,17 +219,25 @@ export class ContextManager {
     }
     this.stats = null; // Invalidate cached stats
 
-    // Monitor context growth - warn when approaching limit
+    // Monitor context growth - warn once per threshold crossing (not on every add)
     const observed = this.getObservedTokenCount();
     const windowSize = this.getContextWindowSize();
-    const thresholdPercent = 0.8;
+    const thresholdPercent =
+      this.config.compactThreshold > 0 && this.config.compactThreshold <= 1
+        ? this.config.compactThreshold
+        : 0.8;
     if (windowSize > 0 && observed > windowSize * thresholdPercent) {
-      logWarn(
-        `[ContextManager] Context approaching limit: ` +
-          `${observed}/${windowSize} tokens ` +
-          `(${Math.round((observed / windowSize) * 100)}%)` +
-          (this.lastApiPromptTokens != null ? ' [api]' : ' [estimate]')
-      );
+      if (!this.warnThresholdCrossed) {
+        this.warnThresholdCrossed = true;
+        logWarn(
+          `[ContextManager] Context approaching limit: ` +
+            `${observed}/${windowSize} tokens ` +
+            `(${Math.round((observed / windowSize) * 100)}%)` +
+            (this.lastApiPromptTokens != null ? ' [api]' : ' [estimate]')
+        );
+      }
+    } else {
+      this.warnThresholdCrossed = false;
     }
   }
 
@@ -251,8 +269,7 @@ export class ContextManager {
     const contextSize = this.getContextWindowSize();
     const estimatedTokens = this.countMessageTokens(this.messages);
     const currentTokens = this.getObservedTokenCount();
-    const tokenSource: 'api' | 'estimate' =
-      this.lastApiPromptTokens != null ? 'api' : 'estimate';
+    const tokenSource: 'api' | 'estimate' = this.lastApiPromptTokens != null ? 'api' : 'estimate';
     // Reserve headroom for the next completion inside the window
     const maxTokens = Math.floor(contextSize * (1 - this.config.summaryReservedPercent));
     const usagePercent = contextSize > 0 ? currentTokens / contextSize : 0;
@@ -353,11 +370,10 @@ export class ContextManager {
    * @param opts.keepCount — override how many trailing messages to keep (force uses a lower default)
    * @param opts.targetRatio — fraction of context to land under (default: compactThreshold ratio or 0.5 when forced)
    */
-  compact(opts?: {
-    force?: boolean;
-    keepCount?: number;
-    targetRatio?: number;
-  }): { removedCount: number; summary?: string } {
+  compact(opts?: { force?: boolean; keepCount?: number; targetRatio?: number }): {
+    removedCount: number;
+    summary?: string;
+  } {
     if (!this.config.enabled) {
       return { removedCount: 0 };
     }
@@ -420,11 +436,7 @@ export class ContextManager {
     const mustRemove = force && tokensToRemove <= 0;
     while (cut < lastRemovable) {
       const msgTokens = this.countMessageTokens([this.messages[cut]]);
-      if (
-        !mustRemove &&
-        removedTokens + msgTokens > tokensToRemove &&
-        cut > firstRemovable
-      ) {
+      if (!mustRemove && removedTokens + msgTokens > tokensToRemove && cut > firstRemovable) {
         break;
       }
       removedTokens += msgTokens;
@@ -571,6 +583,7 @@ export class ContextManager {
     this.cachedTotalTokens = 0;
     this.lastApiPromptTokens = undefined;
     this.tokensAddedSinceApiReport = 0;
+    this.warnThresholdCrossed = false;
     this.stats = null;
     this.compactionCount = 0;
   }

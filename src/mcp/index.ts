@@ -9,12 +9,14 @@ import type {
   McpRemoteServerConfig,
 } from '../types.js';
 import type { Tool } from '../tools/index.js';
+import { createSecurityManager } from '../security/index.js';
 import { readFileSync } from 'fs';
 import { resolve, normalize } from 'path';
 
 /**
  * Interpolates {env:VAR} and {file:path} placeholders in a string value.
- * {file:path} is restricted to files within the workspace for security.
+ * {file:path} is restricted to files within the workspace for security, and
+ * the read goes through the standard blocked-path guard (.env, keys, ...).
  */
 function interpolateEnv(value: string, workspace?: string): string {
   return value
@@ -30,8 +32,17 @@ function interpolateEnv(value: string, workspace?: string): string {
         if (!normResolved.startsWith(normWorkspace + '/') && normResolved !== normWorkspace) {
           return '';
         }
+        // Refuse to interpolate blocked files (workspace .env, private keys,
+        // etc.) into MCP server env/headers — that would exfiltrate secrets.
+        const access = createSecurityManager({}, workspace).validateFileAccess(resolved, 'read');
+        if (!access.ok) {
+          throw new Error(
+            `MCP config {file:${filePath}} refused: ${access.error ?? 'blocked path'}`
+          );
+        }
         return readFileSync(resolved, 'utf-8').trim();
-      } catch {
+      } catch (e: unknown) {
+        if (e instanceof Error && e.message.startsWith('MCP config {file:')) throw e;
         return '';
       }
     });
@@ -444,10 +455,19 @@ export class McpManager {
 
   /**
    * Parse an MCP tool name back to server and tool names.
+   * Matches against connected server names (longest first) so servers whose
+   * names contain '_' parse correctly; falls back to splitting at the first
+   * '_' when no connected server matches.
    */
   parseMcpToolName(prefixedName: string): { server: string; tool: string } | null {
     if (!prefixedName.startsWith('mcp_')) return null;
     const rest = prefixedName.slice(4); // remove "mcp_"
+    const names = [...this.connections.keys()].sort((a, b) => b.length - a.length);
+    for (const name of names) {
+      if (rest.startsWith(name + '_')) {
+        return { server: name, tool: rest.slice(name.length + 1) };
+      }
+    }
     const underscoreIdx = rest.indexOf('_');
     if (underscoreIdx === -1) return null;
     return {

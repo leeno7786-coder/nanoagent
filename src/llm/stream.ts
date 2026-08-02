@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import type { Config } from '../types.js';
 import type { StreamChunk } from '../streaming.js';
-import { logError } from '../log.js';
+import { logError, logWarn } from '../log.js';
 import { ApiError } from './types.js';
 import type { ChatMessage, ChatRequestOptions } from './types.js';
 import { normalizeContent, getMaxOutputTokens, extractDeltaText } from './utils.js';
@@ -35,28 +35,40 @@ export async function* streamChat(
       const enableThinking = options?.enableThinking ?? (isQwen ? true : false);
       const streamReqParams: Record<string, unknown> = {
         model: cfg.model,
-        messages: messages.map((m) => {
+        messages: messages.flatMap((m): Array<Record<string, unknown>> => {
           if (m.role === 'tool') {
-            return {
-              role: 'tool' as const,
-              content: m.content,
-              tool_call_id: m.tool_call_id ?? '',
-            };
+            if (!m.tool_call_id) {
+              logWarn('[LLM] Dropping tool message with missing tool_call_id');
+              return [];
+            }
+            return [
+              {
+                role: 'tool' as const,
+                content: m.content,
+                tool_call_id: m.tool_call_id,
+              },
+            ];
           }
           if (m.role === 'assistant' && m.tool_calls) {
-            return {
-              role: 'assistant' as const,
-              content: m.content,
-              tool_calls: m.tool_calls,
-            };
+            return [
+              {
+                role: 'assistant' as const,
+                content: m.content,
+                tool_calls: m.tool_calls,
+              },
+            ];
           }
-          return { role: m.role, content: m.content };
+          return [{ role: m.role, content: m.content }];
         }),
         temperature: cfg.temperature ?? 0.2,
         max_tokens: getMaxOutputTokens(cfg.model, cfg.maxTokens),
         tool_choice: tools?.length ? 'auto' : undefined,
         stream: true,
+        stream_options: { include_usage: true },
       };
+      if (cfg.baseURL.includes('openrouter.ai')) {
+        streamReqParams.usage = { include: true };
+      }
       if (tools?.length) streamReqParams.tools = tools;
       if (enableThinking) streamReqParams.enable_thinking = true;
 
@@ -201,12 +213,7 @@ export async function* streamChat(
       const errStatus = e.status || e.status_code || e.response?.status || 0;
       lastError = err as Error;
 
-      const isRateLimit =
-        errStatus === 400 ||
-        errStatus === 429 ||
-        errStatus === 503 ||
-        errStatus === 529 ||
-        errStatus === 504;
+      const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
 
       if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {

@@ -35,23 +35,23 @@ export function doesChatFitInContext(
 export function estimateModelContextSize(modelId: string, _maxTokens?: number): number {
   const lowerModelId = modelId.toLowerCase();
 
-  if (lowerModelId.includes('1m') || lowerModelId.includes('1048576')) return 1048576;
-  if (lowerModelId.includes('500k')) return 500000;
-  if (lowerModelId.includes('400k')) return 400000;
-  if (lowerModelId.includes('256k')) return 256000;
-  if (
-    lowerModelId.includes('132k') ||
-    lowerModelId.includes('131k') ||
-    lowerModelId.includes('131072')
-  )
-    return 131072;
-  if (lowerModelId.includes('128k')) return 128000;
-  if (lowerModelId.includes('100k')) return 100000;
-  if (lowerModelId.includes('64k')) return 64000;
-  if (lowerModelId.includes('32k')) return 32000;
-  if (lowerModelId.includes('16k')) return 16000;
-  if (lowerModelId.includes('8k')) return 8000;
-  if (lowerModelId.includes('4k')) return 4000;
+  // Context-size tokens ("128k", "1m") must sit on a non-alphanumeric boundary
+  // so ids like "qwen3-8b" or "audio-16khz" don't false-positive.
+  const hasCtxToken = (token: string): boolean =>
+    new RegExp(`(^|[^a-z0-9])${token}([^a-z0-9]|$)`).test(lowerModelId);
+
+  if (hasCtxToken('1m') || lowerModelId.includes('1048576')) return 1048576;
+  if (hasCtxToken('500k')) return 500000;
+  if (hasCtxToken('400k')) return 400000;
+  if (hasCtxToken('256k')) return 256000;
+  if (hasCtxToken('132k') || hasCtxToken('131k') || lowerModelId.includes('131072')) return 131072;
+  if (hasCtxToken('128k')) return 128000;
+  if (hasCtxToken('100k')) return 100000;
+  if (hasCtxToken('64k')) return 64000;
+  if (hasCtxToken('32k')) return 32000;
+  if (hasCtxToken('16k')) return 16000;
+  if (hasCtxToken('8k')) return 8000;
+  if (hasCtxToken('4k')) return 4000;
 
   if (lowerModelId.includes('qwen')) {
     if (/\b(0\.5|1\.5|1|2|3|4|7|8)[-.]?b\b/.test(lowerModelId)) return 128000;
