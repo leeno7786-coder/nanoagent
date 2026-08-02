@@ -7,19 +7,22 @@ import type { AgentCore } from './agent.js';
 import type { Message } from './types.js';
 import { rnd, now } from './agent-utils.js';
 
-/** Build a short todo context string for the todo system message. */
+/**
+ * Build the todo context string for the todo system message.
+ * Only the CURRENT (next) todo is exposed — completing it clears it and
+ * reveals the next one, so the model always has a single clear focus.
+ */
 export function buildTodoContext(agent: AgentCore): string {
   const pending = agent.todos.filter((t) => !t.done);
-  const done = agent.todos.filter((t) => t.done);
-  if (pending.length === 0 && done.length === 0) {
+  if (pending.length === 0) {
     return 'Current todo list: (empty â€” no todos yet)';
   }
-  let text = 'Current todo list (use the id in manage_todos):\n';
-  for (const t of pending) {
-    text += `  - [ ] id=${t.id} | ${t.text}\n`;
-  }
-  for (const t of done) {
-    text += `  - [x] id=${t.id} | ${t.text}\n`;
+  const current = pending[0];
+  let text = `Current todo (1 of ${pending.length}): id=${current.id} | ${current.text}\n`;
+  if (pending.length > 1) {
+    text += `Complete it with manage_todos (action=complete, id=${current.id}) to reveal the next todo.`;
+  } else {
+    text += `Complete it with manage_todos (action=complete, id=${current.id}) when done.`;
   }
   return text.trim();
 }

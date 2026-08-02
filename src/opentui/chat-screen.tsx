@@ -565,12 +565,14 @@ function TodoSnapshot({
 }) {
   const doneCount = todos.filter((t) => t.done).length;
   const firstOpenId = todos.find((t) => !t.done)?.id;
+  const header =
+    doneCount > 0
+      ? `To-do Working on ${todos.length} to-dos · ${doneCount} done`
+      : `To-do Working on ${todos.length} to-dos`;
 
   return (
     <box flexDirection="column" marginY={1}>
-      <text fg={theme.toolFg}>
-        To-do Working on {todos.length} to-dos · {doneCount} done
-      </text>
+      <text fg={theme.toolFg}>{header}</text>
       {todos.map((t) => (
         <text
           key={t.id}

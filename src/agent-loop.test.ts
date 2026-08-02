@@ -228,12 +228,12 @@ describe('AgentCore run loop (behavioral)', () => {
     // Qwen Jinja: exactly one system message, and it must be first.
     expect(sysMsgs.length).toBe(1);
     expect(payload[0]?.role).toBe('system');
-    expect(sysMsgs[0]!.content).toContain('Current todo list');
+    expect(sysMsgs[0]!.content).toContain('Current todo (1 of 1)');
     expect(sysMsgs[0]!.content).toContain('write the tests');
     expect(sysMsgs[0]!.content).toContain('id=');
   });
 
-  it('merges system-base + system-todos into a single leading system message', async () => {
+  it('exposes only the current todo until the previous one is completed', async () => {
     const agent = newAgent();
     await agent.init();
     agent.addTodo('fix jinja');
@@ -248,7 +248,9 @@ describe('AgentCore run loop (behavioral)', () => {
     // No system role after the first message
     expect(payload.slice(1).every((m) => m.role !== 'system')).toBe(true);
     expect(payload[0]!.content).toContain('fix jinja');
-    expect(payload[0]!.content).toContain('keep going');
+    expect(payload[0]!.content).toContain('1 of 2');
+    // The queued todo is NOT revealed until the current one is completed.
+    expect(payload[0]!.content).not.toContain('keep going');
   });
 
   it('drops a completely empty streamed response from history', async () => {

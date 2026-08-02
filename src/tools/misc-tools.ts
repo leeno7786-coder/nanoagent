@@ -3,7 +3,8 @@ import type { Tool } from './shared.js';
 // Todo Management
 export const manageTodosTool: Tool = {
   name: 'manage_todos',
-  description: 'Track subtasks with a todo list',
+  description:
+    'Track subtasks with a todo list. "complete" marks a todo finished AND removes it from the list — call it when a todo is actually done.',
   parameters: {
     type: 'object',
     properties: {
@@ -24,6 +25,14 @@ export const manageTodosTool: Tool = {
         createdAt: Date.now(),
       });
     if (args.action === 'list') return JSON.stringify({ ok: true, action: args.action, todos: [] });
+    if (args.action === 'complete')
+      return JSON.stringify({
+        ok: true,
+        action: args.action,
+        text: args.text,
+        id: args.id,
+        removed: true,
+      });
     return JSON.stringify({ ok: true, action: args.action, text: args.text, id: args.id });
   },
 };

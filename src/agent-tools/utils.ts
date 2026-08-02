@@ -40,7 +40,7 @@ export function handleSpecialToolResults(
   agent: AgentCore,
   toolName: string,
   output: string,
-  _toolCallId: string
+  toolCallId: string
 ): void {
   if (toolName === 'change_workspace') {
     try {
@@ -87,11 +87,15 @@ export function handleSpecialToolResults(
           syncTodoMessage(agent);
           agent.onUpdate?.();
         } else if (result.action === 'complete') {
-          const target = agent.todos.find((t) => t.id === result.id);
-          if (target && !target.done) {
-            // Set done directly — 'complete' must never re-open an already-done
-            // todo (agent.toggleTodo would flip it back to pending).
-            target.done = true;
+          const target =
+            agent.todos.find((t) => t.id === result.id) ||
+            (typeof result.text === 'string' && result.text.trim()
+              ? agent.todos.find((t) => t.text.toLowerCase() === String(result.text).toLowerCase())
+              : undefined);
+          if (target) {
+            // Completing a todo clears it from the list so finished items
+            // don't accumulate. Never re-opens an already-done todo.
+            agent.todos = agent.todos.filter((t) => t.id !== target.id);
             syncTodoMessage(agent);
             agent.onUpdate?.();
           }
@@ -101,6 +105,19 @@ export function handleSpecialToolResults(
             agent.removeTodo(result.id);
           }
         } else if (result.action === 'list') {
+          // The standalone tool can't see agent state — rewrite the tool
+          // message with the real list so the model can query its plan.
+          const pending = agent.todos.filter((t) => !t.done);
+          const listMsg = agent.messages.find(
+            (m) => m.role === 'tool' && m.toolCallId === toolCallId
+          );
+          if (listMsg && typeof listMsg.content === 'string') {
+            listMsg.content = JSON.stringify({
+              ok: true,
+              action: 'list',
+              todos: pending.map((t) => ({ id: t.id, text: t.text, done: t.done })),
+            });
+          }
           agent.onUpdate?.();
         }
       }

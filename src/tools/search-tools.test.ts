@@ -63,6 +63,59 @@ describe('search tools ReDoS guard', () => {
     }
   });
 
+  it('grep_search accepts pattern as an alias for query', () => {
+    const ws = mkdtempSync(join(tmpdir(), 'grep-alias-'));
+    try {
+      writeFileSync(join(ws, 'a.txt'), 'hello world\n');
+      const out = JSON.parse(grepSearchTool.execute({ pattern: 'hello', path: 'a.txt' }, ws));
+      expect(out.ok).toBe(true);
+      expect(out.results.length).toBe(1);
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it('grep_search auto-treats pipe patterns as regex', () => {
+    const ws = mkdtempSync(join(tmpdir(), 'grep-auto-'));
+    try {
+      writeFileSync(join(ws, 'a.txt'), 'addTodo\nremoveTodo\nother\n');
+      const out = JSON.parse(
+        grepSearchTool.execute({ query: 'addTodo|removeTodo', path: 'a.txt' }, ws)
+      );
+      expect(out.ok).toBe(true);
+      expect(out.results.map((r: { text: string }) => r.text)).toEqual(['addTodo', 'removeTodo']);
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it('grep_search still does literal matching for dot patterns', () => {
+    const ws = mkdtempSync(join(tmpdir(), 'grep-literal-'));
+    try {
+      writeFileSync(join(ws, 'a.txt'), 'config.ts here\nconfigXts not\n');
+      const out = JSON.parse(grepSearchTool.execute({ query: 'config.ts', path: 'a.txt' }, ws));
+      expect(out.ok).toBe(true);
+      expect(out.results.map((r: { text: string }) => r.text)).toEqual(['config.ts here']);
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it('grep_search returns a clear error when query is missing', () => {
+    const ws = mkdtempSync(join(tmpdir(), 'grep-empty-'));
+    try {
+      writeFileSync(join(ws, 'a.txt'), 'hello\n');
+      const fileOut = JSON.parse(grepSearchTool.execute({ path: 'a.txt' }, ws));
+      expect(fileOut.ok).toBe(false);
+      expect(fileOut.error).toContain('required');
+      const dirOut = JSON.parse(grepSearchTool.execute({ path: '.' }, ws));
+      expect(dirOut.ok).toBe(false);
+      expect(dirOut.error).toContain('required');
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
   it('find_files and search_and_view refuse evil regexes', () => {
     const ws = mkdtempSync(join(tmpdir(), 'redos-'));
     try {

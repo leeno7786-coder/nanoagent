@@ -327,14 +327,35 @@ export const grepSearchTool: Tool = {
     type: 'object',
     properties: {
       query: { type: 'string', description: 'Text or regex pattern to search for' },
-      path: { type: 'string', description: 'Directory to search in (default: workspace root)' },
+      pattern: { type: 'string', description: 'Alias for query' },
+      path: {
+        type: 'string',
+        description: 'Directory or file to search in (default: workspace root)',
+      },
       file_glob: { type: 'string', description: "File pattern filter (e.g., '*.ts', 'src/**')" },
-      regex: { type: 'boolean', description: 'Treat query as regex (default: false)' },
+      regex: { type: 'boolean', description: 'Treat query as regex (default: auto-detect)' },
     },
     required: ['query'],
   },
   execute: (args, ws, cfg) => {
     try {
+      // Small models often name the search term `pattern` — accept it as an
+      // alias for `query`.
+      const q = String(args.query ?? args.pattern ?? '').trim();
+      if (!q) {
+        return JSON.stringify({
+          ok: false,
+          error: 'query (or pattern) is required for grep_search',
+        });
+      }
+      // Auto-treat strong regex metacharacters as regex so searches like
+      // "addTodo|removeTodo" work without the model remembering `regex: true`.
+      const AUTO_REGEX = /[()|[\]^$\\{}]/;
+      const isRegex = Boolean(args.regex) || AUTO_REGEX.test(q);
+      const built = isRegex ? buildModelRegex(q) : null;
+      if (built && 'error' in built) return JSON.stringify({ ok: false, error: built.error });
+      const re = built && 're' in built ? built.re : null;
+
       const root = safe(args.path || '.', ws, cfg);
       // If root is a file, search it directly instead of recursing into it
       let rootStat: ReturnType<typeof statSync>;
@@ -344,16 +365,8 @@ export const grepSearchTool: Tool = {
         return JSON.stringify({ ok: false, error: `Directory not found: ${rel(root, ws)}` });
       }
       if (rootStat.isFile()) {
-        const q = String(args.query || '');
-        if (!q) return JSON.stringify({ ok: false, error: 'query is required for grep_search' });
         if (isAccessBlocked(root, cfg)) {
           return JSON.stringify({ ok: false, error: 'Access denied (blocked path)' });
-        }
-        let re: RegExp | null = null;
-        if (args.regex) {
-          const built = buildModelRegex(q);
-          if ('error' in built) return JSON.stringify({ ok: false, error: built.error });
-          re = built.re;
         }
         const results: Array<{ path: string; line: number; text: string }> = [];
         let text = '';
@@ -377,13 +390,6 @@ export const grepSearchTool: Tool = {
           single_file: true,
           small_model_optimized: checkSmallModel(cfg),
         });
-      }
-      const q = String(args.query || '');
-      let re: RegExp | null = null;
-      if (args.regex) {
-        const built = buildModelRegex(q);
-        if ('error' in built) return JSON.stringify({ ok: false, error: built.error });
-        re = built.re;
       }
       const fileFilter = String(args.file_glob || '').toLowerCase();
       const isSmall = checkSmallModel(cfg);
