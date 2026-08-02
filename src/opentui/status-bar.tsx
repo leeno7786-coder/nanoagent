@@ -32,6 +32,13 @@ function fmt(n: number): string {
   return String(n);
 }
 
+/** Cursor-style token counter ("25.01k"). */
+function fmtPrecise(n: number): string {
+  if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(2) + 'k';
+  return String(n);
+}
+
 export function StatusBar({
   state,
   model,
@@ -62,12 +69,17 @@ export function StatusBar({
     ? workspace.split(/[/\\]/).filter(Boolean).pop() || workspace
     : '';
 
+  const elapsed = elapsedMs && elapsedMs > 0 ? `${(elapsedMs / 1000).toFixed(1)}s` : '';
+  const mcpIndicator = mcpToolCount > 0 ? ` · MCP:${mcpToolCount}` : '';
+  const spin = state !== 'idle' && state !== 'error' ? spinnerFrame(elapsedMs || 0) + ' ' : '';
+
   const lastTokens = lastUsage
     ? `${fmt(lastUsage.input_tokens)}↑${fmt(lastUsage.output_tokens)}↓`
     : '';
-  const totalTokens = totalUsage
-    ? `${fmt(totalUsage.input_tokens + totalUsage.output_tokens)} total`
-    : '';
+  const total = totalUsage ? totalUsage.input_tokens + totalUsage.output_tokens : 0;
+  const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
+  const totalTokens = totalUsage ? `${fmt(total)} total` : '';
+  const runningTokens = busy && total > 0 ? `${spin}Running ${fmtPrecise(total)} tokens` : '';
 
   const runtimeCfg = {
     model,
@@ -87,15 +99,12 @@ export function StatusBar({
       ctxIndicator = ` · ${Math.round(ctxLen / 1000)}k`;
     }
   }
-  const elapsed = elapsedMs && elapsedMs > 0 ? `${(elapsedMs / 1000).toFixed(1)}s` : '';
-  const mcpIndicator = mcpToolCount > 0 ? ` · MCP:${mcpToolCount}` : '';
-  const spin = state !== 'idle' && state !== 'error' ? spinnerFrame(elapsedMs || 0) + ' ' : '';
-
   return (
     <box flexDirection="column" height={2} flexShrink={0} backgroundColor={theme.bgPanel}>
       <box flexDirection="row" paddingX={1} height={1}>
         <text fg={theme.headerFg}>⚡ NanoAgent</text>
         {workspaceName && <text fg={theme.accent || theme.headerFg}> [{workspaceName}]</text>}
+        {runningTokens && <text fg={theme.statusTool}> {runningTokens}</text>}
         <box flexGrow={1} />
         <text fg={theme.mutedFg}>
           {displayModel}
@@ -103,11 +112,11 @@ export function StatusBar({
           {ctxIndicator}
         </text>
         {lastTokens && <text fg={theme.mutedFg}> · {lastTokens}</text>}
-        {totalTokens && <text fg={theme.mutedFg}> · {totalTokens}</text>}
+        {!busy && totalTokens && <text fg={theme.mutedFg}> · {totalTokens}</text>}
         {mcpIndicator && <text fg={theme.mutedFg}>{mcpIndicator}</text>}
         {elapsed && <text fg={theme.mutedFg}> · {elapsed}</text>}
         <text fg={s.color}>
-          {spin}
+          {busy ? '' : spin}
           {s.label}
           {toolLabel}
         </text>

@@ -842,6 +842,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               subAgents={subAgents}
               onSubmit={handleSubmit}
               selectedMessageIndex={selectedMessageIndex}
+              todos={todos}
             />
           </box>
         </box>

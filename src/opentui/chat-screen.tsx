@@ -39,6 +39,7 @@ interface ChatScreenProps {
   }>;
   onSubmit: (text: string) => void;
   selectedMessageIndex?: number | null;
+  todos?: Array<{ id: string; text: string; done: boolean }>;
 }
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -139,6 +140,45 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+/** Cursor-style token counter ("25.01k tokens"). */
+function formatTokensPrecise(n: number): string {
+  if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(2) + 'k';
+  return String(n);
+}
+
+/** Compact duration ("12s", "340ms"). */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function linePreview(
+  lines: string[],
+  maxLines: number,
+  fgColor: string,
+  theme: Theme,
+  prefix = ''
+) {
+  const visible = lines.slice(0, maxLines);
+  const hidden = lines.length - visible.length;
+  return [
+    ...visible.map((line, idx) => (
+      <text key={`l-${idx}`} fg={fgColor}>
+        {prefix}
+        {line.length > 140 ? line.slice(0, 139) + '…' : line || ' '}
+      </text>
+    )),
+    ...(hidden > 0
+      ? [
+          <text key="hidden" fg={theme.mutedFg}>
+            {prefix}… {hidden} line{hidden === 1 ? '' : 's'} hidden
+          </text>,
+        ]
+      : []),
+  ];
+}
+
 const PERM_CONFIG: Record<
   PermissionMode,
   { icon: string; label: string; getColor: (t: Theme) => string }
@@ -173,9 +213,11 @@ export function ChatScreen({
   elapsedMs,
   currentTool,
   lastUsage,
+  totalUsage,
   onSubmit,
   subAgents = [],
   selectedMessageIndex = null,
+  todos = [],
 }: ChatScreenProps) {
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef<ScrollBoxRenderable>(null);
@@ -343,11 +385,25 @@ export function ChatScreen({
             </ErrorBoundary>
           );
         })}
-        {showBusy && <text fg={theme.statusThinking}> {spinnerFrame(elapsedMs)} thinking</text>}
+        {showBusy && (
+          <text fg={theme.statusThinking}>
+            {' '}
+            {spinnerFrame(elapsedMs)}
+            {totalUsage.input_tokens + totalUsage.output_tokens > 0
+              ? ` Running ${formatTokensPrecise(totalUsage.input_tokens + totalUsage.output_tokens)} tokens`
+              : ' working…'}
+          </text>
+        )}
 
         <ErrorBoundary theme={theme}>
           <SubAgentPanel subAgents={subAgents} theme={theme} elapsedMs={elapsedMs} />
         </ErrorBoundary>
+
+        {busy && todos.length > 0 && (
+          <ErrorBoundary theme={theme}>
+            <TodoSnapshot todos={todos} theme={theme} />
+          </ErrorBoundary>
+        )}
       </scrollbox>
 
       <CommandDropdown
@@ -414,28 +470,80 @@ export function ChatScreen({
 }
 
 function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: Theme }) {
-  const headerColor = block.ok ? theme.toolFg : theme.errorFg;
-  const duration = block.durationMs != null ? ` · ${Math.round(block.durationMs)}ms` : '';
-  const agentLines = block.previewLines;
+  const color = block.ok ? theme.headerFg : theme.errorFg;
+  const dimColor = block.ok ? theme.mutedFg : theme.errorFg;
+  const duration = block.durationMs != null ? `  ${formatDuration(block.durationMs)}` : '';
+
+  if (block.kind === 'command') {
+    return (
+      <box flexDirection="column" marginY={0}>
+        <text fg={color}>
+          $ {block.target}
+          {duration}
+        </text>
+        {block.summary && block.summary !== '(no output)' && (
+          <text fg={dimColor}> ⎿ {block.summary}</text>
+        )}
+        {block.previewLines?.length
+          ? linePreview(block.previewLines, 6, theme.mutedFg, theme, '  ')
+          : null}
+      </box>
+    );
+  }
+
+  if (block.kind === 'edit') {
+    const diffLines = block.diff ? sanitizeForTui(block.diff).split('\n') : [];
+    const maxDiffLines = 26;
+    return (
+      <box flexDirection="column" marginY={0}>
+        <text fg={color}>
+          Edited {block.target}
+          {block.summary && block.summary !== 'ok' ? `  ${block.summary}` : ''}
+          {duration}
+        </text>
+        {diffLines.length > 0 ? (
+          <box flexDirection="column" marginLeft={2} marginTop={0}>
+            <diff diff={diffLines.slice(0, maxDiffLines).join('\n')} {...DIFF_PROPS} />
+            {diffLines.length > maxDiffLines && (
+              <text fg={theme.mutedFg}>… {diffLines.length - maxDiffLines} diff lines hidden</text>
+            )}
+          </box>
+        ) : block.previewLines?.length ? (
+          linePreview(block.previewLines, 6, theme.mutedFg, theme, '  ')
+        ) : null}
+      </box>
+    );
+  }
+
+  if (block.kind === 'read' || block.kind === 'search' || block.kind === 'list') {
+    return (
+      <box flexDirection="column" marginY={0}>
+        <text fg={color}>
+          {block.action} {block.target}
+          {block.summary && block.summary !== 'ok' ? ` · ${block.summary}` : ''}
+          {duration}
+        </text>
+        {block.previewLines?.length
+          ? linePreview(block.previewLines, 4, theme.mutedFg, theme, '  ')
+          : null}
+      </box>
+    );
+  }
 
   return (
     <box flexDirection="column" marginY={0}>
-      <text fg={headerColor}>
-        ● {block.action}({block.target}){duration}
+      <text fg={color}>
+        {block.action} {block.target}
+        {block.summary && block.summary !== 'ok' ? ` · ${block.summary}` : ''}
+        {duration}
       </text>
-      <text fg={theme.mutedFg}> ⎿ {block.summary}</text>
       {block.diff ? (
         <box flexDirection="column" marginLeft={2} marginTop={0}>
           <diff diff={block.diff} {...DIFF_PROPS} />
         </box>
+      ) : block.previewLines?.length ? (
+        linePreview(block.previewLines, 6, theme.mutedFg, theme, '  ')
       ) : null}
-      {!block.diff &&
-        agentLines?.map((line: string, i: number) => (
-          <text key={i} fg={theme.mutedFg}>
-            {'  '}
-            {line.length > 140 ? line.slice(0, 139) + '…' : line || ' '}
-          </text>
-        ))}
     </box>
   );
 }
@@ -443,6 +551,38 @@ function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: T
 const RUNNING = 'running';
 const DONE = 'done';
 const ERROR = 'error';
+
+/**
+ * Compact todo status panel shown in the live stream while the agent works
+ * (Cursor-style "To-do Working on N to-dos • M done").
+ */
+function TodoSnapshot({
+  todos,
+  theme,
+}: {
+  todos: Array<{ id: string; text: string; done: boolean }>;
+  theme: Theme;
+}) {
+  const doneCount = todos.filter((t) => t.done).length;
+  const firstOpenId = todos.find((t) => !t.done)?.id;
+
+  return (
+    <box flexDirection="column" marginY={1}>
+      <text fg={theme.toolFg}>
+        To-do Working on {todos.length} to-dos · {doneCount} done
+      </text>
+      {todos.map((t) => (
+        <text
+          key={t.id}
+          fg={t.done ? theme.successFg || theme.mutedFg : theme.mutedFg}
+          marginLeft={2}
+        >
+          {t.done ? '✔' : t.id === firstOpenId ? '◐' : '○'} {t.text}
+        </text>
+      ))}
+    </box>
+  );
+}
 
 /**
  * Live sub-agent stream, rendered inline in the chat flow.
@@ -628,13 +768,35 @@ const MessageItem = memo(
       <box flexDirection="column" marginY={1}>
         {(hasReasoning || isThinking) && (
           <box flexDirection="column" marginY={0} marginBottom={1}>
-            <text fg={theme.statusThinking}>
-              {isThinking ? `${spinnerFrame(Date.now())} Thinking…` : '🧠 Thought'}
-            </text>
-            {hasReasoning && (
-              <box flexDirection="column" marginLeft={2} marginTop={0}>
-                {renderLinesSafely(message.reasoningContent || '', 35, theme.mutedFg)}
-              </box>
+            {hasReasoning ? (
+              (() => {
+                const lines = sanitizeForTui(message.reasoningContent || '')
+                  .split('\n')
+                  .filter((l) => l.trim());
+                const max = 8;
+                const shown = lines.slice(0, max);
+                const hidden = lines.length - shown.length;
+                return (
+                  <box flexDirection="column">
+                    {shown.map((line, i) => (
+                      <text
+                        key={i}
+                        fg={i === 0 && isThinking ? theme.statusThinking : theme.mutedFg}
+                      >
+                        {i === 0 ? `${isThinking ? spinnerFrame(Date.now()) : '⠞'} ` : '  '}
+                        {line.length > 140 ? line.slice(0, 139) + '…' : line || ' '}
+                      </text>
+                    ))}
+                    {hidden > 0 && (
+                      <text fg={theme.mutedFg}>
+                        … {hidden} more line{hidden === 1 ? '' : 's'}
+                      </text>
+                    )}
+                  </box>
+                );
+              })()
+            ) : (
+              <text fg={theme.statusThinking}>{spinnerFrame(Date.now())} thinking…</text>
             )}
           </box>
         )}
@@ -692,7 +854,10 @@ const MessageItem = memo(
               <box flexDirection="column">
                 <text fg={theme.statusTool}>
                   {'  '}
-                  {spinnerFrame(Date.now())} {pending.action}({pending.target})…
+                  {spinnerFrame(Date.now())}{' '}
+                  {pending.kind === 'command'
+                    ? `$ ${pending.target}…`
+                    : `${pending.action} ${pending.target}…`}
                 </text>
               </box>
             );

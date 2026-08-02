@@ -7,7 +7,11 @@ export interface ToolDisplayBlock {
   summary: string;
   diff?: string;
   previewLines?: string[];
+  /** Total output lines (preview is truncated when this exceeds previewLines.length). */
+  outputLineCount?: number;
   durationMs?: number;
+  /** Journal style used to render the entry (commands get `$` blocks, edits get deltas). */
+  kind?: 'command' | 'edit' | 'read' | 'search' | 'list' | 'generic';
 }
 
 function parseJSON(value: string): Record<string, unknown> | undefined {
@@ -101,14 +105,17 @@ function firstOutputLine(data: Record<string, unknown>): string {
   return line.length > 140 ? line.slice(0, 139) + '…' : line;
 }
 
-function previewLinesFromOutput(data: Record<string, unknown>, limit = 8): string[] | undefined {
+function previewLinesFromOutput(
+  data: Record<string, unknown>,
+  limit = 8
+): { lines: string[]; total: number } | undefined {
   const stdout = typeof data?.stdout === 'string' ? data.stdout : '';
   const stderr = typeof data?.stderr === 'string' ? data.stderr : '';
   const text = [stdout, stderr].filter(Boolean).join('\n').trim();
   if (!text) return undefined;
   const lines = text.split('\n').filter((l: string) => l.trim());
   if (lines.length <= 1) return undefined;
-  return lines.slice(0, limit);
+  return { lines: lines.slice(0, limit), total: lines.length };
 }
 
 function formatLineChangeSummary(added: number, removed: number): string {
@@ -169,6 +176,30 @@ export function buildSummary(
 }
 
 /** Strip ANSI escapes/control chars from every text field (tool output can contain them). */
+function journalKind(
+  toolName: string,
+  args: Record<string, unknown>,
+  result?: Record<string, unknown>
+): ToolDisplayBlock['kind'] {
+  if (toolName === 'execute_command' || toolName === 'run_command') return 'command';
+  if (toolName === 'write_file' || toolName === 'edit_file' || toolName === 'edit_file_lines') {
+    if (
+      toolName === 'write_file' &&
+      ((result?.added as number) ?? 0) === 0 &&
+      ((result?.removed as number) ?? 0) === 0 &&
+      !args?.path
+    ) {
+      return 'generic';
+    }
+    return 'edit';
+  }
+  if (toolName === 'read_file' || toolName === 'batch_read_files') return 'read';
+  if (toolName === 'grep_search' || toolName === 'search_files' || toolName === 'search_and_view')
+    return 'search';
+  if (toolName === 'list_dir' || toolName === 'map_project_tree') return 'list';
+  return 'generic';
+}
+
 function sanitizeBlock(block: ToolDisplayBlock): ToolDisplayBlock {
   return {
     ...block,
@@ -230,6 +261,7 @@ export function buildToolDisplayBlock(
     ok,
     summary: buildSummary(toolName, args, result ?? ({} as Record<string, unknown>), ok),
     durationMs,
+    kind: journalKind(toolName, args, result),
   };
 
   if (typeof result?.diff === 'string' && result.diff.trim()) {
@@ -246,7 +278,11 @@ export function buildToolDisplayBlock(
   }
 
   if (!block.diff) {
-    block.previewLines = previewLinesFromOutput(result ?? ({} as Record<string, unknown>));
+    const preview = previewLinesFromOutput(result ?? ({} as Record<string, unknown>));
+    if (preview) {
+      block.previewLines = preview.lines;
+      block.outputLineCount = preview.total;
+    }
   }
 
   return sanitizeBlock(block);
