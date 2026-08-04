@@ -105,8 +105,11 @@ export function SkillsOverlay({
     setSkillConfig(filteredConfig);
   }, []);
 
-  // Use passed skills or load fresh skills (refresh on each render to catch changes)
-  const skills = propSkills || useMemo(() => loadSkills(), []);
+  // Use passed skills or load fresh skills. The hook must be unconditional —
+  // `propSkills || useMemo(...)` violates the rules of hooks and crashes if
+  // propSkills ever flips between defined/undefined.
+  const loadedSkills = useMemo(() => loadSkills(), []);
+  const skills = propSkills ?? loadedSkills;
   const skillCommands = useMemo(() => getSkillCommands(skills), [skills]);
 
   const items: ItemType[] = useMemo(() => {
@@ -378,7 +381,9 @@ export function SkillsOverlay({
       if (item.type === 'skill' && item.skill && mode === 'list') {
         setSelectedSkill(item.skill);
         setMode('detail');
-        setSelected(7); // Navigate to first action item (Activate Skill)
+        // Detail items: 0 header, 1 desc, 2 source, 3 version, 4 author,
+        // 5 state, 6 tools, 7 triggers, 8 divider, 9 = first action (Activate).
+        setSelected(9); // Navigate to first action item (Activate Skill)
       } else if (item.type === 'action') {
         switch (item.action) {
           case 'activate':

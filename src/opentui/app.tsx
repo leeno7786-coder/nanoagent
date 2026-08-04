@@ -30,6 +30,29 @@ import { getProviderBaseURL } from '../providers.js';
 import { handleSlashCommand, checkAndAutoCompact } from './slash-commands.js';
 import { useAppStore } from './app-store.js';
 
+/**
+ * Messages the user can select/copy — MUST mirror ChatScreen's
+ * filteredMessages exactly (excludes system, tool, and empty assistant
+ * messages; keeps the in-flight tail while busy), or selection indexes point
+ * at the wrong message.
+ */
+function selectableMessages(agent: AgentCore) {
+  return agent.messages.filter((msg, idx) => {
+    if (msg.role === 'system' || msg.role === 'tool') return false;
+    const isLast = idx === agent.messages.length - 1;
+    if (isLast && agent.state !== 'idle') return true;
+    if (
+      msg.role === 'assistant' &&
+      !msg.toolCalls?.length &&
+      !msg.reasoningContent &&
+      msg.content.trim() === ''
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
 export function App({ renderer }: { renderer: CliRenderer }) {
   const store = useAppStore;
   const overlay = useAppStore((s) => s.overlay);
@@ -191,8 +214,12 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
   useEffect(() => {
     compactTimerRef.current = setInterval(() => {
-      if (agentRef.current) {
-        checkAndAutoCompact(agentRef.current, (msgs) => store.getState().setMessages(msgs));
+      const agent = agentRef.current;
+      // Never compact mid-run: the streaming assistant message lives only in
+      // agent.messages until the turn ends, and compaction rebuilds
+      // agent.messages from the context manager — deleting the in-flight reply.
+      if (agent && agent.state !== 'thinking' && agent.state !== 'executing_tool') {
+        checkAndAutoCompact(agent, (msgs) => store.getState().setMessages(msgs));
       }
     }, 10000);
     return () => {
@@ -394,9 +421,32 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       const ready = state === 'idle' || state === 'error' || state === 'waiting_for_user';
       if (!isSlash && !ready) return;
 
-      resolvePendingPermission('deny');
-      abortControllerRef.current?.abort();
-      abortControllerRef.current = new AbortController();
+      // Only interrupt the agent when the command actually needs to: resolve a
+      // pending permission prompt, or abort a busy run when the command will
+      // start a NEW run (/auto, /skill…). UI-only commands (/help, /theme,
+      // /sessions, …) must not silently cancel an in-flight run.
+      const busy = state === 'thinking' || state === 'executing_tool';
+      let startsRun = !isSlash;
+      if (isSlash) {
+        const cmd = text.trim().slice(1).split(/\s+/)[0];
+        const st0 = store.getState();
+        startsRun =
+          cmd === 'auto' ||
+          cmd === 'skill' ||
+          cmd === 'skill-load' ||
+          cmd.startsWith('skill:') ||
+          st0.skills.has(cmd) ||
+          st0.skillCommands.some((c) => c.skillName === cmd || c.name === cmd);
+      }
+      if (state === 'waiting_for_user' || (startsRun && busy)) {
+        resolvePendingPermission('deny');
+      }
+      if (startsRun && busy) {
+        abortControllerRef.current?.abort();
+      }
+      if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
+        abortControllerRef.current = new AbortController();
+      }
       const signal = abortControllerRef.current.signal;
 
       try {
@@ -624,7 +674,12 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     } else if (keyEvent.name === 'f2' || keyEvent.name === 'F2') {
       const agent = agentRef.current;
       if (agent) {
+        // Mirror /clear: the context manager holds its own copy of history —
+        // without clearing it, the next compaction resurrects the old messages.
         agent.messages = agent.messages.filter((m) => m.role === 'system');
+        agent.contextManager.clear();
+        const baseMsg = agent.messages.find((m) => m.id === 'system-base');
+        if (baseMsg) agent.contextManager.setMessages([baseMsg]);
         agent.todos = [];
         st.setMessages([...agent.messages]);
         st.setTodos([]);
@@ -667,10 +722,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       if (keyEvent.name === 'Up' || keyEvent.name === 'ArrowUp') {
         const agent = agentRef.current;
         if (agent && agent.messages.length > 0) {
-          const nonSystem = agent.messages.filter((m) => m.role !== 'system');
+          const visible = selectableMessages(agent);
           st.setSelectedMessageIndex((prev) => {
-            const current = prev !== null ? prev : nonSystem.length - 1;
-            return Math.min(current + 1, nonSystem.length - 1);
+            const current = prev !== null ? prev : visible.length - 1;
+            return Math.min(current + 1, visible.length - 1);
           });
           keyEvent.preventDefault?.();
           keyEvent.stopPropagation?.();
@@ -688,19 +743,19 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       } else if (keyEvent.name === 'c' || keyEvent.name === 'C') {
         const agent = agentRef.current;
         if (agent && st.selectedMessageIndex !== null) {
-          const nonSystem = agent.messages.filter((m) => m.role !== 'system');
-          const selectedMessage = nonSystem[st.selectedMessageIndex];
+          const visible = selectableMessages(agent);
+          const selectedMessage = visible[st.selectedMessageIndex];
           if (selectedMessage) {
             const success = copyToClipboard(selectedMessage.content);
-            if (!success) {
-              agent.messages.push({
-                id: Math.random().toString(36).slice(2, 10),
-                role: 'system',
-                content: `Copied message ${selectedMessage.id.slice(0, 8)} to clipboard.`,
-                timestamp: Date.now(),
-              });
-              st.setMessages([...agent.messages]);
-            }
+            agent.messages.push({
+              id: Math.random().toString(36).slice(2, 10),
+              role: 'system',
+              content: success
+                ? `Copied message ${selectedMessage.id.slice(0, 8)} to clipboard.`
+                : 'Copy to clipboard failed (clipboard unavailable).',
+              timestamp: Date.now(),
+            });
+            st.setMessages([...agent.messages]);
             st.setSelectedMessageIndex(null);
           }
           keyEvent.preventDefault?.();

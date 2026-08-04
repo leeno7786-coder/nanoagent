@@ -42,6 +42,19 @@ describe('parseParamBillionsFromModelId', () => {
     expect(parseParamBillionsFromModelId('org/model-7b')).toBe(7);
     expect(parseParamBillionsFromModelId('model-1.5b')).toBe(1.5);
   });
+
+  it('parses sizes outside a hardcoded list (24b/34b/1.7b)', () => {
+    // Regression: '24b'/'34b' fell through to includes('4b') and misclassified
+    // as 4B; '1.7b' misparsed as 7 via the '7' alternative.
+    expect(parseParamBillionsFromModelId('mistral-small-24b')).toBe(24);
+    expect(parseParamBillionsFromModelId('yi-34b-chat')).toBe(34);
+    expect(parseParamBillionsFromModelId('qwen3-1.7b')).toBe(1.7);
+  });
+
+  it('does not mistake MoE architecture tags for param sizes', () => {
+    // 'a3b' is an active-params arch tag, not a 3B model id size token.
+    expect(parseParamBillionsFromModelId('qwen3-next-80b-a3b-instruct')).toBe(80);
+  });
 });
 
 describe('isSmallModelFromConfig', () => {

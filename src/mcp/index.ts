@@ -10,7 +10,7 @@ import type {
 } from '../types.js';
 import type { Tool } from '../tools/index.js';
 import { createSecurityManager } from '../security/index.js';
-import { readFileSync } from 'fs';
+import { readFileSync, realpathSync } from 'fs';
 import { resolve, normalize } from 'path';
 
 /**
@@ -27,20 +27,24 @@ function interpolateEnv(value: string, workspace?: string): string {
       if (!workspace) return '';
       try {
         const resolved = resolve(workspace, normalize(filePath));
-        const normResolved = resolved.replace(/\\/g, '/');
-        const normWorkspace = workspace.replace(/\\/g, '/');
-        if (!normResolved.startsWith(normWorkspace + '/') && normResolved !== normWorkspace) {
+        // Resolve symlinks before the boundary check — a workspace symlink
+        // pointing at ~/.ssh/id_rsa must not pass as an in-workspace path.
+        const real = realpathSync(resolved);
+        const normReal = real.replace(/\\/g, '/');
+        const normWorkspace = realpathSync(workspace).replace(/\\/g, '/');
+        if (!normReal.startsWith(normWorkspace + '/') && normReal !== normWorkspace) {
           return '';
         }
         // Refuse to interpolate blocked files (workspace .env, private keys,
         // etc.) into MCP server env/headers — that would exfiltrate secrets.
-        const access = createSecurityManager({}, workspace).validateFileAccess(resolved, 'read');
+        // Validate the REAL path so symlink targets hit the blocked patterns.
+        const access = createSecurityManager({}, workspace).validateFileAccess(real, 'read');
         if (!access.ok) {
           throw new Error(
             `MCP config {file:${filePath}} refused: ${access.error ?? 'blocked path'}`
           );
         }
-        return readFileSync(resolved, 'utf-8').trim();
+        return readFileSync(real, 'utf-8').trim();
       } catch (e: unknown) {
         if (e instanceof Error && e.message.startsWith('MCP config {file:')) throw e;
         return '';

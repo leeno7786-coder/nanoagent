@@ -3,7 +3,7 @@ import type { SubAgentEndpoint } from '../../types.js';
 /**
  * Concurrency cap for parallel sub-agent dispatch.
  */
-export const MAX_CONCURRENT_SUBAGENTS = 3;
+export const MAX_CONCURRENT_SUBAGENTS = 4;
 
 /**
  * Endpoint allocator for parallel dispatch.
@@ -35,6 +35,10 @@ export class SubAgentScheduler {
           () => {
             if (waiter.fired) return;
             waiter.fired = true;
+            // Remove ourselves from the queue — release() skips fired waiters,
+            // so without this they pile up until some future release purges them.
+            const idx = this.queue.indexOf(waiter);
+            if (idx >= 0) this.queue.splice(idx, 1);
             res();
           },
           Math.min(1000, timeoutMs - elapsed)

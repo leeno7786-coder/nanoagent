@@ -164,8 +164,10 @@ describe('subagents.ts - Sub-agent Management', () => {
       expect(MAX_CONCURRENT_SUBAGENTS).toBeLessThanOrEqual(10);
     });
 
-    it('should match agent.ts default', () => {
-      expect(MAX_CONCURRENT_SUBAGENTS).toBe(3);
+    it('should match the AgentCore maxBackgroundSubAgents default', () => {
+      // AGENTS.md documents the concurrency cap as 4; keep the constant in
+      // sync with core.ts (maxBackgroundSubAgents default) and the prompt.
+      expect(MAX_CONCURRENT_SUBAGENTS).toBe(4);
     });
   });
 

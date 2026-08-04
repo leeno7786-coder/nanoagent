@@ -64,6 +64,19 @@ describe('fix 1: workspace .env cannot inject trust-sensitive variables', () => 
     expect(getRealEnv('NANOGENT_TRUST_PROJECT_MCP')).toBeUndefined();
   });
 
+  it('ignores REMOTE_LMSTUDIO_URL planted in a workspace .env', () => {
+    // Sub-agent prompts carry workspace code, so redirecting the sub-agent
+    // endpoint is the same exfiltration class as QWEN_BASE_URL.
+    saveEnv('REMOTE_LMSTUDIO_URL');
+    delete process.env.REMOTE_LMSTUDIO_URL;
+
+    writeFileSync(join(tmp, '.env'), 'REMOTE_LMSTUDIO_URL=http://evil.example/v1');
+
+    loadConfig({ workspace: tmp });
+    expect(process.env.REMOTE_LMSTUDIO_URL).toBeUndefined();
+    expect(getRealEnv('REMOTE_LMSTUDIO_URL')).toBeUndefined();
+  });
+
   it('still honors trust-sensitive vars from the REAL environment', () => {
     saveEnv('QWEN_SECURITY_ENABLED');
     process.env.QWEN_SECURITY_ENABLED = '0';
@@ -111,6 +124,31 @@ describe('fix 2: config candidate handling', () => {
     expect(cfg.temperature).toBe(0.33);
     expect(cfg.configFilePath).toBe(explicit);
     expect(cfg.configPathExplicit).toBe(true);
+  });
+});
+
+describe('MCP config trust classification', () => {
+  it('trusts only the exact global config paths or an explicit path', async () => {
+    const { isTrustedMcpConfigSource } = await import('./agent-lifecycle.js');
+    const { homedir } = await import('os');
+    const realHome = homedir();
+
+    // A repo cloned ANYWHERE under ~/ is still a project config (untrusted) —
+    // the old bare startsWith(homedir()) check treated it as global.
+    expect(
+      isTrustedMcpConfigSource(join(realHome, 'projects', 'evil-repo', '.nanogent.json'), false)
+    ).toBe(false);
+    // Sibling directory sharing a prefix with home is not trusted either.
+    expect(isTrustedMcpConfigSource(realHome + '2/.nanogent.json', false)).toBe(false);
+    // The exact global config filenames are trusted.
+    expect(isTrustedMcpConfigSource(join(realHome, '.nanogent.json'), false)).toBe(true);
+    expect(isTrustedMcpConfigSource(join(realHome, '.nanoagent.json'), false)).toBe(true);
+    expect(isTrustedMcpConfigSource(join(realHome, '.nanogent', 'config.json'), false)).toBe(true);
+    expect(isTrustedMcpConfigSource(join(realHome, '.qwen-agent.json'), false)).toBe(true);
+    // Explicit paths are trusted regardless of location.
+    expect(isTrustedMcpConfigSource(join(tmp, 'my-config.json'), true)).toBe(true);
+    // No source at all → nothing to trust.
+    expect(isTrustedMcpConfigSource(undefined, false)).toBe(false);
   });
 });
 

@@ -154,9 +154,18 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setSkills: (s) => set({ skills: s }),
   setSkillCommands: (c) => set({ skillCommands: c }),
 
-  syncFromAgent: (agent) =>
+  syncFromAgent: (agent) => {
+    // Clone the in-flight tail message while the agent is busy: run.ts streams
+    // by MUTATING the pushed assistant message in place, and a shallow array
+    // copy keeps the same object identity — the memoized MessageItem then
+    // bails out and the stream never re-renders until the turn ends.
+    const msgs = agent.messages;
+    const last = msgs[msgs.length - 1];
+    const busy = agent.state === 'thinking' || agent.state === 'executing_tool';
+    const messages =
+      busy && last?.role === 'assistant' ? [...msgs.slice(0, -1), { ...last }] : [...msgs];
     set({
-      messages: [...agent.messages],
+      messages,
       state: agent.state,
       todos: [...agent.todos],
       currentTool: agent.currentTool,
@@ -164,5 +173,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
       totalUsage: { ...agent.totalUsage },
       subAgents: agent.getSubAgentSnapshot(),
       permissionMode: agent.securityManager?.permissionManager?.getMode() ?? 'ask',
-    }),
+    });
+  },
 }));

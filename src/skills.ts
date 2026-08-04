@@ -516,7 +516,9 @@ export function deleteSkill(name: string): boolean {
     if (skill.sourcePath) {
       try {
         const normSrc = skill.sourcePath.replace(/\\/g, '/');
-        const normDir = dir.replace(/\\/g, '/');
+        // Trailing separator: a bare prefix match would also match sibling
+        // directories like 'skills-evil/' when dir is '.../skills'.
+        const normDir = dir.replace(/\\/g, '/').replace(/\/?$/, '/');
         if (!normSrc.startsWith(normDir)) continue;
         rmSync(skill.sourcePath, { force: true });
         invalidateSkillsCache();

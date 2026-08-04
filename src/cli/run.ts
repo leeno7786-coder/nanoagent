@@ -112,12 +112,14 @@ export async function cmdRun(argv: string[]): Promise<number> {
 
   const toolCalls: RunResult['tool_calls'] = [];
 
-  if (values.verbose) {
-    agent.onToolResult = (r) => {
-      toolCalls.push({ name: r.name, duration_ms: Math.round(r.duration) });
+  // Always collect tool_calls for the JSON result; only the stderr trace is
+  // verbose-gated (otherwise --json consumers always saw an empty list).
+  agent.onToolResult = (r) => {
+    toolCalls.push({ name: r.name, duration_ms: Math.round(r.duration) });
+    if (values.verbose) {
       console.error(`[tool] ${r.name} (${Math.round(r.duration)}ms)`);
-    };
-  }
+    }
+  };
 
   await agent.init();
   try {

@@ -64,11 +64,10 @@ export function getApiKey(envVarName: string): string | undefined {
   if (process.env[envVarName]) {
     return process.env[envVarName];
   }
-  const candidates = [
-    join(process.cwd(), '.env'),
-    join(homedir(), '.qwen-agent-tui', '.env'),
-    join(homedir(), '.env'),
-  ];
+  // Trust model: API keys are only honored from the real process environment
+  // (checked above) or trusted home-dir .env files. The workspace .env is
+  // UNTRUSTED (any cloned repo can plant one) and must never supply keys.
+  const candidates = [join(homedir(), '.qwen-agent-tui', '.env'), join(homedir(), '.env')];
   for (const envPath of candidates) {
     if (existsSync(envPath)) {
       try {

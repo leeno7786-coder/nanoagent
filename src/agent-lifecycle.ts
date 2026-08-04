@@ -19,6 +19,36 @@ import type { AgentCore } from './agent.js';
 import { now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
 import { logError, logWarn } from './log.js';
+import { homedir } from 'os';
+
+/** Normalize a path for comparison (forward slashes, lowercase on Windows). */
+function normPath(s: string): string {
+  const fwd = s.replace(/\\/g, '/');
+  return process.platform === 'win32' ? fwd.toLowerCase() : fwd;
+}
+
+/**
+ * Trust classification for MCP auto-connect. Trusted = an explicitly-passed
+ * config path, or one of the exact global config filenames in the home
+ * directory (mirrors the home candidates in config/load.ts). A bare home-dir
+ * prefix match would treat any repo cloned under ~/ as trusted — defeating
+ * the guard, since projects usually live inside the home directory.
+ */
+export function isTrustedMcpConfigSource(
+  source: string | undefined,
+  explicitPath: boolean
+): boolean {
+  if (!source) return false;
+  if (explicitPath) return true;
+  const home = normPath(homedir());
+  const globalConfigs = [
+    `${home}/.nanoagent.json`,
+    `${home}/.nanogent.json`,
+    `${home}/.nanogent/config.json`,
+    `${home}/.qwen-agent.json`,
+  ];
+  return globalConfigs.includes(normPath(source));
+}
 
 /**
  * Reconfigure the agent (refreshes LM Studio model metadata when model/URL changes).
@@ -151,18 +181,12 @@ export async function initAgent(agent: AgentCore) {
   // Trusted sources: global (home-dir) configs, an explicit config path, or
   // NANOGENT_TRUST_PROJECT_MCP=1.
   if (agent.cfg.mcp && Object.keys(agent.cfg.mcp).length > 0) {
-    const { homedir } = await import('os');
     const source = agent.cfg.configFilePath;
     // An explicitly-passed config path is trusted regardless of location
     // (documented trust model: explicit path = trusted).
     const explicitPath = !!(agent.cfg as Config & { configPathExplicit?: boolean })
       .configPathExplicit;
-    // Home-dir comparison must be case-insensitive on Windows.
-    const norm = (s: string) => {
-      const fwd = s.replace(/\\/g, '/');
-      return process.platform === 'win32' ? fwd.toLowerCase() : fwd;
-    };
-    const isProjectConfig = !!source && !explicitPath && !norm(source).startsWith(norm(homedir()));
+    const isProjectConfig = !!source && !isTrustedMcpConfigSource(source, explicitPath);
     // Read the trust override from the REAL (pre-.env) environment — a
     // workspace .env must not be able to grant itself MCP trust.
     const trustOverride = getRealEnv('NANOGENT_TRUST_PROJECT_MCP') === '1';
@@ -279,7 +303,9 @@ export async function shutdownAgent(agent: AgentCore): Promise<void> {
     autoSaveSession(agent.messages, agent.todos, ws);
   }
   try {
-    agent.mcpManager?.disconnectAll();
+    // Await so spawned stdio MCP servers are actually killed before the
+    // caller's process.exit() — otherwise they are orphaned on quit.
+    await agent.mcpManager?.disconnectAll();
   } catch (err) {
     logWarn('MCP disconnect error during shutdown:', err);
   }

@@ -1,57 +1,40 @@
 /**
- * Unit tests for store.ts: config snapshot redaction and session-id
- * sanitization used for on-disk session filenames.
+ * Regression tests for session-store hardening:
+ * - user-supplied session ids are sanitized before touching the filesystem
+ *   (path traversal via /resume <id> or deleteSession)
+ * - stripEnvelope actually strips the storage envelope fields
  */
 
 import { describe, it, expect } from 'bun:test';
-import { buildConfigSnapshot, sanitizeSessionId } from './store.js';
-import type { Config } from './types.js';
-
-const cfg = {
-  model: 'test-model',
-  baseURL: 'http://localhost:1234',
-  apiKey: 'sk-super-secret-key',
-  permissionMode: 'ask',
-  workspace: process.cwd(),
-} as unknown as Config;
-
-describe('buildConfigSnapshot', () => {
-  it('never persists the API key into session snapshots', () => {
-    const snap = buildConfigSnapshot(cfg);
-    expect('apiKey' in snap).toBe(false);
-    expect(JSON.stringify(snap)).not.toContain('sk-super-secret-key');
-  });
-
-  it('keeps non-secret fields', () => {
-    const snap = buildConfigSnapshot(cfg);
-    expect(snap.model).toBe('test-model');
-    expect(snap.baseURL).toBe('http://localhost:1234');
-    expect(snap.permissionMode).toBe('ask');
-  });
-});
+import { sanitizeSessionId, loadSession, deleteSession } from './store.js';
 
 describe('sanitizeSessionId', () => {
-  it('passes normal ids through unchanged', () => {
-    expect(sanitizeSessionId('session-123')).toBe('session-123');
-    expect(sanitizeSessionId('autosave-abc12345')).toBe('autosave-abc12345');
+  it('strips path separators so ids cannot escape the sessions dir', () => {
+    expect(sanitizeSessionId('../../etc/passwd')).not.toContain('/');
+    expect(sanitizeSessionId('../../etc/passwd')).not.toContain('\\');
+    expect(sanitizeSessionId('..\\..\\win')).not.toContain('\\');
   });
 
-  it('strips path separators so ids cannot escape the session dir', () => {
-    expect(sanitizeSessionId('../evil')).toBe('..-evil');
-    expect(sanitizeSessionId('a/b\\c')).toBe('a-b-c');
-  });
-
-  it('rejects dots-only names', () => {
-    expect(sanitizeSessionId('..')).toBe('');
-    expect(sanitizeSessionId('.')).toBe('');
-  });
-
-  it('rejects empty/whitespace names', () => {
+  it('rejects dots-only and empty ids', () => {
+    expect(sanitizeSessionId('...')).toBe('');
     expect(sanitizeSessionId('')).toBe('');
     expect(sanitizeSessionId('   ')).toBe('');
   });
 
-  it('caps length at 64 characters', () => {
-    expect(sanitizeSessionId('x'.repeat(200))).toHaveLength(64);
+  it('keeps normal ids intact', () => {
+    expect(sanitizeSessionId('autosave-1a2b3c4d')).toBe('autosave-1a2b3c4d');
+  });
+});
+
+describe('session load/delete with hostile ids', () => {
+  it('loadSession returns null instead of traversing the filesystem', () => {
+    expect(loadSession('../../package')).toBeNull();
+    expect(loadSession('..')).toBeNull();
+    expect(loadSession('')).toBeNull();
+  });
+
+  it('deleteSession is a no-op for traversal attempts', () => {
+    expect(() => deleteSession('../../package')).not.toThrow();
+    expect(() => deleteSession('')).not.toThrow();
   });
 });

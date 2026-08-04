@@ -417,13 +417,17 @@ export function ChatScreen({
         )}
         onPick={useCallback(
           (cmd: string) => {
+            // Tab-picks arrive with a trailing space ('/cd ') — normalize or
+            // the ARG_BEARING lookup misses and the command EXECUTES instead
+            // of landing in the input for an argument.
+            const name = cmd.trim();
             const trimmed = inputValue.trim();
-            if (trimmed === cmd || trimmed.startsWith(cmd + ' ')) {
+            if (trimmed === name || trimmed.startsWith(name + ' ')) {
               handleSubmitLocal(trimmed);
-            } else if (ARG_BEARING.has(cmd)) {
-              setInputValue(cmd + ' ');
+            } else if (ARG_BEARING.has(name)) {
+              setInputValue(name + ' ');
             } else {
-              handleSubmitLocal(cmd);
+              handleSubmitLocal(name);
             }
           },
           [inputValue, handleSubmitLocal]
@@ -732,9 +736,9 @@ type MessageItemProps = {
 
 /**
  * Memoized so that per-token streaming updates only re-render the message
- * that actually changed (app.tsx clones the streaming message to give it a
- * new identity). Tool-result bindings are compared per call id so the
- * rebuilt Maps don't defeat the memo.
+ * that actually changed (app-store's syncFromAgent clones the in-flight
+ * streaming message to give it a new identity). Tool-result bindings are
+ * compared per call id so the rebuilt Maps don't defeat the memo.
  */
 const MessageItem = memo(
   function MessageItem({

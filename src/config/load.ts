@@ -19,6 +19,9 @@ const TRUST_SENSITIVE_ENV_VARS = new Set([
   'NANOGENT_TRUST_PROJECT_MCP',
   'QWEN_BASE_URL',
   'OPENAI_BASE_URL',
+  // Sub-agent endpoint: prompts carry workspace code, so redirecting it is
+  // the same exfiltration class as QWEN_BASE_URL.
+  'REMOTE_LMSTUDIO_URL',
 ]);
 
 function isTrustSensitiveEnvVar(key: string): boolean {
@@ -117,7 +120,14 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     if (!existsSync(p)) continue;
     try {
       const parsed = JSON.parse(readFileSync(p, 'utf-8'));
-      if (p.startsWith(homedir()) && !explicitWorkspace) {
+      // Home-dir comparison must be case-insensitive on Windows.
+      const normHome = homedir().replace(/\\/g, '/');
+      const normP = p.replace(/\\/g, '/');
+      const samePath =
+        process.platform === 'win32'
+          ? normP.toLowerCase().startsWith(normHome.toLowerCase())
+          : normP.startsWith(normHome);
+      if (samePath && !explicitWorkspace) {
         delete parsed.workspace;
       }
       Object.assign(cfg, parsed);

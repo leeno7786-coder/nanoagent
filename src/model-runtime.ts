@@ -56,9 +56,15 @@ export function parseParamBillions(paramsString?: string | null): number | undef
 /** Fallback: infer parameter count from model id string. */
 export function parseParamBillionsFromModelId(modelId: string): number | undefined {
   const lower = modelId.toLowerCase();
-  const m = lower.match(/\b(0\.5|1\.5|1|2|3|4|7|8|9|13|14|27|32|70)[-.]?b\b/);
-  if (m) return parseFloat(m[1]);
-  if (lower.includes('nano') || lower.includes('4b')) return 4;
+  // General "<number>b" token on a non-alphanumeric boundary. A hardcoded size
+  // list missed 24b/34b (and the old includes('4b') fallback then misparsed
+  // them as 4B); the boundary keeps MoE tags like "a3b" from matching.
+  const m = lower.match(/(?:^|[^a-z\d.])(\d+(?:\.\d+)?)[-.]?b(?:[^a-z\d]|$)/);
+  if (m) {
+    const n = parseFloat(m[1]);
+    if (Number.isFinite(n) && n >= 0.1 && n <= 2000) return n;
+  }
+  if (lower.includes('nano')) return 4;
   return undefined;
 }
 
@@ -289,7 +295,8 @@ export async function fetchOpenRouterModelContext(
  * Merge runtime context/param metadata into config.
  * - LM Studio: loaded instance context_length
  * - OpenRouter: catalog context_length for the selected model
- * Prefers already-set modelContextLength (e.g. from Connect UI) unless missing.
+ * Runtime-reported values overwrite cfg — they reflect what is actually
+ * loaded right now, which is what compaction must track.
  */
 export async function enrichConfigWithRuntime(cfg: Config): Promise<Config> {
   if (!cfg.model) return cfg;

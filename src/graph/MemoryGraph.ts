@@ -289,6 +289,7 @@ export class MemoryGraph {
     // Clear existing graph
     this.nodes.clear();
     this.edges.clear();
+    this.fileImports.clear();
     this.indexes = {
       byType: new Map(),
       byPath: new Map(),
@@ -949,6 +950,25 @@ export class MemoryGraph {
    */
   private linkCrossFileCalls(): void {
     for (const pc of this.pendingCalls) {
+      // Same-file forward reference: extractCalls resolves callees against
+      // nodes added so far, so a call to a function declared LATER in the
+      // same file lands here. Resolve it before trying imports.
+      const sameFile = [
+        `function:${pc.fileId}:${pc.calledName}`,
+        `variable:${pc.fileId}:${pc.calledName}`,
+        `class:${pc.fileId}:${pc.calledName}`,
+      ].find((c) => this.nodes.has(c));
+      if (sameFile) {
+        this.addEdge({
+          id: `edge:${pc.callerId}:calls:${pc.calledName}`,
+          source: pc.callerId,
+          target: sameFile,
+          type: 'calls',
+          metadata: { line: pc.line },
+          createdAt: Date.now(),
+        });
+        continue;
+      }
       const imports = this.fileImports.get(pc.fileId);
       if (!imports) continue;
       const imp = imports.get(pc.calledName);

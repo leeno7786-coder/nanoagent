@@ -20,11 +20,17 @@ Anything shipped inside a cloned repository is **untrusted** — a malicious rep
 able to escalate privileges just by being opened in the agent:
 
 - **Workspace `.env` files are untrusted.** Trust-sensitive variables —
-  `NANOGENT_TRUST_PROJECT_MCP`, `QWEN_SECURITY_*`, `QWEN_BASE_URL`, and all `*_API_KEY`
-  overrides — are only honored from the **real process environment** (or the trusted
-  home-directory `.env`), never from a workspace/project `.env` loaded via dotenv.
-  This prevents a repo from disabling security, redirecting the API endpoint
-  (key exfiltration), or auto-trusting its own MCP servers.
+  `NANOGENT_TRUST_PROJECT_MCP`, `QWEN_SECURITY_*`, `QWEN_BASE_URL`, `REMOTE_LMSTUDIO_URL`,
+  and all `*_API_KEY` overrides — are only honored from the **real process environment**
+  (or the trusted home-directory `.env`), never from a workspace/project `.env` loaded
+  via dotenv. `getApiKey()` also reads only home-directory `.env` files.
+  This prevents a repo from disabling security, redirecting the API or sub-agent
+  endpoint (key/code exfiltration), or auto-trusting its own MCP servers.
+- **MCP trust = exact global config paths.** Only the global config files directly in
+  the home directory (`~/.nanogent.json`, `~/.nanoagent.json`, `~/.nanogent/config.json`,
+  `~/.qwen-agent.json`) or an explicitly-passed config path are trusted to auto-connect
+  MCP servers. A project config anywhere else — including repos cloned under `~/` — is
+  treated as project-local and blocked from auto-connecting.
 - **Project-local MCP configs never auto-connect.** Trust = global `~/.nanogent.json`,
   an explicitly-passed config path, or `NANOGENT_TRUST_PROJECT_MCP=1` set in the real
   environment. (RCE guard — MCP servers are arbitrary local processes.)

@@ -217,6 +217,49 @@ describe('MemoryGraph', () => {
       expect(crossFile!.metadata?.crossFile).toBe(true);
     });
 
+    it('creates calls edges for same-file forward references (hoisted decls)', async () => {
+      // early() calls later(), which is declared AFTER it in the same file —
+      // extractCalls can't see it yet, so the edge must be resolved in the
+      // pending-calls pass.
+      writeFileSync(
+        join(ws, 'src', 'forward.ts'),
+        'export function early(): number {\n  return later();\n}\n\nfunction later(): number {\n  return 42;\n}\n'
+      );
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      const calls = graph.query({
+        type: 'edge',
+        query: { type: 'calls', target: 'function:file:src/forward.ts:later' },
+      }).edges;
+      expect(calls.length).toBe(1);
+      expect(calls[0].source).toBe('function:file:src/forward.ts:early');
+    });
+
+    it('drops stale cross-file call edges on rebuild after an import is removed', async () => {
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+      const before = graph.query({
+        type: 'edge',
+        query: { type: 'calls', target: 'function:file:src/utils.ts:add' },
+      }).edges;
+      expect(before.some((e) => e.source === 'function:file:src/main.ts:main')).toBe(true);
+
+      // Remove the import + call from main.ts and rebuild in-process — the
+      // fileImports map must be reset or the stale edge survives.
+      writeFileSync(
+        join(ws, 'src', 'main.ts'),
+        'export function main(): number {\n  return 0;\n}\n'
+      );
+      await graph.build();
+
+      const after = graph.query({
+        type: 'edge',
+        query: { type: 'calls', target: 'function:file:src/utils.ts:add' },
+      }).edges;
+      expect(after.some((e) => e.source === 'function:file:src/main.ts:main')).toBe(false);
+    });
+
     it('extracts config concept nodes from JSON files', async () => {
       const graph = new MemoryGraph(ws);
       await graph.build();

@@ -53,7 +53,9 @@ function sessionStore(id: string): VersionedStore<Session> {
 }
 
 function stripEnvelope(raw: Record<string, unknown>): Session {
-  const { ...rest } = raw;
+  const rest = { ...raw };
+  delete rest._version;
+  delete rest._savedAt;
   return rest as unknown as Session;
 }
 
@@ -88,7 +90,11 @@ export function autoSaveSession(
 
 export function loadSession(id: string): Session | null {
   ensureDir();
-  const store = sessionStore(id);
+  // Sanitize user-supplied ids — a raw id with path separators would
+  // resolve outside SESSION_DIR (path traversal via /resume <id>).
+  const safeId = sanitizeSessionId(id);
+  if (!safeId) return null;
+  const store = sessionStore(safeId);
   const raw = store.read();
   if (!raw) return null;
   return stripEnvelope(raw as unknown as Record<string, unknown>);
@@ -113,7 +119,9 @@ export function loadSessions(): Session[] {
 
 export function deleteSession(id: string): void {
   ensureDir();
-  const path = join(SESSION_DIR, `${id}.json`);
+  const safeId = sanitizeSessionId(id);
+  if (!safeId) return;
+  const path = join(SESSION_DIR, `${safeId}.json`);
   if (existsSync(path)) {
     rmSync(path);
   }
