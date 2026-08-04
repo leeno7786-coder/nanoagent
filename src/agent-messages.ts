@@ -47,10 +47,14 @@ export function toChatMessages(agent: AgentCore): ChatMessage[] {
   // Keep the main system prompt and the todo system message (the model needs
   // todo ids for manage_todos). Other transient system notices are filtered
   // out — they must never appear mid-history.
+  // Reasoning-only assistant messages (empty content, no tool calls) are also
+  // dropped: toChatMessage strips reasoning before sending, so they would go
+  // out as empty assistant turns — breaking role alternation on strict chat
+  // templates and derailing small models (Qwen thinking turns hit this path).
   const messagesToSend = agent.messages.filter(
     (m) =>
       !(m.role === 'system' && m.id !== 'system-base' && m.id !== 'system-todos') &&
-      !(m.role === 'assistant' && !m.toolCalls && !m.reasoningContent && m.content.trim() === '')
+      !(m.role === 'assistant' && !m.toolCalls && m.content.trim() === '')
   );
 
   // Qwen3.5/3.6 Jinja chat templates raise:

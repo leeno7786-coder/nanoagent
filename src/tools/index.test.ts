@@ -357,6 +357,28 @@ describe('tools', () => {
     expect(readFileSync(join(ws, 'lines.txt'), 'utf-8')).toBe('line1\nreplaced\nline4');
   });
 
+  it('edit_file_lines preserves CRLF line endings', () => {
+    writeFileSync(join(ws, 'crlf.txt'), 'line1\r\nline2\r\nline3\r\n', 'utf-8');
+    const editLines = tools.find((t) => t.name === 'edit_file_lines')!;
+    const out = JSON.parse(
+      editLines.execute({ path: 'crlf.txt', start_line: 2, end_line: 2, new_text: 'LINE2' }, ws)
+    );
+    expect(out.ok).toBe(true);
+    expect(readFileSync(join(ws, 'crlf.txt'), 'utf-8')).toBe('line1\r\nLINE2\r\nline3\r\n');
+  });
+
+  it('edit_file fuzzy match preserves CRLF line endings', () => {
+    // Indented file line so the exact match fails and the fuzzy path runs.
+    writeFileSync(join(ws, 'crlf-fuzzy.txt'), 'line1\r\n  line2\r\nline3\r\n', 'utf-8');
+    const edit = tools.find((t) => t.name === 'edit_file')!;
+    const out = JSON.parse(
+      edit.execute({ path: 'crlf-fuzzy.txt', old_text: 'line1\nline2', new_text: 'L1\nL2' }, ws)
+    );
+    expect(out.ok).toBe(true);
+    expect(out.fuzzy_match).toBe(true);
+    expect(readFileSync(join(ws, 'crlf-fuzzy.txt'), 'utf-8')).toBe('L1\nL2\r\nline3\r\n');
+  });
+
   it('edit_file_lines returns helpful error for missing file', () => {
     const editLines = tools.find((t) => t.name === 'edit_file_lines')!;
     const out = JSON.parse(

@@ -148,7 +148,10 @@ export const editFileTool: Tool = {
           for (let m = matchStarts.length - 1; m >= 0; m--) {
             nextLines.splice(matchStarts[m], oldLines.length, newTextValue);
           }
-          const next = nextLines.join('\n');
+          // Preserve the file's line endings — splitting on /\r?\n/ strips
+          // CR, so joining with '\n' would rewrite CRLF files as LF.
+          const eol = text.includes('\r\n') ? '\r\n' : '\n';
+          const next = nextLines.join(eol);
           writeFileSync(p, next, 'utf-8');
           const relPath = rel(p, ws);
           const { added, removed, diff } = fileChangeDiff(relPath, text, next);
@@ -273,7 +276,10 @@ export const editFileLinesTool: Tool = {
       const newText = String(args.new_text ?? '');
       const before = lines.slice(0, startLine - 1);
       const after = lines.slice(Math.min(endLine, lines.length));
-      const next = [...before, newText, ...after].join('\n');
+      // Preserve the file's line endings — splitting on /\r?\n/ strips CR,
+      // so joining with '\n' would rewrite CRLF files as LF.
+      const eol = text.includes('\r\n') ? '\r\n' : '\n';
+      const next = [...before, newText, ...after].join(eol);
       writeFileSync(p, next, 'utf-8');
       const relPath = rel(p, ws);
       const { added, removed, diff } = fileChangeDiff(relPath, text, next);

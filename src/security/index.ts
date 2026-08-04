@@ -6,7 +6,7 @@
 import { resolve, relative, isAbsolute } from 'path';
 import { existsSync, statSync } from 'fs';
 import { PermissionManager, PermissionMode, PermissionLevel } from './permissions.js';
-import { DANGEROUS_COMMAND_PATTERNS, SAFE_COMMAND_PATTERNS } from './patterns.js';
+import { DANGEROUS_COMMAND_PATTERNS } from './patterns.js';
 
 export * from './permissions.js';
 
@@ -79,7 +79,8 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
     '**/resolv.conf',
     // VCS
     '**/.git/**',
-    // Dependencies / lock files
+    // Dependencies / lock files (write-protection; manifests like
+    // package.json, go.mod, requirements.txt stay editable)
     '**/node_modules/**',
     '**/bun.lock',
     '**/package-lock.json',
@@ -91,26 +92,9 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
     '**/composer.lock',
     '**/Gemfile.lock',
     '**/Cargo.lock',
-    '**/go.mod',
     '**/go.sum',
     '**/Pipfile.lock',
     '**/poetry.lock',
-    '**/requirements.txt',
-    // Config / metadata (package.json and tsconfig.json are needed for legitimate operations)
-    '**/config/**',
-    '**/tsconfig.*.json',
-    // System directories
-    '**/etc/**',
-    '**/var/**',
-    '**/usr/**',
-    '**/bin/**',
-    '**/sbin/**',
-    '**/boot/**',
-    '**/dev/**',
-    '**/proc/**',
-    '**/sys/**',
-    '**/tmp/**',
-    '**/temp/**',
   ],
   maxFileSize: 10 * 1024 * 1024, // 10MB
   maxBatchFiles: 50,
@@ -176,17 +160,11 @@ export class SecurityManager {
       }
     }
 
-    // Check against safe patterns — if no custom allow list is set,
-    // commands must match a safe pattern to be allowed (deny-by-default).
-    if (this.config.allowedCommands.size === 0) {
-      for (const pattern of SAFE_COMMAND_PATTERNS) {
-        if (pattern.test(trimmed)) {
-          return { ok: true, command };
-        }
-      }
-      return { ok: false, error: `Command not in allowed safe list` };
-    }
-
+    // Default: allow. With no custom allow list, the dangerous-pattern screen
+    // is the hard gate and the PermissionManager (ask/allow modes) is the
+    // interactive gate — blocking unlisted commands here would make an
+    // explicit user approval meaningless. Setting allowedCommands switches
+    // validation to explicit allowlist enforcement (handled above).
     return { ok: true, command };
   }
 
@@ -330,9 +308,14 @@ export class SecurityManager {
     if (normalizedPattern.includes('**/')) {
       const parts = normalizedPattern.split('**/');
       const prefix = this.escapeGlobLiterals(parts[0]).replace(/\*/g, '.*').replace(/\?/g, '.');
+      // Translate '**' via a placeholder: a direct '**' -> '.*' replace followed
+      // by '*' -> '.*' would rewrite the freshly inserted '.*' to '..*'.
+      // (NUL can never appear in a real path or glob pattern.)
       const suffix = this.escapeGlobLiterals(parts.slice(1).join('**/'))
-        .replace(/\*\*/g, '.*')
+        .replace(/\*\*/g, '\x00')
         .replace(/\*/g, '.*')
+        // eslint-disable-next-line no-control-regex -- NUL placeholder can never appear in a real path
+        .replace(/\x00/g, '.*')
         .replace(/\?/g, '.');
       const regexPattern = '^' + prefix + '.*' + suffix + '$';
       try {

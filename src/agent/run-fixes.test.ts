@@ -3,12 +3,14 @@
  * - sequential tool results route through ContextManager (no dangling tool_calls)
  * - stuck-loop guard breaks on repeated identical tool-call signatures
  * - abort mid-stream strips un-executed toolCalls from the assistant message
+ * - reasoning-only turns never reach the API as empty assistant messages
+ * - tool outputs are sanitized for secrets before entering history
  *
  * Uses the same local OpenAI-compatible stub-server pattern as agent-loop.test.ts.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createServer, type Server } from 'http';
@@ -218,6 +220,58 @@ describe('run-loop review fixes', () => {
     );
     expect(notice).toBeDefined();
     expect(agent.state).toBe('idle');
+  }, 20000);
+
+  it('sanitizes secrets out of tool output before it enters history', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    // A file whose contents look like an API key — read_file output must be
+    // redacted before the tool message is stored/sent to the model.
+    writeFileSync(
+      join(ws, 'leak.txt'),
+      'api key: sk-abc123def456ghi789jkl012mno345pqr678',
+      'utf-8'
+    );
+
+    scripted.push([
+      {
+        toolCalls: [
+          { id: 'call-1', name: 'read_file', arguments: JSON.stringify({ path: 'leak.txt' }) },
+        ],
+      },
+    ]);
+    scripted.push([{ content: 'done' }]);
+
+    await agent.run('read leak.txt');
+
+    const toolMsg = agent.messages.find((m) => m.role === 'tool' && m.toolCallId === 'call-1');
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg!.content).not.toContain('sk-abc123def456ghi789jkl012mno345pqr678');
+    expect(toolMsg!.content).toContain('[OPENAI_KEY_REDACTED]');
+  }, 20000);
+
+  it('never sends reasoning-only turns to the API as empty assistant messages', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    // Turn 1: model produces only reasoning (small Qwen models with thinking
+    // enabled do this when a turn is spent entirely on reasoning). Turn 2: a
+    // real reply after the reasoning-only retry.
+    scripted.push([{ reasoningContent: 'let me think about this...' }]);
+    scripted.push([{ content: 'final answer' }]);
+
+    await agent.run('hi');
+
+    expect(sentMessages.length).toBe(2); // reasoning-only turn + retry
+    const retryPayload = sentMessages[1] as Array<{ role: string; content: string }>;
+    const emptyAssistants = retryPayload.filter(
+      (m) => m.role === 'assistant' && !m.content?.trim()
+    );
+    expect(emptyAssistants).toEqual([]);
+    expect(agent.state).toBe('idle');
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.content).toBe('final answer');
   }, 20000);
 
   it('strips un-executed toolCalls when aborted mid-stream', async () => {

@@ -41,10 +41,11 @@ export async function executeToolDirect(
   }
 
   const configWithSecurity = { ...agent.cfg, securityManager: agent.securityManager };
-  if (tool.executeAsync) {
-    return tool.executeAsync(args, agent.cfg.workspace, configWithSecurity);
-  }
-  return tool.execute(args, agent.cfg.workspace, configWithSecurity);
+  const raw = tool.executeAsync
+    ? await tool.executeAsync(args, agent.cfg.workspace, configWithSecurity)
+    : tool.execute(args, agent.cfg.workspace, configWithSecurity);
+  // Sanitize secrets out of tool output before it can reach the model.
+  return agent.securityManager.sanitizeOutput(raw, agent.cfg.apiKey ?? undefined);
 }
 
 export async function executeToolSequential(
@@ -226,6 +227,9 @@ export async function executeToolSequential(
       ...(process.env.QWEN_DEBUG_LLM ? { stack: err.stack } : {}),
     });
   }
+  // Sanitize secrets out of tool output before it reaches history/model.
+  // Cached entries are stored post-sanitization so cache hits stay clean.
+  output = agent.securityManager.sanitizeOutput(output, agent.cfg.apiKey ?? undefined);
   const duration = performance.now() - start;
 
   if (!wasCached && tool) {
@@ -417,6 +421,9 @@ export async function executeToolsParallel(
           ? tool.execute(args, agent.cfg.workspace, configWithSecurity)
           : JSON.stringify({ ok: false, error: 'Unknown tool' });
       }
+
+      // Sanitize secrets out of tool output before caching/history/model.
+      output = agent.securityManager.sanitizeOutput(output, agent.cfg.apiKey ?? undefined);
 
       if (tool) {
         try {

@@ -60,32 +60,47 @@ Security settings can be configured via:
 
 ### Default Blocked Paths
 
-The following paths are blocked by default:
+The following paths are blocked by default (secrets, credentials, VCS internals,
+and dependency lockfiles — project manifests like `package.json`, `go.mod`,
+`requirements.txt`, and `tsconfig.json` stay readable/editable):
 
 ```
 **/.env
 **/.env.*
 **/.git/**
-**/.gitignore
 **/.ssh/**
 **/node_modules/**
-**/dist/**
-**/build/**
-**/target/**
-**/coverage/**
-**/*.log
-**/*.log.*
-**/tmp/**
-**/temp/**
-**/requirements.txt
-**/config/**
 **/secrets/**
 **/credentials/**
 **/*.pem
 **/*.key
 **/*.crt
+**/*.cer
 **/*.p12
 **/*.pfx
+**/id_rsa*
+**/id_ed25519*
+**/id_ecdsa*
+**/known_hosts
+**/authorized_keys
+**/shadow
+**/passwd
+**/sudoers
+**/hosts
+**/resolv.conf
+**/bun.lock
+**/package-lock.json
+**/yarn.lock
+**/pnpm-lock.yaml
+**/.npmrc
+**/.yarnrc
+**/bunfig.toml
+**/composer.lock
+**/Gemfile.lock
+**/Cargo.lock
+**/go.sum
+**/Pipfile.lock
+**/poetry.lock
 ```
 
 ### Example Configuration
@@ -188,7 +203,12 @@ Safe commands are **allowed by default**, including:
 
 ### Custom Command Patterns
 
-You can extend the blocked/allowed command lists by modifying the `DANGEROUS_COMMAND_PATTERNS` and `SAFE_COMMAND_PATTERNS` arrays in the security module.
+Command validation is **default-allow**: any command that does not match a
+dangerous pattern passes validation, and the PermissionManager mode
+(`ask` by default) decides whether the user is prompted. You can extend the
+blocked list by adding to the `DANGEROUS_COMMAND_PATTERNS` array in the
+security module, or set a custom `allowedCommands` list to switch validation
+to explicit allowlist enforcement.
 
 ---
 
@@ -391,7 +411,8 @@ Even with sanitization, always review agent outputs before sharing them, especia
 
 **Solution:**
 1. Check if the command matches any dangerous pattern
-2. Add a safe pattern to `SAFE_COMMAND_PATTERNS`
+2. If you configured a custom `allowedCommands` list, add the command to it
+   (a custom allow list switches validation to allowlist enforcement)
 3. Or disable command validation for specific cases
 
 ### File Access Blocked
@@ -422,8 +443,7 @@ Even with sanitization, always review agent outputs before sharing them, especia
    - Check against dangerous patterns → Block if matched
    - Check against custom blocked commands → Block if matched
    - Check against allowed commands (if specified) → Block if not matched
-   - Check against safe patterns → Allow if matched
-   - Default: Allow
+   - Default: Allow (the PermissionManager mode is the interactive gate)
 
 2. **File Access Validation**
    - Check if path is within workspace → Block if outside

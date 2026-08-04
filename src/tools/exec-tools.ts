@@ -265,9 +265,13 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
       );
     }
 
+    // parseCommand returns useShell=true when the command needs shell
+    // features (pipes, redirects) — those must go through cmd.exe /c,
+    // not be spawned as a literal executable name.
     const parsed = parseCommand(cmd);
-    const exe = parsed?.command || 'cmd.exe';
-    const args = parsed?.args || ['/c', cmd];
+    const needsShell = !parsed || parsed.useShell;
+    const exe = needsShell ? 'cmd.exe' : parsed.command;
+    const args = needsShell ? ['/c', cmd] : parsed.args;
     const result = spawnSync(exe, args, {
       cwd: ws,
       timeout: timeoutMs,
@@ -342,9 +346,11 @@ function execCmdAsync(
           shell: false,
         });
       } else {
+        // Same useShell handling as the sync path (see execCmd).
         const parsed = parseCommand(cmd);
-        const exe = parsed?.command || 'cmd.exe';
-        const args = parsed?.args || ['/c', cmd];
+        const needsShell = !parsed || parsed.useShell;
+        const exe = needsShell ? 'cmd.exe' : parsed.command;
+        const args = needsShell ? ['/c', cmd] : parsed.args;
         child = spawn(exe, args, {
           cwd: ws,
           timeout: timeoutMs,

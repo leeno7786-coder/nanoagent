@@ -66,6 +66,36 @@ describe('SecurityManager', () => {
       }
     });
 
+    it('should allow common dev commands by default (default-allow per SECURITY.md)', () => {
+      // Validation screens dangerous patterns only; the PermissionManager is
+      // the interactive gate. These were previously rejected by a deny-by-default
+      // safe list even after the user approved the permission prompt.
+      const devCommands = [
+        'npm install express',
+        'bun install',
+        'bun add zod',
+        'mkdir src\\new-dir',
+        'tsc --noEmit',
+        'node script.js',
+        'eslint src',
+        'prettier --check src',
+      ];
+      for (const cmd of devCommands) {
+        const result = securityManager.validateCommand(cmd);
+        expect(result.ok).toBe(true);
+      }
+    });
+
+    it('should still enforce a custom allow list when configured', () => {
+      const restricted = createSecurityManager(
+        { allowedCommands: new Set(['git status']) },
+        '/test/workspace'
+      );
+      expect(restricted.validateCommand('git status').ok).toBe(true);
+      expect(restricted.validateCommand('git status --short').ok).toBe(true);
+      expect(restricted.validateCommand('npm test').ok).toBe(false);
+    });
+
     it('should allow read-only commands', () => {
       const safeCommands = [
         'ls',
@@ -198,6 +228,35 @@ describe('SecurityManager', () => {
       expect(result.ok).toBe(true);
     });
 
+    it('should allow common project dirs and manifests by default', () => {
+      // Previously over-broad defaults blocked these even for reads.
+      const allowed = [
+        '/test/workspace/src/config/load.ts',
+        '/test/workspace/tmp/scratch.txt',
+        '/test/workspace/requirements.txt',
+        '/test/workspace/go.mod',
+        '/test/workspace/tsconfig.app.json',
+        '/test/workspace/bin/cli.js',
+      ];
+      for (const p of allowed) {
+        expect(securityManager.validateFileAccess(p, 'read').ok).toBe(true);
+      }
+    });
+
+    it('should still block secrets, VCS internals and lockfiles by default', () => {
+      const blocked = [
+        '/test/workspace/.env.production',
+        '/test/workspace/.git/config',
+        '/test/workspace/node_modules/pkg/index.js',
+        '/test/workspace/bun.lock',
+        '/test/workspace/package-lock.json',
+        '/test/workspace/certs/server.pem',
+      ];
+      for (const p of blocked) {
+        expect(securityManager.validateFileAccess(p, 'read').ok).toBe(false);
+      }
+    });
+
     it('should allow access when validation is disabled', () => {
       const disabledManager = createSecurityManager(
         { validateFileAccess: false },
@@ -229,6 +288,26 @@ describe('SecurityManager', () => {
 
       const result = customManager.validateFileAccess('/test/workspace/secrets/api.key', 'read');
       expect(result.ok).toBe(false);
+    });
+
+    it('should handle ** in the pattern suffix without corrupting the regex', () => {
+      // Regression: '**' -> '.*' followed by '*' -> '.*' used to rewrite the
+      // freshly inserted '.*' to '..*', subtly narrowing the match.
+      const customManager = createSecurityManager(
+        {
+          blockedPaths: ['**/build/**/*.log'],
+        },
+        '/test/workspace'
+      );
+
+      expect(
+        customManager.validateFileAccess('/test/workspace/a/build/deep/nested/x.log', 'read').ok
+      ).toBe(false);
+      expect(
+        customManager.validateFileAccess('/test/workspace/src/build/deep/y.log', 'read').ok
+      ).toBe(false);
+      // Non-matching paths still allowed
+      expect(customManager.validateFileAccess('/test/workspace/src/app.ts', 'read').ok).toBe(true);
     });
   });
 
