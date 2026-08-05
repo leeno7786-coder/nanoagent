@@ -8,8 +8,8 @@ RUN bun run build
 
 FROM oven/bun:1.3 AS run
 WORKDIR /app
-RUN addgroup --system --gid 1001 nanoagent && \
-    adduser --system --uid 1001 nanoagent
+RUN groupadd -g 1001 nanoagent && \
+    useradd -u 1001 -g nanoagent nanoagent
 COPY --from=build --chown=nanoagent:nanoagent /app/dist ./dist
 COPY --from=build --chown=nanoagent:nanoagent /app/node_modules ./node_modules
 COPY package.json README.md ./
