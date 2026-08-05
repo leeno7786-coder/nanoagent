@@ -45,9 +45,13 @@ export function getRealEnv(key: string): string | undefined {
   return REAL_ENV[key] ?? process.env[key];
 }
 
+function getHomedir(): string {
+  return process.env.HOME || process.env.USERPROFILE || homedir();
+}
+
 function loadEnv(workspace: string) {
   // Trusted home-dir .env first (user-managed; where saveApiKeyToEnv writes).
-  const trustedPath = join(homedir(), '.qwen-agent-tui', '.env');
+  const trustedPath = join(getHomedir(), '.qwen-agent-tui', '.env');
   if (existsSync(trustedPath)) {
     dotenvConfig({ path: resolve(trustedPath), quiet: true });
   }
@@ -110,11 +114,12 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     join(invocationCwd, 'qwen-agent.json'),
     join(invocationCwd, '.qwen-agent.json'),
   ];
+  const userHome = getHomedir();
   const homeCandidates = [
-    join(homedir(), '.nanoagent.json'),
-    join(homedir(), '.nanogent.json'),
-    join(homedir(), '.nanogent', 'config.json'),
-    join(homedir(), '.qwen-agent.json'),
+    join(userHome, '.nanoagent.json'),
+    join(userHome, '.nanogent.json'),
+    join(userHome, '.nanogent', 'config.json'),
+    join(userHome, '.qwen-agent.json'),
   ];
 
   const readConfigFile = (p: string): Record<string, unknown> | undefined => {
