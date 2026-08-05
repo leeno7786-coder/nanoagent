@@ -23,7 +23,6 @@ import { SkillsOverlay } from './skills-overlay.js';
 import { ConnectOverlay } from './connect-overlay.js';
 import { StatusBar } from './status-bar.js';
 import { TodoSidebar } from './todo-sidebar.js';
-import { TodoPage } from './todo-page.js';
 import { THEMES, DEFAULT_THEME } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
 import { getProviderBaseURL } from '../providers.js';
@@ -713,9 +712,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       } else {
         process.exit(0);
       }
-    } else if (keyEvent.name === 'f12' || keyEvent.name === 'F12') {
-      st.setOverlay('todo');
-      keyEvent.preventDefault?.();
     }
 
     if (keyEvent.ctrl) {
@@ -809,15 +805,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       <ErrorBoundary theme={theme}>
         <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
           <ConnectOverlay theme={theme} onClose={closeOverlay} onSelect={handleConnectSelect} />
-        </box>
-      </ErrorBoundary>
-    );
-  }
-  if (overlay === 'todo') {
-    return (
-      <ErrorBoundary theme={theme}>
-        <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
-          <TodoPage theme={theme} onClose={closeOverlay} />
         </box>
       </ErrorBoundary>
     );

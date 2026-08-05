@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { McpManager } from './index.js';
+import { McpManager, mcpToolName } from './index.js';
 
 function managerWithServers(...names: string[]): McpManager {
   const mgr = new McpManager();
@@ -17,6 +17,33 @@ function managerWithServers(...names: string[]): McpManager {
   }
   return mgr;
 }
+
+describe('mcpToolName', () => {
+  it('passes through simple names unchanged', () => {
+    expect(mcpToolName('fs', 'read_file', new Set())).toBe('mcp_fs_read_file');
+  });
+
+  it('sanitizes characters the chat API rejects (dots, spaces, unicode)', () => {
+    const name = mcpToolName('my.server', 'do thing ✓', new Set());
+    expect(name).toBe('mcp_my_server_do_thing__');
+    expect(name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
+  });
+
+  it('truncates over-long names with a hash suffix (still <= 64 chars)', () => {
+    const name = mcpToolName('a'.repeat(40), 'b'.repeat(40), new Set());
+    expect(name.length).toBeLessThanOrEqual(64);
+    expect(name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
+  });
+
+  it('deduplicates colliding names (server a_b/c vs a/b_c)', () => {
+    const used = new Set<string>();
+    const first = mcpToolName('a_b', 'c', used);
+    const second = mcpToolName('a', 'b_c', used);
+    expect(first).toBe('mcp_a_b_c');
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
+  });
+});
 
 describe('parseMcpToolName', () => {
   it('parses server names containing underscores (longest match wins)', () => {

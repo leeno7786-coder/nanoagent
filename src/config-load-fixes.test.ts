@@ -152,6 +152,76 @@ describe('MCP config trust classification', () => {
   });
 });
 
+describe('dual-level config: global base + project override', () => {
+  it('merges global and project configs, tracking untrusted project MCP servers', () => {
+    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'QWEN_MODEL', 'QWEN_BASE_URL');
+    const fakeHome = join(tmp, 'home');
+    const proj = join(tmp, 'proj');
+    mkdirSync(fakeHome, { recursive: true });
+    mkdirSync(proj, { recursive: true });
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+    delete process.env.HOMEDRIVE;
+    delete process.env.HOMEPATH;
+    // Env overrides apply AFTER file configs by design — clear them so the
+    // assertions observe the file merge, not the environment.
+    delete process.env.QWEN_MODEL;
+    delete process.env.QWEN_BASE_URL;
+
+    writeFileSync(
+      join(fakeHome, '.nanogent.json'),
+      JSON.stringify({
+        temperature: 0.11,
+        model: 'global-model',
+        mcp: { globalSrv: { type: 'remote', url: 'https://global.example/sse' } },
+      })
+    );
+    writeFileSync(
+      join(proj, '.nanogent.json'),
+      JSON.stringify({
+        temperature: 0.77,
+        mcp: { projSrv: { type: 'remote', url: 'https://proj.example/sse' } },
+      })
+    );
+
+    process.chdir(proj);
+    const cfg = loadConfig();
+
+    // Project overrides shared keys, global base survives for the rest
+    expect(cfg.temperature).toBe(0.77);
+    expect(cfg.model).toBe('global-model');
+    expect(cfg.configFilePath).toBe(join(proj, '.nanogent.json'));
+
+    // MCP maps merge; project servers are tracked as untrusted
+    expect(Object.keys(cfg.mcp ?? {}).sort()).toEqual(['globalSrv', 'projSrv']);
+    expect(cfg.mcpUntrusted).toEqual(['projSrv']);
+  });
+
+  it('project config without MCP keeps global MCP servers trusted', () => {
+    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH');
+    const fakeHome = join(tmp, 'home');
+    const proj = join(tmp, 'proj');
+    mkdirSync(fakeHome, { recursive: true });
+    mkdirSync(proj, { recursive: true });
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+    delete process.env.HOMEDRIVE;
+    delete process.env.HOMEPATH;
+
+    writeFileSync(
+      join(fakeHome, '.nanogent.json'),
+      JSON.stringify({ mcp: { globalSrv: { type: 'remote', url: 'https://global.example/sse' } } })
+    );
+    writeFileSync(join(proj, '.nanogent.json'), JSON.stringify({ temperature: 0.5 }));
+
+    process.chdir(proj);
+    const cfg = loadConfig();
+
+    expect(Object.keys(cfg.mcp ?? {})).toEqual(['globalSrv']);
+    expect(cfg.mcpUntrusted ?? []).toEqual([]);
+  });
+});
+
 describe('fix 5: QWEN_WORKSPACE is resolved', () => {
   it('resolves QWEN_WORKSPACE to a normalized absolute path', () => {
     saveEnv('QWEN_WORKSPACE');

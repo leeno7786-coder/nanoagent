@@ -113,6 +113,13 @@ export interface Config {
   maxBackgroundSubAgents?: number;
   /** MCP server configurations (local stdio or remote HTTP). */
   mcp?: Record<string, McpServerConfig>;
+  /**
+   * Names of MCP servers that came from a PROJECT-LOCAL config file during
+   * the global+project merge. These are untrusted: they are not
+   * auto-connected unless the config source is trusted anyway or
+   * NANOGENT_TRUST_PROJECT_MCP=1 is set in the real environment.
+   */
+  mcpUntrusted?: string[];
 }
 
 /**

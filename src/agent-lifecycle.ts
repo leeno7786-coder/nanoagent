@@ -186,25 +186,41 @@ export async function initAgent(agent: AgentCore) {
     // (documented trust model: explicit path = trusted).
     const explicitPath = !!(agent.cfg as Config & { configPathExplicit?: boolean })
       .configPathExplicit;
-    const isProjectConfig = !!source && !isTrustedMcpConfigSource(source, explicitPath);
+    const trustedSource = isTrustedMcpConfigSource(source, explicitPath);
     // Read the trust override from the REAL (pre-.env) environment — a
     // workspace .env must not be able to grant itself MCP trust.
     const trustOverride = getRealEnv('NANOGENT_TRUST_PROJECT_MCP') === '1';
 
-    if (isProjectConfig && !trustOverride) {
-      agent.mcpStates = Object.keys(agent.cfg.mcp).map((name) => ({
-        name,
-        status: 'disabled' as const,
-        toolCount: 0,
-        error:
-          'blocked: MCP servers from project configs are not auto-connected (untrusted source)',
-      }));
+    // Per-server trust split: with the global+project config merge, cfg.mcp
+    // can mix trusted global servers with untrusted project ones (tracked in
+    // cfg.mcpUntrusted by load.ts). An untrusted SOURCE blocks everything.
+    const untrustedOverlay = new Set(agent.cfg.mcpUntrusted ?? []);
+    const allNames = Object.keys(agent.cfg.mcp ?? {});
+    const blockedNames = trustOverride
+      ? []
+      : trustedSource
+        ? allNames.filter((n) => untrustedOverlay.has(n))
+        : allNames;
+    const allowedNames = allNames.filter((n) => !blockedNames.includes(n));
+
+    agent.mcpStates = [];
+    if (blockedNames.length > 0) {
+      agent.mcpStates.push(
+        ...blockedNames.map((name) => ({
+          name,
+          status: 'disabled' as const,
+          toolCount: 0,
+          error:
+            'blocked: MCP servers from project configs are not auto-connected (untrusted source)',
+        }))
+      );
       logWarn(
-        `[security] Skipped auto-connecting ${agent.mcpStates.length} MCP server(s) from project config ${source}. ` +
+        `[security] Skipped auto-connecting ${blockedNames.length} MCP server(s) from project config ${source}. ` +
           `Move the "mcp" block to your global config (~/.nanogent.json) or set NANOGENT_TRUST_PROJECT_MCP=1 to allow it.`
       );
-    } else {
-      agent.mcpStates = await agent.mcpManager.connectAll();
+    }
+    if (allowedNames.length > 0) {
+      agent.mcpStates.push(...(await agent.mcpManager.connectAll(allowedNames)));
       const mcpTools = agent.mcpManager.getTools();
       registerExternalTools(mcpTools);
       agent.invalidateToolSchemaCache();

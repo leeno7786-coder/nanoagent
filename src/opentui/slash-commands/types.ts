@@ -10,7 +10,7 @@ import type {
 } from '../../types.js';
 import type { Theme } from '../theme.js';
 
-export type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'todo' | null;
+export type Overlay = 'help' | 'history' | 'skills' | 'connect' | null;
 
 export interface SlashCommandContext {
   agent: AgentCore;

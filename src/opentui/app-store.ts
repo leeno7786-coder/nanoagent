@@ -14,7 +14,7 @@ import type { Theme } from './theme.js';
 import { DEFAULT_THEME } from './theme.js';
 import type { AgentCore } from '../agent.js';
 
-type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'todo' | 'permission-mode' | null;
+type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'permission-mode' | null;
 
 const PERMISSION_MODES: PermissionMode[] = ['read_only', 'ask', 'allow_edits', 'always_allow'];
 

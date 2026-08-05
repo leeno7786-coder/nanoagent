@@ -11,6 +11,7 @@ import type {
 import type { Tool } from '../tools/index.js';
 import { createSecurityManager } from '../security/index.js';
 import { readFileSync, realpathSync } from 'fs';
+import { createHash } from 'crypto';
 import { resolve, normalize } from 'path';
 
 /**
@@ -53,6 +54,31 @@ function interpolateEnv(value: string, workspace?: string): string {
 }
 
 /**
+ * Build a unique, API-safe tool name for an MCP tool. OpenAI-compatible APIs
+ * require ^[a-zA-Z0-9_-]{1,64}$ — dots/spaces/unicode are replaced, overly
+ * long names are truncated with a short hash suffix, and collisions (e.g.
+ * server `a_b` tool `c` vs server `a` tool `b_c`) get a numeric suffix.
+ */
+export function mcpToolName(server: string, tool: string, used: Set<string>): string {
+  const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_');
+  let base = `mcp_${sanitize(server)}_${sanitize(tool)}`;
+  if (base.length > 64) {
+    const hash = createHash('sha1').update(base).digest('hex').slice(0, 8);
+    base = `${base.slice(0, 55)}_${hash}`;
+  }
+  let name = base;
+  for (let i = 2; used.has(name); i++) {
+    const suffix = `_${i}`;
+    name =
+      base.length + suffix.length > 64
+        ? `${base.slice(0, 64 - suffix.length)}${suffix}`
+        : `${base}${suffix}`;
+  }
+  used.add(name);
+  return name;
+}
+
+/**
  * A connected MCP server with its client and discovered tools.
  */
 interface McpServerConnection {
@@ -82,12 +108,13 @@ export class McpManager {
   }
 
   /**
-   * Connect to all configured MCP servers.
+   * Connect to all configured MCP servers (or a subset when `only` is given).
    * Returns a summary of connection results.
    */
-  async connectAll(): Promise<McpServerState[]> {
+  async connectAll(only?: string[]): Promise<McpServerState[]> {
     const states: McpServerState[] = [];
-    const entries = Object.entries(this.configs);
+    const allow = only ? new Set(only) : undefined;
+    const entries = Object.entries(this.configs).filter(([name]) => !allow || allow.has(name));
 
     if (entries.length === 0) return states;
 
@@ -289,15 +316,19 @@ export class McpManager {
   /**
    * Convert all discovered MCP tools into the agent's Tool format.
    * Each tool is prefixed with "mcp_<server>_" to avoid name collisions.
+   * Names are sanitized to the OpenAI tool-name constraint
+   * (^[a-zA-Z0-9_-]{1,64}$) — a server advertising dots/spaces/unicode or a
+   * very long name would otherwise make every LLM request fail with a 400.
    */
   getTools(): Tool[] {
     const result: Tool[] = [];
+    const usedNames = new Set<string>();
 
     for (const [serverName, conn] of this.connections) {
       if (conn.state.status !== 'connected') continue;
 
       for (const mcpTool of conn.tools) {
-        const toolName = `mcp_${serverName}_${mcpTool.name}`;
+        const toolName = mcpToolName(serverName, mcpTool.name, usedNames);
         result.push({
           name: toolName,
           description: `[MCP: ${serverName}] ${mcpTool.description}`,

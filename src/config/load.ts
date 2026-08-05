@@ -102,46 +102,94 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   // A string argument is only a config path if it points at an existing FILE;
   // passing the workspace directory here must not mask the real candidates.
   const configPath = asConfigFile(typeof pathOrConfig === 'string' ? pathOrConfig : undefined);
-  const candidates = [
-    configPath,
+  const projectCandidates = [
     join(invocationCwd, '.nanoagent.json'),
     join(invocationCwd, 'nanoagent.json'),
     join(invocationCwd, '.nanogent.json'),
     join(invocationCwd, 'nanogent.json'),
+    join(invocationCwd, 'qwen-agent.json'),
+    join(invocationCwd, '.qwen-agent.json'),
+  ];
+  const homeCandidates = [
     join(homedir(), '.nanoagent.json'),
     join(homedir(), '.nanogent.json'),
     join(homedir(), '.nanogent', 'config.json'),
-    join(invocationCwd, 'qwen-agent.json'),
-    join(invocationCwd, '.qwen-agent.json'),
     join(homedir(), '.qwen-agent.json'),
-  ].filter(Boolean) as string[];
+  ];
 
-  for (const p of candidates) {
-    if (!existsSync(p)) continue;
+  const readConfigFile = (p: string): Record<string, unknown> | undefined => {
     try {
-      const parsed = JSON.parse(readFileSync(p, 'utf-8'));
-      // Home-dir comparison must be case-insensitive on Windows.
-      const normHome = homedir().replace(/\\/g, '/');
-      const normP = p.replace(/\\/g, '/');
-      const samePath =
-        process.platform === 'win32'
-          ? normP.toLowerCase().startsWith(normHome.toLowerCase())
-          : normP.startsWith(normHome);
-      if (samePath && !explicitWorkspace) {
-        delete parsed.workspace;
-      }
-      Object.assign(cfg, parsed);
-      cfg.configFilePath = p;
-      // An explicitly-passed config path is trusted regardless of location.
-      (cfg as Config & { configPathExplicit?: boolean }).configPathExplicit = p === configPath;
-      break;
+      return JSON.parse(readFileSync(p, 'utf-8'));
     } catch (err) {
-      // Warn and CONTINUE: a corrupt higher-precedence file must not mask a
-      // valid lower-precedence one.
+      // Warn and CONTINUE: a corrupt file must not mask other configs.
       logWarn(
         `Warning: failed to parse config file ${p}:`,
         err instanceof Error ? err.message : String(err)
       );
+    }
+    return undefined;
+  };
+
+  if (configPath && existsSync(configPath)) {
+    // An explicitly-passed config path is the ONLY file loaded, and trusted.
+    const parsed = readConfigFile(configPath);
+    if (parsed) {
+      Object.assign(cfg, parsed);
+      cfg.configFilePath = configPath;
+      (cfg as Config & { configPathExplicit?: boolean }).configPathExplicit = true;
+    }
+  } else {
+    // Dual-level configuration: the global (home-dir) config is the base and
+    // the project config overrides it. Previously the project config fully
+    // shadowed the global one — silently dropping the user's global model,
+    // subagent, and MCP settings in any repo with its own config file.
+    const sameFile = (a: string, b: string) => {
+      const ra = resolve(a).replace(/\\/g, '/');
+      const rb = resolve(b).replace(/\\/g, '/');
+      return process.platform === 'win32' ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
+    };
+    const isGlobalConfigPath = (p: string) => homeCandidates.some((h) => sameFile(h, p));
+
+    // First candidate that exists AND parses wins; a corrupt file warns and
+    // falls through to the next candidate instead of masking it.
+    const loadFirst = (candidates: string[], skip?: string) => {
+      for (const p of candidates) {
+        if (!existsSync(p)) continue;
+        if (skip && sameFile(p, skip)) continue;
+        const parsed = readConfigFile(p);
+        if (parsed) return { path: p, parsed };
+      }
+      return undefined;
+    };
+
+    const home = loadFirst(homeCandidates);
+    if (home) {
+      // A global config must not pin the workspace.
+      if (!explicitWorkspace) delete home.parsed.workspace;
+      Object.assign(cfg, home.parsed);
+      cfg.configFilePath = home.path;
+    }
+
+    const project = loadFirst(projectCandidates, home?.path);
+    if (project) {
+      const parsed = project.parsed;
+      // MCP servers need per-server trust tracking: global servers stay
+      // trusted, project servers are blocked from auto-connecting. Merge
+      // the maps instead of letting Object.assign replace the global one.
+      if (parsed.mcp && typeof parsed.mcp === 'object') {
+        const projectMcp = parsed.mcp as NonNullable<Config['mcp']>;
+        const globalMcp = cfg.mcp ?? {};
+        cfg.mcp = { ...globalMcp, ...projectMcp };
+        // Running from the home dir makes a "project" file global.
+        if (!isGlobalConfigPath(project.path)) {
+          cfg.mcpUntrusted = [
+            ...new Set([...(cfg.mcpUntrusted ?? []), ...Object.keys(projectMcp)]),
+          ];
+        }
+        delete parsed.mcp;
+      }
+      Object.assign(cfg, parsed);
+      cfg.configFilePath = project.path;
     }
   }
 

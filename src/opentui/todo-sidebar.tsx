@@ -36,7 +36,7 @@ export function TodoSidebar({
       <box flexDirection="row" height={1}>
         <text fg={theme.headerFg}>Todos</text>
         <box flexGrow={1} />
-        <text fg={theme.mutedFg}>q/Esc</text>
+        <text fg={theme.mutedFg}>F4</text>
       </box>
       <text> </text>
       {visibleTodos.length === 0 && todos.length > 0 && <text fg={theme.mutedFg}>All done.</text>}

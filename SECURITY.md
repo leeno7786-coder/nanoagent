@@ -31,6 +31,10 @@ able to escalate privileges just by being opened in the agent:
   `~/.qwen-agent.json`) or an explicitly-passed config path are trusted to auto-connect
   MCP servers. A project config anywhere else — including repos cloned under `~/` — is
   treated as project-local and blocked from auto-connecting.
+- **Configs merge, trust doesn't leak.** The global config is the base and the project
+  config overrides it key-by-key. MCP server maps merge: global servers stay trusted
+  and connect normally; servers that came from the project config are tracked
+  (`mcpUntrusted`) and blocked individually.
 - **Project-local MCP configs never auto-connect.** Trust = global `~/.nanogent.json`,
   an explicitly-passed config path, or `NANOGENT_TRUST_PROJECT_MCP=1` set in the real
   environment. (RCE guard — MCP servers are arbitrary local processes.)

@@ -32,24 +32,35 @@ type ConnectState =
 const VISIBLE_PROVIDERS = 12;
 const VISIBLE_MODELS = 10;
 
+const API_KEY_MASK = '\u2022';
+
+/**
+ * Reconcile an edit made through the masked (all-bullets) key display with
+ * the real key. The previous display is always `mask.repeat(real.length)`;
+ * the longest common bullet prefix/suffix pins the edit location, and the
+ * differing middle is inserted/typed text. A pure positional mapping
+ * corrupts the key on mid-string inserts (chars after the edit shift).
+ */
+export function reconcileMaskedEdit(real: string, display: string): string {
+  const prev = API_KEY_MASK.repeat(real.length);
+  let p = 0;
+  const maxP = Math.min(prev.length, display.length);
+  while (p < maxP && display[p] === prev[p]) p++;
+  let s = 0;
+  const maxS = Math.min(prev.length - p, display.length - p);
+  while (s < maxS && display[display.length - 1 - s] === prev[prev.length - 1 - s]) s++;
+  const inserted = display.slice(p, display.length - s);
+  return real.slice(0, p) + inserted + real.slice(real.length - s);
+}
+
 export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps) {
   const [selectedProviderIndex, setSelectedProviderIndex] = useState(0);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [state, setState] = useState<ConnectState>('selecting-provider');
   const [apiKeyInput, setApiKeyInput] = useState('');
 
-  // Render the key as bullets while keeping the real value in state. The
-  // masked display always has the same length as the real key, so edits
-  // reconcile by position: bullets map back to the real char, anything else
-  // is newly typed/pasted text.
-  const API_KEY_MASK = '\u2022';
   const handleApiKeyInput = (display: string) => {
-    let next = '';
-    for (let i = 0; i < display.length; i++) {
-      const ch = display[i];
-      next += ch === API_KEY_MASK ? (apiKeyInput[i] ?? '') : ch;
-    }
-    setApiKeyInput(next);
+    setApiKeyInput(reconcileMaskedEdit(apiKeyInput, display));
   };
   const [runtimeModels, setRuntimeModels] = useState<ModelInfo[]>([]);
   const [isCheckingRuntime, setIsCheckingRuntime] = useState(false);

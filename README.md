@@ -18,7 +18,7 @@ An ultra-lightweight, scalable CLI/TUI coding agent built from the ground up to 
 - **⚡ Instant Execution**: Launch directly by typing `nanoagent` (or `nanogent`, `npx nanoagent`, `nano-agent`).
 - **🎯 Tiny-Model First Optimization**: Specialized prompt formatting, compact token management, and small-model tool calling resilience.
 - **🖥️ Rich OpenTUI Terminal Interface**: Full-screen interactive dashboard featuring real-time response streaming, tool diff views, task sidebars, and keyboard overlays.
-- **⚙️ Dynamic Dual-Level Configuration**: Configurable globally via `~/.nanogent.json` or per-project via `.nanogent.json`. Editable directly in the TUI using `/config` and `/set` slash commands.
+- **⚙️ Dynamic Dual-Level Configuration**: Global defaults in `~/.nanogent.json` merge with per-project overrides in `.nanogent.json` (project keys win; MCP servers merge with per-server trust). Editable directly in the TUI using `/config` and `/set` slash commands.
 - **🤖 Autonomous Sub-Agent Swarm**: Dispatches multi-agent codebase exploration and search tasks concurrently to worker models.
 - **🛡️ Enterprise Security Hardening**: Built-in command validation, workspace path sandboxing, and automatic secret/API-key redaction.
 - **🔌 Model Context Protocol (MCP)**: Native MCP integration to connect filesystem servers, web search engines, and remote API tools.
