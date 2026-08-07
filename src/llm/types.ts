@@ -34,6 +34,13 @@ export interface ChatResponse {
   finishReason?: string;
 }
 
+export interface StreamChunk {
+  content: string;
+  reasoningContent: string;
+  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  finishReason?: string;
+}
+
 export interface ChatRequestOptions {
   enableThinking?: boolean;
   onRetry?: (info: {

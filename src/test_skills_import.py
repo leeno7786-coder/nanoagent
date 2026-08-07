@@ -1,1 +1,0 @@
-#!/usr/bin/env python3\nimport os\nimport sys\nprint(\"Testing skill import from src.skills...\")\ntry:\n    # This should work if path is resolved correctly\n    exec(open('src/skills/python.json').read())\nexcept Exception as e:\n    print(f\"Error: {e}\")\n    sys.exit(1)\nprint(\"Success: Skill import works!\")

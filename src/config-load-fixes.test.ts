@@ -118,9 +118,7 @@ describe('fix 2: config candidate handling', () => {
   it('marks an explicitly-passed config path as trusted', () => {
     const explicit = join(tmp, 'my-config.json');
     writeFileSync(explicit, JSON.stringify({ temperature: 0.33 }));
-    const cfg = loadConfig(explicit) as ReturnType<typeof loadConfig> & {
-      configPathExplicit?: boolean;
-    };
+    const cfg = loadConfig(explicit);
     expect(cfg.temperature).toBe(0.33);
     expect(cfg.configFilePath).toBe(explicit);
     expect(cfg.configPathExplicit).toBe(true);

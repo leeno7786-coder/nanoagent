@@ -141,7 +141,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     if (parsed) {
       Object.assign(cfg, parsed);
       cfg.configFilePath = configPath;
-      (cfg as Config & { configPathExplicit?: boolean }).configPathExplicit = true;
+      cfg.configPathExplicit = true;
     }
   } else {
     // Dual-level configuration: the global (home-dir) config is the base and

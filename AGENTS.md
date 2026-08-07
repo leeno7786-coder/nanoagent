@@ -55,7 +55,6 @@ src/
 ├── store.ts             # Session/todo persistence (zustand)
 ├── skills.ts            # Skill definitions & manager
 ├── context.ts           # Git/workspace context detection
-├── streaming.ts         # Response streaming
 ├── security/            # Command validation, path sandbox, output sanitization
 ├── tools/               # Built-in tools: file, exec, git, search, graph, registry
 ├── agent-tools/         # Agent-facing tool wiring

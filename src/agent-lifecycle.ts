@@ -184,8 +184,7 @@ export async function initAgent(agent: AgentCore) {
     const source = agent.cfg.configFilePath;
     // An explicitly-passed config path is trusted regardless of location
     // (documented trust model: explicit path = trusted).
-    const explicitPath = !!(agent.cfg as Config & { configPathExplicit?: boolean })
-      .configPathExplicit;
+    const explicitPath = !!agent.cfg.configPathExplicit;
     const trustedSource = isTrustedMcpConfigSource(source, explicitPath);
     // Read the trust override from the REAL (pre-.env) environment — a
     // workspace .env must not be able to grant itself MCP trust.

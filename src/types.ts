@@ -29,6 +29,8 @@ export interface Config {
   systemPrompt?: string;
   /** Absolute path of the config file the configuration was loaded from (set by loadConfig). */
   configFilePath?: string;
+  /** True when configFilePath was passed explicitly to loadConfig (explicit path = trusted MCP source). */
+  configPathExplicit?: boolean;
   /** Optional model profile name (e.g. "qwen-plus"). */
   profile?: string;
   /** Number of retries on transient failures. */

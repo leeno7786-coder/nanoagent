@@ -1,9 +1,8 @@
 import OpenAI from 'openai';
 import type { Config } from '../types.js';
-import type { StreamChunk } from '../streaming.js';
 import { logError, logWarn } from '../log.js';
 import { ApiError } from './types.js';
-import type { ChatMessage, ChatRequestOptions } from './types.js';
+import type { ChatMessage, ChatRequestOptions, StreamChunk } from './types.js';
 import { normalizeContent, getMaxOutputTokens, extractDeltaText } from './utils.js';
 import {
   awaitEndpointRateLimit,
