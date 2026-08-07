@@ -287,6 +287,12 @@ export interface ModelInfo {
   maxContextLength?: number;
   /** Parameter count in billions. */
   paramBillions?: number;
+  /**
+   * Whether the model is currently loaded in memory. Undefined when the
+   * runtime doesn't report loaded state (older LM Studio) — treat as unknown,
+   * not as unloaded.
+   */
+  isLoaded?: boolean;
 }
 
 /**

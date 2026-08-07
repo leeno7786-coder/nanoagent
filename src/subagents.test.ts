@@ -12,6 +12,7 @@ import {
   resolveSubAgentPool,
   type SubAgentResult,
 } from './subagents.js';
+import { isSubAgentModelId, filterLoadedModels } from './subagents/pool.js';
 import type { Config } from './types.js';
 
 const mockConfig: Config = {
@@ -168,6 +169,43 @@ describe('subagents.ts - Sub-agent Management', () => {
       // AGENTS.md documents the concurrency cap as 4; keep the constant in
       // sync with core.ts (maxBackgroundSubAgents default) and the prompt.
       expect(MAX_CONCURRENT_SUBAGENTS).toBe(4);
+    });
+  });
+
+  describe('isSubAgentModelId', () => {
+    it('matches small Qwen3.5 models, bare or publisher-prefixed', () => {
+      expect(isSubAgentModelId('qwen3.5-2b')).toBe(true);
+      expect(isSubAgentModelId('qwen3.5-4b')).toBe(true);
+      expect(isSubAgentModelId('qwen/qwen3.5-9b')).toBe(true);
+      expect(isSubAgentModelId('Qwen3.5-2B-Instruct')).toBe(true);
+    });
+
+    it('rejects oversized, older-generation, and non-Qwen models', () => {
+      expect(isSubAgentModelId('qwen/qwen3.5-27b')).toBe(false);
+      expect(isSubAgentModelId('qwen2.5-3b')).toBe(false);
+      expect(isSubAgentModelId('gemma-4-12b-coder')).toBe(false);
+      expect(isSubAgentModelId('text-embedding-nomic-embed-text-v1.5')).toBe(false);
+    });
+  });
+
+  describe('filterLoadedModels', () => {
+    it('keeps only loaded models when loaded state is known', () => {
+      const models = [
+        { id: 'qwen3.5-4b', isLoaded: true },
+        { id: 'qwen/qwen3.5-9b', isLoaded: false },
+        { id: 'qwen3.5-2b', isLoaded: true },
+      ];
+      expect(filterLoadedModels(models).map((m) => m.id)).toEqual(['qwen3.5-4b', 'qwen3.5-2b']);
+    });
+
+    it('keeps everything when the runtime reports no loaded state', () => {
+      const models = [{ id: 'qwen3.5-4b' }, { id: 'qwen3.5-2b' }];
+      expect(filterLoadedModels(models)).toHaveLength(2);
+    });
+
+    it('returns empty when state is known but nothing is loaded', () => {
+      const models = [{ id: 'qwen3.5-4b', isLoaded: false }];
+      expect(filterLoadedModels(models)).toHaveLength(0);
     });
   });
 

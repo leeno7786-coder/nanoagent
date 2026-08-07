@@ -188,6 +188,9 @@ export async function fetchLMStudioModels(baseURL: string): Promise<ModelInfo[]>
           : '';
       const loaded = info.isLoaded ? 'loaded' : 'not loaded';
       const parts = [params, ctx, loaded, info.quantization].filter(Boolean);
+      // Older LM Studio records carry no state/loaded_instances — loaded
+      // state is then unknown (undefined), not "not loaded".
+      const stateKnown = m.state !== undefined || m.loaded_instances !== undefined;
       return {
         id: info.modelId,
         name: info.displayName || info.modelId,
@@ -196,6 +199,7 @@ export async function fetchLMStudioModels(baseURL: string): Promise<ModelInfo[]>
         maxContextLength: info.maxContextLength,
         paramBillions: info.paramBillions,
         default: info.isLoaded,
+        isLoaded: stateKnown ? info.isLoaded : undefined,
       };
     });
 }

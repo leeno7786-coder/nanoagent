@@ -26,21 +26,41 @@ function discoveredSlotsPerModel(): number {
 }
 
 /**
- * Discover loaded Qwen3.5-2B sub-agent models from a given LM Studio base URL.
+ * Sub-agent-suitable Qwen3.5 models: small instruct builds up to 9B (matches
+ * bare ids like `qwen3.5-4b` and publisher-prefixed like `qwen/qwen3.5-9b`).
+ * Bigger models work but waste host memory — the 2B–4B range is the sweet spot.
  */
-async function discoverQwen2BEndpoints(baseURL: string): Promise<SubAgentEndpoint[] | undefined> {
+export function isSubAgentModelId(id: string): boolean {
+  const m = /qwen3\.5[-.]?(\d+)b/i.exec(id);
+  return !!m && Number(m[1]) <= 9;
+}
+
+/**
+ * Keep only models that are actually loaded in memory. /api/v0/models lists
+ * every DOWNLOADED model; recruiting an unloaded one yields "Failed to load
+ * model" 400s at dispatch time. When the runtime reports no loaded state at
+ * all (older LM Studio), keep everything — same behavior as before.
+ */
+export function filterLoadedModels<T extends { isLoaded?: boolean }>(models: T[]): T[] {
+  const stateKnown = models.some((m) => m.isLoaded !== undefined);
+  if (!stateKnown) return models;
+  return models.filter((m) => m.isLoaded === true);
+}
+
+/**
+ * Discover loaded Qwen3.5 sub-agent models from a given LM Studio base URL.
+ */
+async function discoverQwenEndpoints(baseURL: string): Promise<SubAgentEndpoint[] | undefined> {
   try {
     const models = await fetchLMStudioModels(baseURL);
     const slots = discoveredSlotsPerModel();
-    const qwen2b = models
-      .filter((m) => /qwen3\.5[-.]?2b/i.test(m.id))
-      .map((m, i) => ({
-        name: `qwen-remote-${i + 1}`,
-        baseURL: baseURL.replace(/\/+$/, '').replace(/\/v1\/?$/i, '') + '/v1',
-        model: m.id,
-        concurrency: slots,
-      }));
-    return qwen2b.length > 0 ? qwen2b : undefined;
+    const found = filterLoadedModels(models.filter((m) => isSubAgentModelId(m.id))).map((m, i) => ({
+      name: `qwen-remote-${i + 1}`,
+      baseURL: baseURL.replace(/\/+$/, '').replace(/\/v1\/?$/i, '') + '/v1',
+      model: m.id,
+      concurrency: slots,
+    }));
+    return found.length > 0 ? found : undefined;
   } catch {
     return undefined;
   }
@@ -52,8 +72,8 @@ async function discoverQwen2BEndpoints(baseURL: string): Promise<SubAgentEndpoin
  * Priority:
  *   1. Explicit `cfg.subagents` (enabled + endpoints) — user-tuned. Per-endpoint
  *      `concurrency` maps to the server's parallel prediction slots.
- *   2. `REMOTE_LMSTUDIO_URL` env var — auto-discover Qwen3.5-2B models there.
- *   3. This machine's LM Studio (127.0.0.1:1234) — auto-discover qwen3.5-2b*
+ *   2. `REMOTE_LMSTUDIO_URL` env var — auto-discover Qwen3.5 (≤9B) models there.
+ *   3. This machine's LM Studio (127.0.0.1:1234) — auto-discover qwen3.5*
  *      instances. LM Studio forwards to the linked device. Discovered models
  *      get NANOGENT_SUBAGENT_SLOTS workers each (default 4).
  */
@@ -72,7 +92,7 @@ export async function resolveSubAgentPool(base: Config): Promise<SubAgentPoolCon
   ) as string[];
 
   for (const url of candidates) {
-    const endpoints = await discoverQwen2BEndpoints(url);
+    const endpoints = await discoverQwenEndpoints(url);
     if (endpoints && endpoints.length > 0) {
       return { enabled: true, endpoints, maxIterations: 12 };
     }
