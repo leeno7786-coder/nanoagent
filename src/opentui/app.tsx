@@ -16,7 +16,7 @@ import {
   buildConfigSnapshot,
 } from '../store.js';
 import type { Session, Config } from '../types.js';
-import { ChatScreen } from './chat-screen.js';
+import { ChatScreen, getVisibleMessages } from './chat-screen.js';
 import { ErrorBoundary } from './error-boundary.js';
 import { HelpOverlay, HistoryOverlay } from './overlays.js';
 import { SkillsOverlay } from './skills-overlay.js';
@@ -30,26 +30,11 @@ import { handleSlashCommand, checkAndAutoCompact } from './slash-commands.js';
 import { useAppStore } from './app-store.js';
 
 /**
- * Messages the user can select/copy — MUST mirror ChatScreen's
- * filteredMessages exactly (excludes system, tool, and empty assistant
- * messages; keeps the in-flight tail while busy), or selection indexes point
- * at the wrong message.
+ * Messages the user can select/copy — shares ChatScreen's visibility filter
+ * (getVisibleMessages) so selection indexes always point at the right message.
  */
 function selectableMessages(agent: AgentCore) {
-  return agent.messages.filter((msg, idx) => {
-    if (msg.role === 'system' || msg.role === 'tool') return false;
-    const isLast = idx === agent.messages.length - 1;
-    if (isLast && agent.state !== 'idle') return true;
-    if (
-      msg.role === 'assistant' &&
-      !msg.toolCalls?.length &&
-      !msg.reasoningContent &&
-      msg.content.trim() === ''
-    ) {
-      return false;
-    }
-    return true;
-  });
+  return getVisibleMessages(agent.messages, agent.state);
 }
 
 export function App({ renderer }: { renderer: CliRenderer }) {
@@ -875,8 +860,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               messages={messages}
               toolResults={toolResults}
               state={state}
-              model={agentRef.current?.cfg.model || ''}
-              todoCount={todos.length}
               elapsedMs={elapsedMs}
               currentTool={currentTool}
               lastUsage={lastUsage}

@@ -5,8 +5,7 @@ import type { ScrollBoxRenderable } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import type { Message, ToolResult, AgentState, ToolCall } from '../types.js';
 import type { PermissionMode } from '../security/index.js';
-import type { SubAgentProgressEvent } from '../tools/index.js';
-import type { SubAgentResult } from '../subagents.js';
+import type { SubAgentSnapshot } from '../agent-subagents.js';
 import { sanitizeForTui } from './sanitize.js';
 import { CommandDropdown } from './command-dropdown.js';
 import { getSyntaxStyle } from './syntax-style.js';
@@ -20,8 +19,6 @@ interface ChatScreenProps {
   messages: Message[];
   toolResults?: ToolResult[];
   state: AgentState;
-  model: string;
-  todoCount: number;
   elapsedMs: number;
   currentTool?: {
     name: string;
@@ -29,14 +26,7 @@ interface ChatScreenProps {
   };
   lastUsage?: { input_tokens: number; output_tokens: number };
   totalUsage: { input_tokens: number; output_tokens: number };
-  subAgents?: Array<{
-    id: string;
-    prompt: string;
-    focusPath?: string;
-    status: 'running' | 'done' | 'error';
-    progress?: SubAgentProgressEvent;
-    result?: SubAgentResult;
-  }>;
+  subAgents?: SubAgentSnapshot[];
   onSubmit: (text: string) => void;
   selectedMessageIndex?: number | null;
   todos?: Array<{ id: string; text: string; done: boolean }>;
@@ -46,6 +36,30 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 
 function spinnerFrame(ms: number): string {
   return SPINNER[Math.floor(ms / 80) % SPINNER.length];
+}
+
+/**
+ * Messages shown in the chat panel / offered for selection & copy. Excludes
+ * system, tool, and empty assistant messages; keeps the in-flight tail while
+ * busy. Single source of truth — app.tsx selection indexes depend on this
+ * exact ordering.
+ */
+export function getVisibleMessages(messages: Message[], state: AgentState): Message[] {
+  return messages.filter((msg, idx) => {
+    if (msg.role === 'system' || msg.role === 'tool') return false;
+    const isLastMessage = idx === messages.length - 1;
+    if (isLastMessage && state !== 'idle') return true;
+
+    if (
+      msg.role === 'assistant' &&
+      !msg.toolCalls?.length &&
+      !msg.reasoningContent &&
+      msg.content.trim() === ''
+    ) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function parseCodeBlocks(
@@ -226,21 +240,25 @@ export function ChatScreen({
   const permissionMode = useAppStore((s) => s.permissionMode);
   const permCfg = PERM_CONFIG[permissionMode] ?? PERM_CONFIG.ask;
 
-  const toolMap = useMemo(() => {
-    const map = new Map<string, ToolResult>();
-    for (const tr of toolResults) map.set(tr.toolCallId, tr);
-    return map;
-  }, [toolResults]);
-
-  const toolResultByCallId = useMemo(() => {
-    const map = new Map<string, string>();
+  // Single lookup for tool-render data: message tool results carry the
+  // content; the ToolResult list adds duration. Merged once per sync instead
+  // of threading two parallel maps through every MessageItem.
+  const toolInfoByCallId = useMemo(() => {
+    const map = new Map<string, { content: string; duration?: number }>();
     for (const msg of messages) {
       if (msg.role === 'tool' && msg.toolCallId) {
-        map.set(msg.toolCallId, msg.content);
+        map.set(msg.toolCallId, { content: msg.content });
       }
     }
+    for (const tr of toolResults) {
+      const existing = map.get(tr.toolCallId);
+      map.set(tr.toolCallId, {
+        content: existing?.content ?? tr.output ?? '',
+        duration: tr.duration,
+      });
+    }
     return map;
-  }, [messages]);
+  }, [messages, toolResults]);
 
   useKeyboard(
     (keyEvent) => {
@@ -271,12 +289,6 @@ export function ChatScreen({
         } else if (keyEvent.name === 'down' || keyEvent.name === 'ArrowDown') {
           scrollbox.scrollBy(1, 'content');
           keyEvent.preventDefault?.();
-        } else if (keyEvent.name === 'pageup' || keyEvent.name === 'PageUp') {
-          scrollbox.scrollBy(-0.5, 'viewport');
-          keyEvent.preventDefault?.();
-        } else if (keyEvent.name === 'pagedown' || keyEvent.name === 'PageDown') {
-          scrollbox.scrollBy(0.5, 'viewport');
-          keyEvent.preventDefault?.();
         }
         return;
       }
@@ -299,24 +311,33 @@ export function ChatScreen({
     [onSubmit]
   );
 
-  const filteredMessages = useMemo(
-    () =>
-      messages.filter((msg, idx) => {
-        if (msg.role === 'system' || msg.role === 'tool') return false;
-        const isLastMessage = idx === messages.length - 1;
-        if (isLastMessage && state !== 'idle') return true;
+  const handleDropdownPick = useCallback(
+    (cmd: string) => {
+      // Tab-picks arrive with a trailing space ('/cd ') — normalize or
+      // the ARG_BEARING lookup misses and the command EXECUTES instead
+      // of landing in the input for an argument.
+      const name = cmd.trim();
+      const trimmed = inputValue.trim();
+      if (trimmed === name || trimmed.startsWith(name + ' ')) {
+        handleSubmitLocal(trimmed);
+      } else if (ARG_BEARING.has(name)) {
+        setInputValue(name + ' ');
+      } else {
+        handleSubmitLocal(name);
+      }
+    },
+    [inputValue, handleSubmitLocal]
+  );
 
-        if (
-          msg.role === 'assistant' &&
-          !msg.toolCalls?.length &&
-          !msg.reasoningContent &&
-          msg.content.trim() === ''
-        ) {
-          return false;
-        }
-        return true;
-      }),
-    [messages, state]
+  const handleInputSubmit = useCallback(
+    (v: unknown) => {
+      const text = typeof v === 'string' ? v : String((v as { value?: string })?.value ?? '');
+      // Always submit from the input. CommandDropdown may also handle
+      // Enter (and preventDefault); if it doesn't, this is the fallback
+      // so slash commands are never silently dropped.
+      if (text.trim()) handleSubmitLocal(text);
+    },
+    [handleSubmitLocal]
   );
 
   const visibleMessages = useMemo(
@@ -324,8 +345,8 @@ export function ChatScreen({
     // stickyScroll (follows the stream, releases when the user scrolls up)
     // and viewportCulling (only visible children render), so long sessions
     // stay fast without any pagination/windowing.
-    () => filteredMessages,
-    [filteredMessages]
+    () => getVisibleMessages(messages, state),
+    [messages, state]
   );
 
   const showBusy = busy && !(state === 'executing_tool' && currentTool);
@@ -374,11 +395,11 @@ export function ChatScreen({
                 <MessageItem
                   message={msg}
                   theme={theme}
-                  toolMap={toolMap}
-                  toolResultByCallId={toolResultByCallId}
+                  toolInfoByCallId={toolInfoByCallId}
                   lastUsage={lastUsage}
                   state={index === visibleMessages.length - 1 ? state : undefined}
                   currentTool={currentTool}
+                  elapsedMs={index === visibleMessages.length - 1 ? elapsedMs : undefined}
                   highlighted={isSelected}
                 />
               </box>
@@ -409,29 +430,8 @@ export function ChatScreen({
       <CommandDropdown
         inputValue={inputValue}
         theme={theme}
-        onSubmit={useCallback(
-          (v: string) => {
-            handleSubmitLocal(v);
-          },
-          [handleSubmitLocal]
-        )}
-        onPick={useCallback(
-          (cmd: string) => {
-            // Tab-picks arrive with a trailing space ('/cd ') — normalize or
-            // the ARG_BEARING lookup misses and the command EXECUTES instead
-            // of landing in the input for an argument.
-            const name = cmd.trim();
-            const trimmed = inputValue.trim();
-            if (trimmed === name || trimmed.startsWith(name + ' ')) {
-              handleSubmitLocal(trimmed);
-            } else if (ARG_BEARING.has(name)) {
-              setInputValue(name + ' ');
-            } else {
-              handleSubmitLocal(name);
-            }
-          },
-          [inputValue, handleSubmitLocal]
-        )}
+        onSubmit={handleSubmitLocal}
+        onPick={handleDropdownPick}
       />
 
       <box
@@ -450,17 +450,7 @@ export function ChatScreen({
           placeholder={busy ? 'Working…' : 'Type a message or / for commands…'}
           value={inputValue}
           onInput={setInputValue}
-          onSubmit={useCallback(
-            (v: unknown) => {
-              const text =
-                typeof v === 'string' ? v : String((v as { value?: string })?.value ?? '');
-              // Always submit from the input. CommandDropdown may also handle
-              // Enter (and preventDefault); if it doesn't, this is the fallback
-              // so slash commands are never silently dropped.
-              if (text.trim()) handleSubmitLocal(text);
-            },
-            [handleSubmitLocal]
-          )}
+          onSubmit={handleInputSubmit}
           focused
         />
         <box flexDirection="row" flexShrink={0} marginLeft={1}>
@@ -599,25 +589,20 @@ function SubAgentPanel({
   theme,
   elapsedMs,
 }: {
-  subAgents: Array<{
-    id: string;
-    prompt: string;
-    focusPath?: string;
-    status: 'running' | 'done' | 'error';
-    log?: SubAgentProgressEvent[];
-    result?: SubAgentResult;
-  }>;
+  subAgents: SubAgentSnapshot[];
   theme: Theme;
   elapsedMs: number;
 }) {
-  const activeSubAgents = (subAgents || []).filter((sa) => sa.status === RUNNING);
-  if (activeSubAgents.length === 0) return null;
+  // Show ALL agents of the current batch — running ones stream live, done /
+  // error ones keep their final status line until the map is cleared at the
+  // end of the turn (awaitAllBackgroundSubAgents).
+  if (!subAgents || subAgents.length === 0) return null;
 
   const spin = spinnerFrame(elapsedMs);
 
   return (
     <box flexDirection="column" marginY={1}>
-      {activeSubAgents.map((sa, idx) => {
+      {subAgents.map((sa, idx) => {
         const log = sa.log ?? [];
         const turns = sa.result?.toolCalls ?? 0;
         const isRunning = sa.status === RUNNING;
@@ -710,27 +695,26 @@ function SubAgentPanel({
 
 function renderToolCall(
   tc: ToolCall,
-  toolMap: Map<string, ToolResult>,
-  toolResultByCallId: Map<string, string>,
+  toolInfoByCallId: Map<string, { content: string; duration?: number }>,
   theme: Theme
 ) {
-  const tr = toolMap.get(tc.id);
-  const resultRaw = toolResultByCallId.get(tc.id) ?? tr?.output ?? '';
-  const block = buildToolDisplayBlock(tc.name, tc.arguments, resultRaw, tr?.duration);
+  const info = toolInfoByCallId.get(tc.id);
+  const block = buildToolDisplayBlock(tc.name, tc.arguments, info?.content ?? '', info?.duration);
   return <ToolActivityBlock key={tc.id} block={block} theme={theme} />;
 }
 
 type MessageItemProps = {
   message: Message;
   theme: Theme;
-  toolMap: Map<string, ToolResult>;
-  toolResultByCallId: Map<string, string>;
+  toolInfoByCallId: Map<string, { content: string; duration?: number }>;
   lastUsage?: { input_tokens: number; output_tokens: number };
   state?: AgentState;
   currentTool?: {
     name: string;
     args: string;
   };
+  /** Ticking clock for spinners — only passed to the in-flight tail message. */
+  elapsedMs?: number;
   highlighted?: boolean;
 };
 
@@ -744,11 +728,11 @@ const MessageItem = memo(
   function MessageItem({
     message,
     theme,
-    toolMap,
-    toolResultByCallId,
+    toolInfoByCallId,
     lastUsage,
     state,
     currentTool,
+    elapsedMs,
     highlighted = false,
   }: MessageItemProps) {
     if (message.role === 'system') return null;
@@ -789,7 +773,7 @@ const MessageItem = memo(
                         key={i}
                         fg={i === 0 && isThinking ? theme.statusThinking : theme.mutedFg}
                       >
-                        {i === 0 ? `${isThinking ? spinnerFrame(Date.now()) : '⠞'} ` : '  '}
+                        {i === 0 ? `${isThinking ? spinnerFrame(elapsedMs ?? 0) : '⠞'} ` : '  '}
                         {line.length > 140 ? line.slice(0, 139) + '…' : line || ' '}
                       </text>
                     ))}
@@ -802,7 +786,7 @@ const MessageItem = memo(
                 );
               })()
             ) : (
-              <text fg={theme.statusThinking}>{spinnerFrame(Date.now())} thinking…</text>
+              <text fg={theme.statusThinking}>{spinnerFrame(elapsedMs ?? 0)} thinking…</text>
             )}
           </box>
         )}
@@ -843,7 +827,7 @@ const MessageItem = memo(
 
         {toolCalls
           .filter((tc) => tc.name !== 'explore_subagent')
-          .map((tc) => renderToolCall(tc, toolMap, toolResultByCallId, theme))}
+          .map((tc) => renderToolCall(tc, toolInfoByCallId, theme))}
 
         {message.role === 'assistant' &&
           state === 'executing_tool' &&
@@ -860,7 +844,7 @@ const MessageItem = memo(
               <box flexDirection="column">
                 <text fg={theme.statusTool}>
                   {'  '}
-                  {spinnerFrame(Date.now())}{' '}
+                  {spinnerFrame(elapsedMs ?? 0)}{' '}
                   {pending.kind === 'command'
                     ? `$ ${pending.target}…`
                     : `${pending.action} ${pending.target}…`}
@@ -884,7 +868,8 @@ const MessageItem = memo(
       prev.state !== next.state ||
       prev.highlighted !== next.highlighted ||
       prev.lastUsage !== next.lastUsage ||
-      prev.currentTool !== next.currentTool
+      prev.currentTool !== next.currentTool ||
+      prev.elapsedMs !== next.elapsedMs
     ) {
       return false;
     }
@@ -900,11 +885,10 @@ const MessageItem = memo(
         return false;
       }
     }
-    // Compare tool-result bindings per call id (the Maps are rebuilt per update)
+    // Compare tool-result bindings per call id (the Map is rebuilt per update)
     const tcs = nm.toolCalls ?? [];
     for (const tc of tcs) {
-      if (prev.toolResultByCallId.get(tc.id) !== next.toolResultByCallId.get(tc.id)) return false;
-      if (prev.toolMap.get(tc.id) !== next.toolMap.get(tc.id)) return false;
+      if (prev.toolInfoByCallId.get(tc.id) !== next.toolInfoByCallId.get(tc.id)) return false;
     }
     return true;
   }
