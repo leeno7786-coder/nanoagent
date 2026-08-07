@@ -128,12 +128,15 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Sub-agent tool: **`explore_subagent`** — dispatch ONE worker with a focused,
   context-rich `prompt` + optional `focus_path`. The old blind "fan to all" tool was
   removed (vague prompts time out on big codebases). Don't reintroduce it.
-- Concurrency is **capped at 4**. The main agent synthesizes results itself.
+- Concurrency defaults to **4** (`maxBackgroundSubAgents`, up to 16). Pool capacity is
+  endpoints × per-endpoint `concurrency` (parallel prediction slots). The main agent
+  synthesizes results itself.
 - Sub-agents get the **full local tool set** (read/write/search/shell/git) against the
   shared workspace.
 - Pool auto-discovery order (`resolveSubAgentPool`, `src/subagents.ts`): explicit
   `cfg.subagents` → `REMOTE_LMSTUDIO_URL` → local LM Studio `qwen3.5-2b*` models.
-  Preserve this order.
+  Discovered models each get `NANOGENT_SUBAGENT_SLOTS` workers (default 4, matching
+  LM Studio's "max concurrent predictions"). Preserve this order.
 - OpenRouter sub-agents reuse `OPENROUTER_API_KEY` when the main agent uses OpenRouter.
 - Default local backend: LM Studio at `http://127.0.0.1:1234/v1`. Handle unreachable/
   slow endpoints with timeouts and clear user-facing errors — never hang silently.
@@ -180,10 +183,14 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Bun + OpenTUI agent; TUI code lives in `src/opentui/`; config at `~/.nanogent.json` or `.nanogent.json`.
 - Default local backend is LM Studio at `http://127.0.0.1:1234/v1`.
 - Sub-agent tool: `explore_subagent` (dispatch ONE remote Qwen with a focused `prompt` + optional `focus_path`). The blind "fan to all" tool was removed because vague prompts time out on large codebases.
-- Remote sub-agents run on the 3 Qwen3.5-2B models loaded in this machine's LM Studio (`qwen3.5-2b`, `qwen3.5-2b:2`, `qwen3.5-2b:3`). LM Studio auto-links to the other device that actually hosts the models; sub-agents hit `http://127.0.0.1:1234/v1`.
+- Remote sub-agents run on Qwen3.5-2B model(s) in this machine's LM Studio. A single
+  loaded model with N parallel prediction slots serves N workers (scheduler counts
+  per-endpoint slots); LM Studio auto-links to the other device that hosts the models.
+  Sub-agents hit `http://127.0.0.1:1234/v1`.
 - Sub-agents get the FULL local tool set (read/write/search/shell/git) against the shared workspace, so they can actually investigate and act — not just answer prompts.
 - Pool is auto-discovered: `resolveSubAgentPool` (src/subagents.ts) prefers explicit `cfg.subagents`, then `REMOTE_LMSTUDIO_URL`, then local LM Studio's `qwen3.5-2b*` models. No manual config needed.
-- Main agent calls `explore_subagent` 1–3× in parallel with narrow, file-specific prompts; concurrency capped at 4. It synthesizes results itself.
+- Main agent calls `explore_subagent` 1–3× in parallel with narrow, file-specific prompts;
+  default concurrency 4 (configurable to 16 via `maxBackgroundSubAgents`). It synthesizes results itself.
 - Parallel `code_review` sub-agent mode was removed; main agent crafts per-agent prompts.
 - Detects loaded model size and context from LM Studio dynamically.
 - OpenRouter sub-agents reuse `OPENROUTER_API_KEY` when the main agent also uses OpenRouter.

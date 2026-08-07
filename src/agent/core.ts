@@ -152,7 +152,7 @@ export class AgentCore {
 
   /** Active background sub-agents keyed by id. */
   public backgroundSubAgents: Map<string, BackgroundSubAgent> = new Map();
-  /** Max number of concurrently running background sub-agents (default: 3). */
+  /** Max number of concurrently running background sub-agents (default: 4). */
   public maxBackgroundSubAgents: number;
   /** Counter for continuous tool rounds before checking in with user. */
   public consecutiveToolRounds = 0;

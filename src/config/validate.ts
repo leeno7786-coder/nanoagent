@@ -148,10 +148,20 @@ export function validateConfig(cfg: Config): {
   }
 
   if (cfg.maxBackgroundSubAgents !== undefined) {
-    if (cfg.maxBackgroundSubAgents < 1 || cfg.maxBackgroundSubAgents > 10) {
+    if (cfg.maxBackgroundSubAgents < 1 || cfg.maxBackgroundSubAgents > 16) {
       warnings.push(
-        `maxBackgroundSubAgents should be between 1 and 10 for stability, got ${cfg.maxBackgroundSubAgents}`
+        `maxBackgroundSubAgents should be between 1 and 16 for stability, got ${cfg.maxBackgroundSubAgents}`
       );
+    }
+  }
+
+  if (cfg.subagents?.endpoints) {
+    for (const ep of cfg.subagents.endpoints) {
+      if (ep.concurrency !== undefined && (ep.concurrency < 1 || ep.concurrency > 16)) {
+        warnings.push(
+          `subagent endpoint "${ep.name}" concurrency should be between 1 and 16, got ${ep.concurrency}`
+        );
+      }
     }
   }
 

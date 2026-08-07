@@ -7,10 +7,23 @@ import type { Config, SubAgentEndpoint, SubAgentPoolConfig } from '../types.js';
 
 /**
  * Default base URL for sub-agents: this machine's LM Studio, which proxies to
- * the other device's models automatically. The three Qwen3.5-2B instances are
- * loaded here as qwen3.5-2b, qwen3.5-2b:2, qwen3.5-2b:3.
+ * the other device's models automatically.
  */
 const LOCAL_LMSTUDIO_URL = 'http://127.0.0.1:1234/v1';
+
+/**
+ * Parallel prediction slots assumed per discovered LM Studio model (LM Studio
+ * "max concurrent predictions"). A single loaded model with N slots serves N
+ * sub-agent workers at once — no need to load duplicate copies. Override with
+ * NANOGENT_SUBAGENT_SLOTS to match the server setting.
+ */
+const DEFAULT_SLOTS_PER_MODEL = 4;
+
+function discoveredSlotsPerModel(): number {
+  const raw = Number(process.env.NANOGENT_SUBAGENT_SLOTS);
+  if (Number.isInteger(raw) && raw >= 1 && raw <= 8) return raw;
+  return DEFAULT_SLOTS_PER_MODEL;
+}
 
 /**
  * Discover loaded Qwen3.5-2B sub-agent models from a given LM Studio base URL.
@@ -18,12 +31,14 @@ const LOCAL_LMSTUDIO_URL = 'http://127.0.0.1:1234/v1';
 async function discoverQwen2BEndpoints(baseURL: string): Promise<SubAgentEndpoint[] | undefined> {
   try {
     const models = await fetchLMStudioModels(baseURL);
+    const slots = discoveredSlotsPerModel();
     const qwen2b = models
       .filter((m) => /qwen3\.5[-.]?2b/i.test(m.id))
       .map((m, i) => ({
         name: `qwen-remote-${i + 1}`,
         baseURL: baseURL.replace(/\/+$/, '').replace(/\/v1\/?$/i, '') + '/v1',
         model: m.id,
+        concurrency: slots,
       }));
     return qwen2b.length > 0 ? qwen2b : undefined;
   } catch {
@@ -35,10 +50,12 @@ async function discoverQwen2BEndpoints(baseURL: string): Promise<SubAgentEndpoin
  * Resolve a pool config from the base config.
  *
  * Priority:
- *   1. Explicit `cfg.subagents` (enabled + endpoints) — user-tuned.
+ *   1. Explicit `cfg.subagents` (enabled + endpoints) — user-tuned. Per-endpoint
+ *      `concurrency` maps to the server's parallel prediction slots.
  *   2. `REMOTE_LMSTUDIO_URL` env var — auto-discover Qwen3.5-2B models there.
- *   3. This machine's LM Studio (127.0.0.1:1234) — auto-discover the three
- *      qwen3.5-2b* instances. LM Studio forwards to the linked device.
+ *   3. This machine's LM Studio (127.0.0.1:1234) — auto-discover qwen3.5-2b*
+ *      instances. LM Studio forwards to the linked device. Discovered models
+ *      get NANOGENT_SUBAGENT_SLOTS workers each (default 4).
  */
 export async function resolveSubAgentPool(base: Config): Promise<SubAgentPoolConfig | undefined> {
   if (base.subagents) {

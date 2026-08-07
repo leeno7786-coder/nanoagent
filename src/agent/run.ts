@@ -108,7 +108,10 @@ export async function agentRun(
       const lines = [
         `## Remote Sub-agents (${pool.endpoints.length} endpoints)`,
         '',
-        ...pool.endpoints.map((e) => `- ${e.name}: \`${e.model}\` @ ${e.baseURL}`),
+        ...pool.endpoints.map(
+          (e) =>
+            `- ${e.name}: \`${e.model}\` @ ${e.baseURL}${(e.concurrency ?? 1) > 1 ? ` (${e.concurrency} slots)` : ''}`
+        ),
         '',
         `Concurrency cap: ${agent.maxBackgroundSubAgents}`,
       ];

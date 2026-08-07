@@ -134,6 +134,12 @@ export interface SubAgentEndpoint {
   baseURL: string;
   /** Model id loaded on that endpoint. */
   model: string;
+  /**
+   * Parallel prediction slots the server exposes for this model (LM Studio
+   * "max concurrent predictions"). The scheduler runs up to this many workers
+   * against the endpoint simultaneously. Defaults to 1.
+   */
+  concurrency?: number;
   /** Optional API key (usually empty for local LM Studio). */
   apiKey?: string;
 }

@@ -6,10 +6,12 @@ import type { SubAgentEndpoint } from '../../types.js';
 export const MAX_CONCURRENT_SUBAGENTS = 4;
 
 /**
- * Endpoint allocator for parallel dispatch.
+ * Endpoint allocator for parallel dispatch. Each endpoint grants up to
+ * `concurrency` simultaneous workers (LM Studio parallel prediction slots);
+ * endpoints without an explicit concurrency allow one worker at a time.
  */
 export class SubAgentScheduler {
-  private inUse = new Set<string>();
+  private inUse = new Map<string, number>();
   private cursor = 0;
   private queue: Array<{ fired: boolean; wake: () => void }> = [];
 
@@ -59,21 +61,31 @@ export class SubAgentScheduler {
   private tryAcquire(usable: SubAgentEndpoint[], preferred?: string): SubAgentEndpoint | undefined {
     if (preferred) {
       const p = usable.find((e) => e.name === preferred);
-      if (p && !this.inUse.has(p.name)) {
-        this.inUse.add(p.name);
+      if (p && this.hasCapacity(p)) {
+        this.inUse.set(p.name, (this.inUse.get(p.name) ?? 0) + 1);
         return p;
       }
     }
-    const free = usable.filter((e) => !this.inUse.has(e.name));
+    const free = usable.filter((e) => this.hasCapacity(e));
     if (free.length === 0) return undefined;
     const ep = free[this.cursor % free.length];
     this.cursor++;
-    this.inUse.add(ep.name);
+    this.inUse.set(ep.name, (this.inUse.get(ep.name) ?? 0) + 1);
     return ep;
   }
 
+  private hasCapacity(ep: SubAgentEndpoint): boolean {
+    const capacity = Math.max(1, ep.concurrency ?? 1);
+    return (this.inUse.get(ep.name) ?? 0) < capacity;
+  }
+
   release(name: string) {
-    this.inUse.delete(name);
+    const count = this.inUse.get(name) ?? 0;
+    if (count <= 1) {
+      this.inUse.delete(name);
+    } else {
+      this.inUse.set(name, count - 1);
+    }
     // Skip stale waiters whose 1s poll timer already fired — waking one of
     // those would consume the release while a live waiter keeps waiting.
     while (this.queue.length > 0) {
