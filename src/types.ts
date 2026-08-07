@@ -154,6 +154,13 @@ export interface SubAgentPoolConfig {
   endpoints: SubAgentEndpoint[];
   /** Per-subagent max output tokens (defaults to main cfg.maxTokens). */
   maxTokens?: number;
+  /**
+   * Per-turn INACTIVITY timeout in ms (resets on every streamed chunk).
+   * Slow hosts need headroom for model load + prefill before the first
+   * token. Defaults to NANOGENT_SUBAGENT_TURN_TIMEOUT_MS or 600000 (10 min,
+   * matching the 600s local-provider HTTP timeout).
+   */
+  turnTimeoutMs?: number;
   /** Per-subagent temperature (defaults to main cfg.temperature). */
   temperature?: number;
   /** Max tool-call iterations per subagent turn (default: 20). */

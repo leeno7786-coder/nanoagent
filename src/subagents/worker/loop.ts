@@ -37,11 +37,27 @@ You have a curated READ-ONLY tool set: read_file, batch_read_files, list_dir, ma
 
 Make it specific. File paths and line numbers are critical.`;
 
+const DEFAULT_TURN_TIMEOUT_MS = 600000;
+
+/**
+ * Per-turn inactivity timeout for worker streams. Resolved per dispatch:
+ * pool.turnTimeoutMs → NANOGENT_SUBAGENT_TURN_TIMEOUT_MS → 120s default.
+ * Resets on every streamed chunk, so it only fires when the server goes
+ * quiet (slow hosts need headroom for model load + prefill).
+ */
+function resolveTurnTimeoutMs(pool?: SubAgentPoolConfig): number {
+  if (pool?.turnTimeoutMs && pool.turnTimeoutMs >= 10000) return pool.turnTimeoutMs;
+  const env = Number(process.env.NANOGENT_SUBAGENT_TURN_TIMEOUT_MS);
+  if (Number.isInteger(env) && env >= 10000) return env;
+  return DEFAULT_TURN_TIMEOUT_MS;
+}
+
 async function runSingleSubAgent(
   wctx: WorkerContext,
   task: string,
   signal?: AbortSignal,
-  hooks?: ToolExecutionHooks
+  hooks?: ToolExecutionHooks,
+  turnTimeoutMs: number = DEFAULT_TURN_TIMEOUT_MS
 ): Promise<SubAgentResult> {
   const emit = (e: SubAgentProgressEvent) => hooks?.onSubAgentProgress?.(e);
   const start = performance.now();
@@ -111,13 +127,13 @@ async function runSingleSubAgent(
     const turnController = new AbortController();
     let turnTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
       turnController.abort();
-    }, 60000);
+    }, turnTimeoutMs);
 
     const resetTurnTimer = () => {
       if (turnTimer) clearTimeout(turnTimer);
       turnTimer = setTimeout(() => {
         turnController.abort();
-      }, 60000);
+      }, turnTimeoutMs);
     };
 
     const onParentAbort = () => turnController.abort();
@@ -188,6 +204,13 @@ async function runSingleSubAgent(
     } finally {
       if (turnTimer) clearTimeout(turnTimer);
       signal?.removeEventListener('abort', onParentAbort);
+    }
+
+    // An abort can end the stream WITHOUT throwing (the HTTP client unwinds
+    // the SSE iterator quietly) — catch that here or a 60s timeout with zero
+    // output would fall through as an empty ok:true "success".
+    if (turnController.signal.aborted && !turnTimedOut && !streamError) {
+      turnTimedOut = true;
     }
 
     const msg = {
@@ -387,8 +410,18 @@ async function runSingleSubAgent(
 
     const answer = msg.content || '';
 
-    if (!answer && (streamError || turnTimedOut)) {
-      const reason = streamError ?? 'turn timed out';
+    if (!answer) {
+      // A worker exists to produce a report — an empty turn is never a
+      // success, whether it errored, timed out, or the model quietly
+      // returned nothing (e.g. reasoning-only models that burn the whole
+      // token budget on reasoning_content and finish with empty content).
+      const reason =
+        streamError ??
+        (turnTimedOut
+          ? signal?.aborted
+            ? 'aborted'
+            : 'turn timed out'
+          : 'model returned an empty response');
       emit({
         type: 'subagent_done',
         agent: wctx.endpoint.name,
@@ -494,7 +527,7 @@ export async function exploreWithSubAgent(
   }
   const wctx = buildWorkerContext(ep, base);
   try {
-    return await runSingleSubAgent(wctx, task, signal, hooks);
+    return await runSingleSubAgent(wctx, task, signal, hooks, resolveTurnTimeoutMs(pool));
   } finally {
     // The per-dispatch ToolCacheManager starts fs.watch handles on cached
     // dependencies — close them so each dispatch doesn't leak watchers.

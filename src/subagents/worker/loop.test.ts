@@ -5,11 +5,28 @@
 import { describe, it, expect, mock } from 'bun:test';
 
 // Mock the LLM layer so the worker loop runs without a real endpoint.
+// 'throw': stream errors immediately. 'quiet': stream completes with zero
+// chunks (reasoning-only models / graceful abort unwinds). 'wait-abort':
+// blocks until the signal aborts, then ends quietly without throwing.
+let streamBehavior: 'throw' | 'quiet' | 'wait-abort' = 'throw';
 mock.module('../../llm.js', () => ({
-  streamChat: () =>
-    // eslint-disable-next-line require-yield -- this mock stream always throws
+  streamChat: (
+    _client: unknown,
+    _cfg: unknown,
+    _messages: unknown,
+    _tools: unknown,
+    signal?: AbortSignal
+  ) =>
+    // eslint-disable-next-line require-yield -- mock stream never yields chunks
     (async function* () {
-      throw new Error('stream boom');
+      if (streamBehavior === 'throw') throw new Error('stream boom');
+      if (streamBehavior === 'wait-abort') {
+        await new Promise<void>((res) => {
+          if (signal?.aborted) return res();
+          signal?.addEventListener('abort', () => res(), { once: true });
+        });
+      }
+      // quiet completion: no chunks, no throw
     })(),
   createClient: () => ({}),
 }));
@@ -24,10 +41,34 @@ const pool = {
 
 describe('exploreWithSubAgent error reporting', () => {
   it('reports a first-turn stream error as ok:false, never an empty success', async () => {
+    streamBehavior = 'throw';
     const result = await exploreWithSubAgent(base, pool, 'test-ep', 'investigate src/foo.ts');
     expect(result.ok).toBe(false);
     expect(result.output).toBe('');
     expect(result.error).toBe('stream boom');
+  });
+
+  it('reports a quietly empty stream as ok:false (reasoning-only model)', async () => {
+    streamBehavior = 'quiet';
+    const result = await exploreWithSubAgent(base, pool, 'test-ep', 'investigate src/foo.ts');
+    expect(result.ok).toBe(false);
+    expect(result.output).toBe('');
+    expect(result.error).toContain('empty response');
+  });
+
+  it('reports a gracefully-unwound abort as ok:false, not an empty success', async () => {
+    streamBehavior = 'wait-abort';
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 50);
+    const result = await exploreWithSubAgent(
+      base,
+      pool,
+      'test-ep',
+      'investigate src/foo.ts',
+      controller.signal
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('aborted');
   });
 
   it('returns ok:false when no usable endpoints are configured', async () => {
