@@ -693,6 +693,22 @@ function SubAgentPanel({
         }
         const recentToolCalls = toolCalls.slice(-8);
 
+        // Latest streamed output line — this is the worker's live "stream".
+        let streamLine = '';
+        for (let i = log.length - 1; i >= 0; i--) {
+          const ev = log[i];
+          if (ev.type !== 'subagent_chunk') continue;
+          const raw = (ev.text || ev.reasoning || '').trim();
+          if (!raw) continue;
+          const lastLine =
+            raw
+              .split('\n')
+              .filter((l) => l.trim())
+              .pop() ?? '';
+          streamLine = sanitizeForTui(lastLine).slice(0, 100);
+          break;
+        }
+
         const runningTools = new Map<string, string>();
         for (const ev of log) {
           if (ev.type === 'subagent_tool' && ev.tool) {
@@ -719,6 +735,12 @@ function SubAgentPanel({
               {isRunning ? `${spin} ` : sa.status === DONE ? '✓ ' : '✗ '}
               {agentName}: {taskLabel || 'working…'}
             </text>
+
+            {isRunning && streamLine !== '' && (
+              <text fg={theme.mutedFg} marginLeft={2}>
+                ⎿ {streamLine}
+              </text>
+            )}
 
             {recentToolCalls.map((tc, i) => (
               <text key={i} fg={tc.ok ? theme.mutedFg : theme.errorFg} marginLeft={2}>

@@ -157,7 +157,11 @@ export async function executeToolSequential(
         tc.name === 'explore_subagent'
           ? {
               onSubAgentProgress: (progress) => {
-                const saId = progress.agent || `sa-sync-${tc.id}`;
+                // Key the mirror handle by TOOL CALL id, not progress.agent:
+                // agent is the endpoint name, and with multi-slot endpoints
+                // several concurrent workers share it — their events would
+                // all collapse into one handle.
+                const saId = `sa-sync-${tc.id}`;
                 syntheticSaIds.add(saId);
                 let handle = agent.backgroundSubAgents.get(saId);
                 if (!handle) {
@@ -370,7 +374,11 @@ export async function executeToolsParallel(
           tc.name === 'explore_subagent'
             ? {
                 onSubAgentProgress: (progress) => {
-                  const saId = progress.agent || `sa-sync-${tc.id}`;
+                  // Key the mirror handle by TOOL CALL id, not progress.agent:
+                  // agent is the endpoint name, and with multi-slot endpoints
+                  // several concurrent workers share it — their events would
+                  // all collapse into one handle.
+                  const saId = `sa-sync-${tc.id}`;
                   syntheticSaIds.add(saId);
                   let handle = agent.backgroundSubAgents.get(saId);
                   if (!handle) {
