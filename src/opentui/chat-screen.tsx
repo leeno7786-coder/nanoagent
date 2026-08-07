@@ -62,12 +62,10 @@ export function getVisibleMessages(messages: Message[], state: AgentState): Mess
   });
 }
 
-function parseCodeBlocks(
-  content: string
-): Array<{ type: 'text'; text: string } | { type: 'code'; lang?: string; code: string }> {
-  const segments: Array<
-    { type: 'text'; text: string } | { type: 'code'; lang?: string; code: string }
-  > = [];
+type CodeSegment = { type: 'text'; text: string } | { type: 'code'; lang?: string; code: string };
+
+function parseCodeBlocks(content: string): CodeSegment[] {
+  const segments: CodeSegment[] = [];
   const regex = /```(\w*)\n([\s\S]*?)```/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -78,6 +76,47 @@ function parseCodeBlocks(
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < content.length) segments.push({ type: 'text', text: content.slice(lastIndex) });
+  return segments;
+}
+
+/** Raw source length a segment was parsed from (```lang\nCODE``` for code). */
+function segmentSourceLength(seg: CodeSegment): number {
+  if (seg.type === 'text') return seg.text.length;
+  return 3 + (seg.lang?.length ?? 0) + 1 + seg.code.length + 3;
+}
+
+// Streaming parse cache: assistant content grows by append-only chunks.
+// Completed segments are stable; only the TRAILING segment can change (an
+// unclosed ``` fence may complete later), so on each chunk we keep all but
+// the last segment and re-parse just the tail. Falls back to a full parse
+// when the content isn't a pure append (compaction, edits, other messages).
+let parseCache: { content: string; segments: CodeSegment[]; tailOffset: number } = {
+  content: '',
+  segments: [],
+  tailOffset: 0,
+};
+
+export function parseCodeBlocksStreaming(content: string): CodeSegment[] {
+  if (content === parseCache.content) return parseCache.segments;
+  let segments: CodeSegment[];
+  if (
+    parseCache.content &&
+    parseCache.segments.length > 0 &&
+    content.startsWith(parseCache.content)
+  ) {
+    segments = [
+      ...parseCache.segments.slice(0, -1),
+      ...parseCodeBlocks(content.slice(parseCache.tailOffset)),
+    ];
+  } else {
+    segments = parseCodeBlocks(content);
+  }
+  const last = segments[segments.length - 1];
+  parseCache = {
+    content,
+    segments,
+    tailOffset: last ? content.length - segmentSourceLength(last) : content.length,
+  };
   return segments;
 }
 
@@ -241,9 +280,29 @@ export function ChatScreen({
   const permCfg = PERM_CONFIG[permissionMode] ?? PERM_CONFIG.ask;
 
   // Single lookup for tool-render data: message tool results carry the
-  // content; the ToolResult list adds duration. Merged once per sync instead
-  // of threading two parallel maps through every MessageItem.
+  // content; the ToolResult list adds duration. Incremental across syncs:
+  // during streaming only the tail assistant message is cloned, which does
+  // not affect tool data, so the cached map is reused. Any structural change
+  // (appended tool results, compaction) triggers a full rebuild.
+  const toolInfoCacheRef = useRef<{
+    messages: Message[];
+    toolResults: ToolResult[];
+    map: Map<string, { content: string; duration?: number }>;
+  } | null>(null);
   const toolInfoByCallId = useMemo(() => {
+    const cache = toolInfoCacheRef.current;
+    const lastIdx = messages.length - 1;
+    if (
+      cache &&
+      cache.toolResults === toolResults &&
+      cache.messages.length === messages.length &&
+      (lastIdx < 0 ||
+        (cache.messages.every((m, i) => i === lastIdx || m === messages[i]) &&
+          messages[lastIdx]?.role !== 'tool' &&
+          cache.messages[lastIdx]?.role !== 'tool'))
+    ) {
+      return cache.map;
+    }
     const map = new Map<string, { content: string; duration?: number }>();
     for (const msg of messages) {
       if (msg.role === 'tool' && msg.toolCallId) {
@@ -257,6 +316,7 @@ export function ChatScreen({
         duration: tr.duration,
       });
     }
+    toolInfoCacheRef.current = { messages, toolResults, map };
     return map;
   }, [messages, toolResults]);
 
@@ -725,16 +785,8 @@ type MessageItemProps = {
  * compared per call id so the rebuilt Maps don't defeat the memo.
  */
 const MessageItem = memo(
-  function MessageItem({
-    message,
-    theme,
-    toolInfoByCallId,
-    lastUsage,
-    state,
-    currentTool,
-    elapsedMs,
-    highlighted = false,
-  }: MessageItemProps) {
+  function MessageItem(props: MessageItemProps) {
+    const { message, theme, highlighted = false } = props;
     if (message.role === 'system') return null;
 
     if (message.role === 'user') {
@@ -748,119 +800,7 @@ const MessageItem = memo(
       );
     }
 
-    const displayContent = message.content || '';
-    const segments = parseCodeBlocks(displayContent);
-    const hasReasoning = message.reasoningContent && message.reasoningContent.trim() !== '';
-    const isThinking = message.role === 'assistant' && state === 'thinking';
-    const toolCalls = message.toolCalls ?? [];
-
-    return (
-      <box flexDirection="column" marginY={1}>
-        {(hasReasoning || isThinking) && (
-          <box flexDirection="column" marginY={0} marginBottom={1}>
-            {hasReasoning ? (
-              (() => {
-                const lines = sanitizeForTui(message.reasoningContent || '')
-                  .split('\n')
-                  .filter((l) => l.trim());
-                const max = 8;
-                const shown = lines.slice(0, max);
-                const hidden = lines.length - shown.length;
-                return (
-                  <box flexDirection="column">
-                    {shown.map((line, i) => (
-                      <text
-                        key={i}
-                        fg={i === 0 && isThinking ? theme.statusThinking : theme.mutedFg}
-                      >
-                        {i === 0 ? `${isThinking ? spinnerFrame(elapsedMs ?? 0) : '⠞'} ` : '  '}
-                        {line.length > 140 ? line.slice(0, 139) + '…' : line || ' '}
-                      </text>
-                    ))}
-                    {hidden > 0 && (
-                      <text fg={theme.mutedFg}>
-                        … {hidden} more line{hidden === 1 ? '' : 's'}
-                      </text>
-                    )}
-                  </box>
-                );
-              })()
-            ) : (
-              <text fg={theme.statusThinking}>{spinnerFrame(elapsedMs ?? 0)} thinking…</text>
-            )}
-          </box>
-        )}
-
-        {displayContent.trim() !== '' &&
-          segments.map((seg, si) => {
-            if (seg.type === 'text') {
-              return (
-                <box key={si} flexDirection="column">
-                  {renderLinesSafely(seg.text, 60, theme.headerFg)}
-                </box>
-              );
-            }
-            if (seg.lang === 'diff') {
-              const safeDiff = sanitizeForTui(
-                seg.code.split('\n').length > 200
-                  ? seg.code.split('\n').slice(0, 200).join('\n') + '\n… [diff truncated]'
-                  : seg.code
-              );
-              return (
-                <box key={si} flexDirection="column" marginY={1}>
-                  <diff diff={safeDiff} {...DIFF_PROPS} />
-                </box>
-              );
-            }
-            const safeCode = sanitizeForTui(
-              seg.code.split('\n').length > 120
-                ? seg.code.split('\n').slice(0, 120).join('\n') + '\n… [truncated]'
-                : seg.code
-            );
-            return (
-              <box key={si} flexDirection="column" marginY={1}>
-                {seg.lang && <text fg={theme.mutedFg}>{seg.lang}</text>}
-                <code content={safeCode} filetype={seg.lang || 'text'} syntaxStyle={syntaxStyle} />
-              </box>
-            );
-          })}
-
-        {toolCalls
-          .filter((tc) => tc.name !== 'explore_subagent')
-          .map((tc) => renderToolCall(tc, toolInfoByCallId, theme))}
-
-        {message.role === 'assistant' &&
-          state === 'executing_tool' &&
-          currentTool &&
-          currentTool.name !== 'explore_subagent' &&
-          (() => {
-            const pending = buildToolDisplayBlock(
-              currentTool.name,
-              currentTool.args,
-              '',
-              undefined
-            );
-            return (
-              <box flexDirection="column">
-                <text fg={theme.statusTool}>
-                  {'  '}
-                  {spinnerFrame(elapsedMs ?? 0)}{' '}
-                  {pending.kind === 'command'
-                    ? `$ ${pending.target}…`
-                    : `${pending.action} ${pending.target}…`}
-                </text>
-              </box>
-            );
-          })()}
-
-        {message.role === 'assistant' && lastUsage && (
-          <text fg={theme.mutedFg}>
-            {' '}
-            {formatTokens(lastUsage.input_tokens)}↑ {formatTokens(lastUsage.output_tokens)}↓
-          </text>
-        )}
-      </box>
-    );
+    return <AssistantMessageView {...props} />;
   },
   (prev, next) => {
     if (
@@ -893,3 +833,142 @@ const MessageItem = memo(
     return true;
   }
 );
+
+/**
+ * Assistant message body. Split from MessageItem so the memoized dispatch
+ * (system/user/assistant) stays hook-free while this component can memoize
+ * the streaming-hot computations (code-block parse, sanitization).
+ */
+function AssistantMessageView({
+  message,
+  theme,
+  toolInfoByCallId,
+  lastUsage,
+  state,
+  currentTool,
+  elapsedMs,
+}: MessageItemProps) {
+  const displayContent = message.content || '';
+  // Memoized: incremental parse reuses stable segments across stream
+  // chunks, and elapsedMs-tick re-renders skip the parse entirely.
+  const segments = useMemo(() => parseCodeBlocksStreaming(displayContent), [displayContent]);
+  // Pre-sanitize code/diff blocks once per content change, not per render.
+  const sanitizedCode = useMemo(
+    () =>
+      segments.map((seg) => {
+        if (seg.type !== 'code') return null;
+        const isDiff = seg.lang === 'diff';
+        const limit = isDiff ? 200 : 120;
+        const suffix = isDiff ? '\n… [diff truncated]' : '\n… [truncated]';
+        const lines = seg.code.split('\n');
+        return sanitizeForTui(
+          lines.length > limit ? lines.slice(0, limit).join('\n') + suffix : seg.code
+        );
+      }),
+    [segments]
+  );
+  const hasReasoning = message.reasoningContent && message.reasoningContent.trim() !== '';
+  const reasoningLines = useMemo(
+    () =>
+      hasReasoning
+        ? sanitizeForTui(message.reasoningContent || '')
+            .split('\n')
+            .filter((l) => l.trim())
+        : [],
+    [hasReasoning, message.reasoningContent]
+  );
+  const isThinking = message.role === 'assistant' && state === 'thinking';
+  const toolCalls = message.toolCalls ?? [];
+
+  return (
+    <box flexDirection="column" marginY={1}>
+      {(hasReasoning || isThinking) && (
+        <box flexDirection="column" marginY={0} marginBottom={1}>
+          {hasReasoning ? (
+            (() => {
+              const lines = reasoningLines;
+              const max = 8;
+              const shown = lines.slice(0, max);
+              const hidden = lines.length - shown.length;
+              return (
+                <box flexDirection="column">
+                  {shown.map((line, i) => (
+                    <text key={i} fg={i === 0 && isThinking ? theme.statusThinking : theme.mutedFg}>
+                      {i === 0 ? `${isThinking ? spinnerFrame(elapsedMs ?? 0) : '⠞'} ` : '  '}
+                      {line.length > 140 ? line.slice(0, 139) + '…' : line || ' '}
+                    </text>
+                  ))}
+                  {hidden > 0 && (
+                    <text fg={theme.mutedFg}>
+                      … {hidden} more line{hidden === 1 ? '' : 's'}
+                    </text>
+                  )}
+                </box>
+              );
+            })()
+          ) : (
+            <text fg={theme.statusThinking}>{spinnerFrame(elapsedMs ?? 0)} thinking…</text>
+          )}
+        </box>
+      )}
+
+      {displayContent.trim() !== '' &&
+        segments.map((seg, si) => {
+          if (seg.type === 'text') {
+            return (
+              <box key={si} flexDirection="column">
+                {renderLinesSafely(seg.text, 60, theme.headerFg)}
+              </box>
+            );
+          }
+          if (seg.lang === 'diff') {
+            return (
+              <box key={si} flexDirection="column" marginY={1}>
+                <diff diff={sanitizedCode[si] ?? ''} {...DIFF_PROPS} />
+              </box>
+            );
+          }
+          return (
+            <box key={si} flexDirection="column" marginY={1}>
+              {seg.lang && <text fg={theme.mutedFg}>{seg.lang}</text>}
+              <code
+                content={sanitizedCode[si] ?? ''}
+                filetype={seg.lang || 'text'}
+                syntaxStyle={syntaxStyle}
+              />
+            </box>
+          );
+        })}
+
+      {toolCalls
+        .filter((tc) => tc.name !== 'explore_subagent')
+        .map((tc) => renderToolCall(tc, toolInfoByCallId, theme))}
+
+      {message.role === 'assistant' &&
+        state === 'executing_tool' &&
+        currentTool &&
+        currentTool.name !== 'explore_subagent' &&
+        (() => {
+          const pending = buildToolDisplayBlock(currentTool.name, currentTool.args, '', undefined);
+          return (
+            <box flexDirection="column">
+              <text fg={theme.statusTool}>
+                {'  '}
+                {spinnerFrame(elapsedMs ?? 0)}{' '}
+                {pending.kind === 'command'
+                  ? `$ ${pending.target}…`
+                  : `${pending.action} ${pending.target}…`}
+              </text>
+            </box>
+          );
+        })()}
+
+      {message.role === 'assistant' && lastUsage && (
+        <text fg={theme.mutedFg}>
+          {' '}
+          {formatTokens(lastUsage.input_tokens)}↑ {formatTokens(lastUsage.output_tokens)}↓
+        </text>
+      )}
+    </box>
+  );
+}
