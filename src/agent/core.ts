@@ -33,6 +33,7 @@ import {
   toChatMessages,
   addAssistantMessage,
   addNoticeMessage,
+  addNudgeMessage,
   addUserMessage,
   checkAndCompactContext,
   forceCompactContext,
@@ -261,6 +262,11 @@ export class AgentCore {
   /** @internal UI-only notice; excluded from the LLM payload. */
   public addNoticeMessage(content: string) {
     addNoticeMessage(this, content);
+  }
+
+  /** @internal Hidden continue-nudge for the model (TUI-filtered). */
+  public addNudgeMessage(content: string) {
+    addNudgeMessage(this, content);
   }
 
   /** @internal Accessed by agent/run.ts. */
