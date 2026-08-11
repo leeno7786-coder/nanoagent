@@ -25,11 +25,11 @@
 - Modify: `package.json` (add `package:deb`)
 - Modify: `.gitignore` (`.deb-stage/`, `dist-packages/`)
 
-- [ ] Implement stage/build/pack script (Node pin + sha256, prod node_modules, wrappers, control)
-- [ ] Add `"package:deb": "bash scripts/build-deb.sh"`
-- [ ] Gitignore staging + output dirs
-- [ ] Run script locally; verify `dpkg-deb -I` / `dpkg-deb -c` and `nanogent --help` via staged tree
-- [ ] Commit
+- [x] Implement stage/build/pack script (Node pin + sha256, prod node_modules, wrappers, control)
+- [x] Add `"package:deb": "bash scripts/build-deb.sh"`
+- [x] Gitignore staging + output dirs
+- [x] Run script locally; verify `dpkg-deb -I` / `dpkg-deb -c` and `nanogent --help` via staged tree
+- [x] Commit
 
 ### Task 2: CI workflow + release attachment
 
@@ -37,9 +37,9 @@
 - Create: `.github/workflows/package-deb.yml` (workflow_dispatch + tags)
 - Modify: `.github/workflows/release.yml` (attach `.deb` to GitHub Release)
 
-- [ ] Add workflow that runs `package:deb` and uploads artifact
-- [ ] On `v*` tags, attach `.deb` alongside npm tarball on the Release
-- [ ] Commit
+- [x] Add workflow that runs `package:deb` and uploads artifact
+- [x] On `v*` tags, attach `.deb` alongside npm tarball on the Release
+- [x] Commit
 
 ### Task 3: Docs
 
@@ -47,5 +47,5 @@
 - Modify: `README.md` (Linux `.deb` as recommended Linux install)
 - Modify: `AGENTS.md` (package:deb command + preferred Linux path)
 
-- [ ] Document download/install/remove
-- [ ] Commit, push, open/update PR
+- [x] Document download/install/remove
+- [x] Commit, push, open/update PR
