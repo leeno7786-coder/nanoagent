@@ -8,6 +8,7 @@ import {
   getMaxOutputTokens,
   extractDeltaText,
   shouldEnableThinking,
+  normalizeUsage,
 } from './utils.js';
 import {
   awaitEndpointRateLimit,
@@ -102,11 +103,8 @@ export async function* streamChat(
 
         const chunkAny = chunk as unknown as Record<string, unknown>;
         if (chunkAny.usage) {
-          const u = chunkAny.usage as Record<string, unknown>;
-          usage = {
-            input_tokens: u.prompt_tokens as number,
-            output_tokens: u.completion_tokens as number,
-          };
+          const normalized = normalizeUsage(chunkAny.usage);
+          if (normalized) usage = normalized;
         }
 
         if (process.env.QWEN_DEBUG_LLM) {

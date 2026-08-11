@@ -182,6 +182,58 @@ describe('ContextManager', () => {
       expect(stats.currentTokens).toBeGreaterThan(1000);
       expect(stats.apiPromptTokens).toBe(1000);
     });
+
+    it('does not freeze when the provider re-reports a flat prompt_tokens', () => {
+      // Repro: LM Studio often re-sends ~tool-schema size every turn while the
+      // real prompt grows. Resetting the delta counter on each report stuck the
+      // TUI at e.g. 15k/262k even as the agent kept working.
+      const mgr = createContextManager({ ...cfg, modelContextLength: 262144 });
+      mgr.reportApiUsage({ input_tokens: 15000 });
+
+      for (let i = 0; i < 8; i++) {
+        mgr.addMessage({
+          id: `u${i}`,
+          role: 'user',
+          content: ('context-chunk-' + i + '-').repeat(80),
+          timestamp: Date.now(),
+        });
+        mgr.addMessage({
+          id: `a${i}`,
+          role: 'assistant',
+          content: ('reply-chunk-' + i + '-').repeat(80),
+          timestamp: Date.now(),
+        });
+        // Flat/stale report — same as the first turn
+        mgr.reportApiUsage({ input_tokens: 15000 });
+      }
+
+      const stats = mgr.getStats();
+      expect(stats.currentTokens).toBeGreaterThan(15000);
+      // Still growing after the flat reports (not stuck at the baseline)
+      const mid = stats.currentTokens;
+      mgr.addMessage({
+        id: 'more',
+        role: 'tool',
+        content: 'y'.repeat(2000),
+        timestamp: Date.now(),
+      });
+      mgr.reportApiUsage({ input_tokens: 15000 });
+      expect(mgr.getStats().currentTokens).toBeGreaterThan(mid);
+    });
+
+    it('still accepts a genuinely higher API prompt_tokens report', () => {
+      const mgr = createContextManager({ ...cfg, modelContextLength: 262144 });
+      mgr.reportApiUsage({ input_tokens: 15000 });
+      mgr.addMessage({
+        id: '1',
+        role: 'user',
+        content: 'hello',
+        timestamp: Date.now(),
+      });
+      mgr.reportApiUsage({ input_tokens: 40000 });
+      expect(mgr.getStats().currentTokens).toBe(40000);
+      expect(mgr.getStats().apiPromptTokens).toBe(40000);
+    });
   });
 
   describe('canFitMessage', () => {

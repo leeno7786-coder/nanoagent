@@ -212,10 +212,19 @@ export class ContextManager {
   /**
    * Record prompt_tokens from the latest LLM response (local or cloud).
    * This is the ground-truth context size for compaction decisions.
+   *
+   * Important: some local servers (notably LM Studio with large tool schemas)
+   * re-report a flat/stale prompt_tokens every turn (~tool overhead only) while
+   * the real prompt keeps growing. Blindly trusting that report would reset
+   * `tokensAddedSinceApiReport` and freeze the gauge (e.g. stuck at 15k/262k).
+   * Always take max(reported, already-observed) so the fill is monotonic
+   * between compactions.
    */
   reportApiUsage(usage: { input_tokens: number; output_tokens?: number }): void {
     if (!usage || !(usage.input_tokens > 0)) return;
-    this.lastApiPromptTokens = usage.input_tokens;
+    const reported = usage.input_tokens;
+    const observed = this.getObservedTokenCount();
+    this.lastApiPromptTokens = Math.max(reported, observed);
     this.tokensAddedSinceApiReport = 0;
     this.stats = null;
   }
@@ -263,11 +272,15 @@ export class ContextManager {
 
   /**
    * Best available token count: API prompt_tokens (+ messages since) when known,
-   * otherwise the local content estimate.
+   * otherwise the local content estimate. Never drop below the local message
+   * estimate — a stale API baseline must not hide real history growth.
    */
   private getObservedTokenCount(): number {
     if (this.lastApiPromptTokens != null) {
-      return this.lastApiPromptTokens + this.tokensAddedSinceApiReport;
+      return Math.max(
+        this.lastApiPromptTokens + this.tokensAddedSinceApiReport,
+        this.cachedTotalTokens
+      );
     }
     return this.cachedTotalTokens;
   }
