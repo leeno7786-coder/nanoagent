@@ -3,22 +3,27 @@
  * Prevents context overflow and manages conversation history.
  */
 
-import { countTokens, effectiveContextSize } from '../llm.js';
+import {
+  countTokens,
+  effectiveContextSize,
+  getModelCompactionSettings,
+  DEFAULT_COMPACT_THRESHOLD,
+  DEFAULT_SUMMARY_RESERVED_PERCENT,
+} from '../llm.js';
 import type { Config, Message } from '../types.js';
-import { getModelCompactionSettings } from '../llm.js';
 import { logWarn } from '../log.js';
 
 /**
  * Configuration for context management.
  */
 export interface ContextConfig {
-  /** Threshold percentage at which to trigger compaction (default: 0.85 = 85%) */
+  /** Threshold percentage at which to trigger compaction (default: 0.75 = 75%) */
   compactThreshold: number;
   /** Percentage of context to reserve for the next response (default: 0.15 = 15%) */
   summaryReservedPercent: number;
   /** Minimum number of messages to keep (default: 8 for small models, 12 for large) */
   keepCount: number;
-  /** Maximum number of tokens to keep in history */
+  /** Maximum number of tokens to keep in history (= model's resolved context window) */
   maxHistoryTokens: number;
   /** Enable automatic compaction (default: true) */
   enabled: boolean;
@@ -28,8 +33,8 @@ export interface ContextConfig {
  * Default context configuration.
  */
 export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
-  compactThreshold: 0.85,
-  summaryReservedPercent: 0.15,
+  compactThreshold: DEFAULT_COMPACT_THRESHOLD,
+  summaryReservedPercent: DEFAULT_SUMMARY_RESERVED_PERCENT,
   keepCount: 12,
   maxHistoryTokens: 256000,
   enabled: true,
@@ -55,6 +60,8 @@ export interface ContextStats {
   tokenSource: 'api' | 'estimate';
   /** Raw local message-content estimate (excludes tool schemas / template overhead) */
   estimatedTokens: number;
+  /** Learned tool-schema / chat-template overhead from API prompt_tokens */
+  overheadTokens: number;
   /** Last API-reported prompt tokens, if any */
   apiPromptTokens?: number;
 }
@@ -81,6 +88,12 @@ export class ContextManager {
   private lastApiPromptTokens: number | undefined;
   /** Estimated tokens of messages added after the last API usage report. */
   private tokensAddedSinceApiReport = 0;
+  /**
+   * High-water tool-schema + chat-template overhead inferred from
+   * `prompt_tokens - messageContent`. Survives compaction (tools stay loaded)
+   * so fill doesn't undercount between the compact and the next API report.
+   */
+  private apiOverheadTokens = 0;
   /** Set once the usage warning fires; reset when usage drops back below the threshold. */
   private warnThresholdCrossed = false;
 
@@ -189,10 +202,11 @@ export class ContextManager {
     };
 
     // Token accounting depends on the model — reseed per-message caches and
-    // drop the API usage baseline from the previous model.
+    // drop the API usage baseline / tool overhead from the previous model.
     this.reseedTokenCache();
     this.lastApiPromptTokens = undefined;
     this.tokensAddedSinceApiReport = 0;
+    this.apiOverheadTokens = 0;
     this.warnThresholdCrossed = false;
     this.stats = null;
   }
@@ -223,6 +237,11 @@ export class ContextManager {
   reportApiUsage(usage: { input_tokens: number; output_tokens?: number }): void {
     if (!usage || !(usage.input_tokens > 0)) return;
     const reported = usage.input_tokens;
+    // Learn tool/template overhead from this report (high-water). Called before
+    // the new assistant message is added, so cachedTotalTokens ≈ prompt content.
+    const impliedOverhead = Math.max(0, reported - this.cachedTotalTokens);
+    this.apiOverheadTokens = Math.max(this.apiOverheadTokens, impliedOverhead);
+
     const observed = this.getObservedTokenCount();
     this.lastApiPromptTokens = Math.max(reported, observed);
     this.tokensAddedSinceApiReport = 0;
@@ -248,7 +267,7 @@ export class ContextManager {
     const thresholdPercent =
       this.config.compactThreshold > 0 && this.config.compactThreshold <= 1
         ? this.config.compactThreshold
-        : 0.85;
+        : DEFAULT_COMPACT_THRESHOLD;
     if (windowSize > 0 && observed > windowSize * thresholdPercent) {
       if (!this.warnThresholdCrossed) {
         this.warnThresholdCrossed = true;
@@ -271,18 +290,18 @@ export class ContextManager {
   }
 
   /**
-   * Best available token count: API prompt_tokens (+ messages since) when known,
-   * otherwise the local content estimate. Never drop below the local message
-   * estimate — a stale API baseline must not hide real history growth.
+   * Best available token count for the live prompt:
+   * - API baseline + local deltas since that report, and
+   * - local message content + learned tool/template overhead
+   * Take the max so flat/stale API reports can't freeze the gauge, and so
+   * fill stays accurate after compaction clears the API baseline.
    */
   private getObservedTokenCount(): number {
+    const fromEstimate = this.cachedTotalTokens + this.apiOverheadTokens;
     if (this.lastApiPromptTokens != null) {
-      return Math.max(
-        this.lastApiPromptTokens + this.tokensAddedSinceApiReport,
-        this.cachedTotalTokens
-      );
+      return Math.max(this.lastApiPromptTokens + this.tokensAddedSinceApiReport, fromEstimate);
     }
-    return this.cachedTotalTokens;
+    return fromEstimate;
   }
 
   /**
@@ -296,7 +315,9 @@ export class ContextManager {
     const contextSize = this.getContextWindowSize();
     const estimatedTokens = this.countMessageTokens(this.messages);
     const currentTokens = this.getObservedTokenCount();
-    const tokenSource: 'api' | 'estimate' = this.lastApiPromptTokens != null ? 'api' : 'estimate';
+    // Overhead is learned from API reports — treat that as API-grounded too.
+    const tokenSource: 'api' | 'estimate' =
+      this.lastApiPromptTokens != null || this.apiOverheadTokens > 0 ? 'api' : 'estimate';
     // Reserve headroom for the next completion inside the window
     const maxTokens = Math.floor(contextSize * (1 - this.config.summaryReservedPercent));
     const usagePercent = contextSize > 0 ? currentTokens / contextSize : 0;
@@ -318,6 +339,7 @@ export class ContextManager {
       compactionCount: this.compactionCount,
       tokenSource,
       estimatedTokens,
+      overheadTokens: this.apiOverheadTokens,
       apiPromptTokens: this.lastApiPromptTokens,
     };
 
@@ -424,7 +446,7 @@ export class ContextManager {
       // for tool schemas (MCP tools are not counted in message tokens).
       targetTokens = Math.floor(contextSize * 0.5);
     } else if (threshold <= 1) {
-      // Land under the trigger so the next turn has headroom (85% → ~70%).
+      // Land under the trigger so the next turn has headroom (75% → ~60%).
       targetTokens = Math.floor(contextSize * Math.max(0.5, threshold - 0.15));
     } else {
       // Absolute threshold — land under ~70% of the live window.

@@ -180,6 +180,16 @@ export function effectiveContextSize(
   return estimateModelContextSize(modelId, maxTokens);
 }
 
+/**
+ * Auto-compact when observed fill exceeds this fraction of the model's
+ * resolved max context (LM Studio instance context / OpenRouter catalog /
+ * heuristic). Same ratio for all model sizes — the window itself scales.
+ */
+export const DEFAULT_COMPACT_THRESHOLD = 0.75;
+
+/** Fraction of the window reserved for the next completion after compact. */
+export const DEFAULT_SUMMARY_RESERVED_PERCENT = 0.15;
+
 export function getModelCompactionSettings(
   modelId: string,
   maxTokens?: number,
@@ -204,16 +214,14 @@ export function getModelCompactionSettings(
   const lowerModelId = modelId.toLowerCase();
 
   // Reserve headroom for the next completion (tool schemas, reply).
-  const summaryReservedPercent = 0.15;
+  const summaryReservedPercent = DEFAULT_SUMMARY_RESERVED_PERCENT;
 
   const small =
     options?.smallModelMode === true ||
     (options?.modelParamBillions !== undefined
       ? options.modelParamBillions <= 8
       : isSmallModel(modelId, maxTokens, options?.smallModelMode));
-  // Compact at 85% of the model's resolved max context (runtime-reported when
-  // available). Same ratio for small and large — window size already scales.
-  const compactThreshold = 0.85;
+  const compactThreshold = DEFAULT_COMPACT_THRESHOLD;
 
   let keepCount = 12;
 

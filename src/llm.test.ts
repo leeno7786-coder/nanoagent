@@ -104,13 +104,22 @@ describe('effectiveContextSize', () => {
 });
 
 describe('getModelCompactionSettings', () => {
-  it('compacts at 85% of the resolved context window', () => {
+  it('compacts at 75% of the resolved context window', () => {
     const settings = getModelCompactionSettings('qwen/qwen3-next-80b-a3b-instruct', 4096, {
       modelContextLength: 262144,
     });
     expect(settings.contextSize).toBe(262144);
-    expect(settings.compactThreshold).toBe(0.85);
-    expect(Math.floor(settings.contextSize * settings.compactThreshold)).toBe(222822);
+    expect(settings.compactThreshold).toBe(0.75);
+    expect(Math.floor(settings.contextSize * settings.compactThreshold)).toBe(196608);
+  });
+
+  it('scales the compact trigger with the model window', () => {
+    const small = getModelCompactionSettings('bonsai-8b', 4096, {
+      modelContextLength: 66000,
+    });
+    expect(small.contextSize).toBe(66000);
+    expect(small.compactThreshold).toBe(0.75);
+    expect(Math.floor(small.contextSize * small.compactThreshold)).toBe(49500);
   });
 });
 

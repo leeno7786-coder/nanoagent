@@ -20,6 +20,8 @@ export {
   estimateModelContextSize,
   effectiveContextSize,
   getModelCompactionSettings,
+  DEFAULT_COMPACT_THRESHOLD,
+  DEFAULT_SUMMARY_RESERVED_PERCENT,
 } from './context.js';
 
 export { createClient } from './client.js';

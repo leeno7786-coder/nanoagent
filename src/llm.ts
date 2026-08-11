@@ -16,6 +16,8 @@ export {
   estimateModelContextSize,
   effectiveContextSize,
   getModelCompactionSettings,
+  DEFAULT_COMPACT_THRESHOLD,
+  DEFAULT_SUMMARY_RESERVED_PERCENT,
   createClient,
   markEndpointRateLimited,
   awaitEndpointRateLimit,
