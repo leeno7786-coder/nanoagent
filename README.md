@@ -28,8 +28,9 @@ An ultra-lightweight, scalable CLI/TUI coding agent built from the ground up to 
 
 ## 🚀 Quick Start & Installation
 
-### Option 1: Linux `.deb` (Recommended on Ubuntu/Debian amd64)
-Self-contained package with bundled Node 20 + Linux deps (no npm/Node setup):
+### Option 1: Native packages (recommended)
+
+**Linux (Ubuntu/Debian amd64)** — self-contained `.deb` with bundled Node 20:
 
 ```bash
 # Download the latest nanoagent_*_amd64.deb from GitHub Releases, then:
@@ -37,21 +38,29 @@ sudo apt install ./nanoagent_*_amd64.deb
 nanogent --help
 ```
 
-Build one locally from this repo:
+**Windows (x64)** — portable zip with bundled Node 20 (no installer required):
+
+```text
+Download nanoagent_*_win_x64.zip from GitHub Releases
+Extract → run nanogent.cmd  (or nanoagent.cmd)
+```
+
+Build both locally from this repo:
 
 ```bash
 bun install --frozen-lockfile   # or: npm install
 bun run package:deb             # → dist-packages/nanoagent_<version>_amd64.deb
-sudo apt install ./dist-packages/nanoagent_*_amd64.deb
+bun run package:win             # → dist-packages/nanoagent_<version>_win_x64.zip
+# or: bun run package:native    # both
 ```
 
-Remove: `sudo apt remove nanoagent`
+Remove Linux package: `sudo apt remove nanoagent`
 
 ### Option 2: Install Globally via NPM
 ```bash
 npm install -g @omega3_0/nanoagent
 ```
-Requires **Node ≥ 20**. On Linux, prefer the `.deb` if global npm installs miss `dist/` or native deps.
+Requires **Node ≥ 20**. On Linux/Windows, prefer the native packages if global npm installs miss `dist/` or native deps.
 
 ### Option 3: Zero-Install via `npx`
 ```bash
