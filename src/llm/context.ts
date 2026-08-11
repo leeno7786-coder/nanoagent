@@ -183,9 +183,10 @@ export function effectiveContextSize(
 /**
  * Auto-compact when observed fill exceeds this fraction of the model's
  * resolved max context (LM Studio instance context / OpenRouter catalog /
- * heuristic). Same ratio for all model sizes — the window itself scales.
+ * heuristic). ~80% leaves ~50k headroom on 200k+ windows for the compact
+ * summary + next turn; smaller windows scale the same ratio.
  */
-export const DEFAULT_COMPACT_THRESHOLD = 0.75;
+export const DEFAULT_COMPACT_THRESHOLD = 0.8;
 
 /** Fraction of the window reserved for the next completion after compact. */
 export const DEFAULT_SUMMARY_RESERVED_PERCENT = 0.15;

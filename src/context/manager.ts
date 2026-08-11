@@ -17,7 +17,7 @@ import { logWarn } from '../log.js';
  * Configuration for context management.
  */
 export interface ContextConfig {
-  /** Threshold percentage at which to trigger compaction (default: 0.75 = 75%) */
+  /** Threshold percentage at which to trigger compaction (default: 0.8 = 80%) */
   compactThreshold: number;
   /** Percentage of context to reserve for the next response (default: 0.15 = 15%) */
   summaryReservedPercent: number;
@@ -446,7 +446,7 @@ export class ContextManager {
       // for tool schemas (MCP tools are not counted in message tokens).
       targetTokens = Math.floor(contextSize * 0.5);
     } else if (threshold <= 1) {
-      // Land under the trigger so the next turn has headroom (75% → ~60%).
+      // Land under the trigger so the next turn has headroom (80% → ~65%).
       targetTokens = Math.floor(contextSize * Math.max(0.5, threshold - 0.15));
     } else {
       // Absolute threshold — land under ~70% of the live window.

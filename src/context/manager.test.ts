@@ -392,7 +392,7 @@ describe('ContextManager', () => {
 describe('DEFAULT_CONTEXT_CONFIG', () => {
   it('should have reasonable defaults', () => {
     expect(DEFAULT_CONTEXT_CONFIG.enabled).toBe(true);
-    expect(DEFAULT_CONTEXT_CONFIG.compactThreshold).toBe(0.75);
+    expect(DEFAULT_CONTEXT_CONFIG.compactThreshold).toBe(0.8);
     expect(DEFAULT_CONTEXT_CONFIG.summaryReservedPercent).toBeGreaterThan(0);
     expect(DEFAULT_CONTEXT_CONFIG.summaryReservedPercent).toBeLessThanOrEqual(1);
     expect(DEFAULT_CONTEXT_CONFIG.keepCount).toBeGreaterThan(0);
@@ -401,7 +401,7 @@ describe('DEFAULT_CONTEXT_CONFIG', () => {
 });
 
 describe('ContextManager long-context compaction', () => {
-  it('uses runtime modelContextLength and triggers only above 75%', () => {
+  it('uses runtime modelContextLength and triggers only above 80%', () => {
     const mgr = createContextManager({
       model: 'qwen/qwen3-next-80b-a3b-instruct',
       baseURL: 'https://openrouter.ai/api/v1',
@@ -411,18 +411,18 @@ describe('ContextManager long-context compaction', () => {
       modelContextLength: 262144,
     });
     expect(mgr.getMaxContextSize()).toBe(262144);
-    expect(mgr.getConfig().compactThreshold).toBe(0.75);
+    expect(mgr.getConfig().compactThreshold).toBe(0.8);
 
     // ~50% of window — must not compact
     mgr.reportApiUsage({ input_tokens: 130000 });
     expect(mgr.needsCompaction()).toBe(false);
 
-    // Just under 75% of 262144 (= 196608)
-    mgr.reportApiUsage({ input_tokens: 196000 });
+    // Just under 80% of 262144 (= 209715)
+    mgr.reportApiUsage({ input_tokens: 209000 });
     expect(mgr.needsCompaction()).toBe(false);
 
-    // Over 75%
-    mgr.reportApiUsage({ input_tokens: 200000 });
+    // Over 80% (~210k+)
+    mgr.reportApiUsage({ input_tokens: 211000 });
     expect(mgr.needsCompaction()).toBe(true);
   });
 

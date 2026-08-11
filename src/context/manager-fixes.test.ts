@@ -2,7 +2,7 @@
  * Tests for ContextManager review fixes:
  * - updateModel() reseeds the token cache and resets the API usage baseline
  * - the usage warning fires once per threshold crossing and respects
- *   config.compactThreshold (default 0.75)
+ *   config.compactThreshold (default 0.8)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';

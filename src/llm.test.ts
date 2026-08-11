@@ -104,13 +104,14 @@ describe('effectiveContextSize', () => {
 });
 
 describe('getModelCompactionSettings', () => {
-  it('compacts at 75% of the resolved context window', () => {
+  it('compacts at 80% of the resolved context window (~210k on 262k)', () => {
     const settings = getModelCompactionSettings('qwen/qwen3-next-80b-a3b-instruct', 4096, {
       modelContextLength: 262144,
     });
     expect(settings.contextSize).toBe(262144);
-    expect(settings.compactThreshold).toBe(0.75);
-    expect(Math.floor(settings.contextSize * settings.compactThreshold)).toBe(196608);
+    expect(settings.compactThreshold).toBe(0.8);
+    // 262144 * 0.8 = 209715 — ~50k headroom for the compact summary
+    expect(Math.floor(settings.contextSize * settings.compactThreshold)).toBe(209715);
   });
 
   it('scales the compact trigger with the model window', () => {
@@ -118,8 +119,8 @@ describe('getModelCompactionSettings', () => {
       modelContextLength: 66000,
     });
     expect(small.contextSize).toBe(66000);
-    expect(small.compactThreshold).toBe(0.75);
-    expect(Math.floor(small.contextSize * small.compactThreshold)).toBe(49500);
+    expect(small.compactThreshold).toBe(0.8);
+    expect(Math.floor(small.contextSize * small.compactThreshold)).toBe(52800);
   });
 });
 
