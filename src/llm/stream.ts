@@ -3,7 +3,12 @@ import type { Config } from '../types.js';
 import { logError, logWarn } from '../log.js';
 import { ApiError } from './types.js';
 import type { ChatMessage, ChatRequestOptions, StreamChunk } from './types.js';
-import { normalizeContent, getMaxOutputTokens, extractDeltaText } from './utils.js';
+import {
+  normalizeContent,
+  getMaxOutputTokens,
+  extractDeltaText,
+  shouldEnableThinking,
+} from './utils.js';
 import {
   awaitEndpointRateLimit,
   awaitRateLimitToken,
@@ -30,8 +35,7 @@ export async function* streamChat(
       await awaitEndpointRateLimit(cfg.baseURL, signal);
       await awaitRateLimitToken(cfg.baseURL, cfg.maxRequestsPerMinute ?? 0, signal);
 
-      const isQwen = cfg.model.toLowerCase().includes('qwen');
-      const enableThinking = options?.enableThinking ?? (isQwen ? true : false);
+      const enableThinking = options?.enableThinking ?? shouldEnableThinking(cfg.model);
       const streamReqParams: Record<string, unknown> = {
         model: cfg.model,
         messages: messages.flatMap((m): Array<Record<string, unknown>> => {

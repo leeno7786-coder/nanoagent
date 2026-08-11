@@ -3,7 +3,7 @@ import type { Config } from '../types.js';
 import { logError, logWarn } from '../log.js';
 import { ApiError } from './types.js';
 import type { ChatMessage, ChatResponse, ChatRequestOptions } from './types.js';
-import { normalizeContent, getMaxOutputTokens } from './utils.js';
+import { normalizeContent, getMaxOutputTokens, shouldEnableThinking } from './utils.js';
 import {
   awaitEndpointRateLimit,
   awaitRateLimitToken,
@@ -30,8 +30,7 @@ export async function chat(
       await awaitEndpointRateLimit(cfg.baseURL, signal);
       await awaitRateLimitToken(cfg.baseURL, cfg.maxRequestsPerMinute ?? 0, signal);
 
-      const isQwen = cfg.model.toLowerCase().includes('qwen');
-      const enableThinking = options?.enableThinking ?? (isQwen ? true : false);
+      const enableThinking = options?.enableThinking ?? shouldEnableThinking(cfg.model);
       const reqParams: Record<string, unknown> = {
         model: cfg.model,
         messages: messages.flatMap((m): Array<Record<string, unknown>> => {

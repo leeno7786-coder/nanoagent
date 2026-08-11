@@ -348,6 +348,98 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(remainingUsers).toBeLessThanOrEqual(13);
   });
 
+  it('merges compaction summary into system — never a trailing assistant in the LLM payload', () => {
+    const agent = newAgent(makeConfig(ws, { modelContextLength: 2000 }));
+
+    const sys: Message = {
+      id: 'system-base',
+      role: 'system',
+      content: 'SYS-PROMPT',
+      timestamp: Date.now(),
+    };
+    agent.messages = [sys];
+    agent.contextManager.setMessages([sys]);
+
+    for (let i = 0; i < 25; i++) {
+      const m: Message = {
+        id: `u${i}`,
+        role: 'user',
+        content: Math.random().toString(36).repeat(80).slice(0, 1600),
+        timestamp: Date.now(),
+      };
+      agent.messages.push(m);
+      agent.contextManager.addMessage(m);
+    }
+
+    expect(agent.checkAndCompactContext()).toBe(true);
+
+    const summary = agent.messages.find((m) => m.id === 'system-compaction');
+    expect(summary).toBeDefined();
+    expect(summary!.role).toBe('system');
+    expect(summary!.content).toContain('compacted');
+
+    const payload = agent.toChatMessages();
+    expect(payload[0]?.role).toBe('system');
+    expect(payload[0]?.content).toContain('SYS-PROMPT');
+    expect(payload[0]?.content).toContain('compacted');
+    // Bonsai/Qwen Jinja: trailing assistant (no tool_calls) makes the next
+    // generation look like a second assistant turn → empty/EOS.
+    const last = payload[payload.length - 1];
+    expect(last?.role).not.toBe('assistant');
+    expect(
+      payload.some(
+        (m) =>
+          m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('compacted')
+      )
+    ).toBe(false);
+  });
+
+  it('does not feed overflow-retry notices back to the model as assistant turns', async () => {
+    const agent = newAgent(makeConfig(ws, { modelContextLength: 2000, rateLimitMs: 0 }));
+    await agent.init();
+
+    for (let i = 0; i < 8; i++) {
+      const u: Message = {
+        id: `seed-u${i}`,
+        role: 'user',
+        content: `seed ${i} ` + 'x'.repeat(200),
+        timestamp: Date.now(),
+      };
+      const a: Message = {
+        id: `seed-a${i}`,
+        role: 'assistant',
+        content: `reply ${i} ` + 'y'.repeat(200),
+        timestamp: Date.now(),
+      };
+      agent.messages.push(u, a);
+      agent.contextManager.addMessage(u);
+      agent.contextManager.addMessage(a);
+    }
+
+    scripted.push([
+      { finishReason: 'length', usage: { prompt_tokens: 9000, completion_tokens: 0 } },
+    ]);
+    scripted.push([{ content: 'Recovered after compact.' }]);
+
+    await agent.run('continue please');
+
+    expect(sentMessages.length).toBe(2);
+    const retryPayload = sentMessages[1] as Array<{ role: string; content?: string }>;
+    // Retry request must not end with the "Context overflow detected…" assistant
+    // notice — that breaks Bonsai multi-step chat templates.
+    const last = retryPayload[retryPayload.length - 1];
+    expect(last?.role).not.toBe('assistant');
+    expect(
+      retryPayload.some(
+        (m) => m.role === 'assistant' && (m.content || '').includes('Context overflow detected')
+      )
+    ).toBe(false);
+    // Notice still visible in the session for the user.
+    expect(
+      agent.messages.some((m) => m.id.startsWith('notice-') && m.content.includes('overflow'))
+    ).toBe(true);
+  });
+
   it('never splits assistant tool_calls from their tool results during compaction', () => {
     const agent = newAgent(makeConfig(ws, { modelContextLength: 1200 }));
 

@@ -32,6 +32,7 @@ import { addTodo, toggleTodo, removeTodo } from '../agent-todos.js';
 import {
   toChatMessages,
   addAssistantMessage,
+  addNoticeMessage,
   addUserMessage,
   checkAndCompactContext,
   forceCompactContext,
@@ -255,6 +256,11 @@ export class AgentCore {
   /** @internal Accessed by agent/run.ts. */
   public addAssistantMessage(content: string) {
     addAssistantMessage(this, content);
+  }
+
+  /** @internal UI-only notice; excluded from the LLM payload. */
+  public addNoticeMessage(content: string) {
+    addNoticeMessage(this, content);
   }
 
   /** @internal Accessed by agent/run.ts. */

@@ -254,7 +254,7 @@ export async function agentRun(
         turnLimit === maxRnd && maxRnd < maxIter
           ? `Round limit reached (${maxRnd} rounds)`
           : `Turn limit reached (${turnLimit} iterations)`;
-      agent.addAssistantMessage(`${label}. Resuming on your next prompt.`);
+      agent.addNoticeMessage(`${label}. Resuming on your next prompt.`);
       agent.setState('idle');
       agent.onUpdate?.();
       return;
@@ -454,7 +454,9 @@ export async function agentRun(
           if (silentOverflow && overflowRetries < MAX_OVERFLOW_RETRIES) {
             overflowRetries++;
             const compacted = agent.forceCompactContext();
-            agent.addAssistantMessage(
+            // Notice (not assistant): mid-loop assistant text poisons Bonsai/Qwen
+            // chat templates and makes the retry return empty / stop.
+            agent.addNoticeMessage(
               compacted
                 ? `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
                 : `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Retrying with current history (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
@@ -465,7 +467,7 @@ export async function agentRun(
             continue;
           }
 
-          agent.addAssistantMessage(
+          agent.addNoticeMessage(
             silentOverflow
               ? 'Context window appears full — the model returned an empty `length` finish. Run `/compact` or `/clear`, then try again.'
               : 'Model returned an empty response (no text or tool calls). Try again, or check the LLM server logs.'
@@ -487,7 +489,7 @@ export async function agentRun(
         ) {
           reasoningOnlyStreak++;
           if (reasoningOnlyStreak >= maxReasoningOnly) {
-            agent.addAssistantMessage(
+            agent.addNoticeMessage(
               `Model produced ${maxReasoningOnly} reasoning-only responses without tool calls. ` +
                 `Try rephrasing your request or switching to a model that supports tool calling.`
             );
@@ -536,7 +538,7 @@ export async function agentRun(
           agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
           overflowRetries++;
           agent.forceCompactContext();
-          agent.addAssistantMessage(
+          agent.addNoticeMessage(
             `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
           );
           agent.setState('thinking');
@@ -605,7 +607,7 @@ export async function agentRun(
         if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
           overflowRetries++;
           agent.forceCompactContext();
-          agent.addAssistantMessage(
+          agent.addNoticeMessage(
             `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
           );
           agent.setState('thinking');
@@ -620,11 +622,11 @@ export async function agentRun(
             : agent.cfg.baseURL?.includes('openrouter.ai')
               ? 'OPENROUTER_API_KEY'
               : 'your API key';
-          agent.addAssistantMessage(
+          agent.addNoticeMessage(
             `${msg}\n\nMake sure ${envVar} is set correctly in your environment or use /connect to update it.`
           );
         } else {
-          agent.addAssistantMessage(`API error (${status || 'unknown'}): ${msg}`);
+          agent.addNoticeMessage(`API error (${status || 'unknown'}): ${msg}`);
         }
         agent.setState('error');
         agent.onUpdate?.();
@@ -650,7 +652,7 @@ export async function agentRun(
         if (silentOverflow && overflowRetries < MAX_OVERFLOW_RETRIES) {
           overflowRetries++;
           const compacted = agent.forceCompactContext();
-          agent.addAssistantMessage(
+          agent.addNoticeMessage(
             compacted
               ? `Context overflow detected (empty \`${response.finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
               : `Context overflow detected. Retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
@@ -660,7 +662,7 @@ export async function agentRun(
           await new Promise((r) => setTimeout(r, 0));
           continue;
         }
-        agent.addAssistantMessage(
+        agent.addNoticeMessage(
           silentOverflow
             ? 'Context window appears full — the model returned an empty `length` finish. Run `/compact` or `/clear`, then try again.'
             : 'Model returned an empty response (no text or tool calls). Try again, or check the LLM server logs.'
@@ -692,7 +694,7 @@ export async function agentRun(
         if (!msg.content && msg.reasoning_content) {
           reasoningOnlyStreak++;
           if (reasoningOnlyStreak >= maxReasoningOnly) {
-            agent.addAssistantMessage(
+            agent.addNoticeMessage(
               `Model produced ${maxReasoningOnly} reasoning-only responses without tool calls. ` +
                 `Try rephrasing your request or switching to a model that supports tool calling.`
             );
@@ -733,7 +735,7 @@ export async function agentRun(
         lastToolSignature = signature;
       }
       if (sameSignatureStreak >= MAX_SAME_SIGNATURE_STREAK) {
-        agent.addAssistantMessage(
+        agent.addNoticeMessage(
           `⚠️ Stuck loop detected: the model issued the identical tool call(s) ${MAX_SAME_SIGNATURE_STREAK} rounds in a row. ` +
             `Stopping here to avoid an infinite loop — rephrase your request or take over manually.`
         );

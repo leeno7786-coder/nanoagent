@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   extractDeltaText,
   isSmallModel,
+  shouldEnableThinking,
   effectiveContextSize,
   getModelCompactionSettings,
 } from './llm.js';
@@ -35,6 +36,16 @@ describe('extractDeltaText', () => {
       content: '',
       reasoningContent: 'thinking',
     });
+  });
+});
+
+describe('shouldEnableThinking', () => {
+  it('enables thinking for Qwen and Bonsai (Qwen-based) model ids', () => {
+    expect(shouldEnableThinking('qwen3.5-4b')).toBe(true);
+    expect(shouldEnableThinking('Bonsai-27B')).toBe(true);
+    expect(shouldEnableThinking('lmstudio-community/Bonsai-8B-GGUF')).toBe(true);
+    expect(shouldEnableThinking('gpt-4o')).toBe(false);
+    expect(shouldEnableThinking('llama-3.1-8b')).toBe(false);
   });
 });
 

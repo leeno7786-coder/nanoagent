@@ -9,6 +9,14 @@ import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
 
+/** UI-only assistant notices (overflow retry, stuck-loop, etc.). Never sent to the LLM. */
+export function isNoticeMessage(m: Message): boolean {
+  return m.id.startsWith('notice-');
+}
+
+/** System ids that are merged into the single leading system prompt. */
+const KEPT_SYSTEM_IDS = new Set(['system-base', 'system-todos', 'system-compaction']);
+
 /** Map one internal message to the LLM chat payload shape (non-system). */
 function toChatMessage(m: Message): ChatMessage {
   if (m.role === 'tool') {
@@ -44,20 +52,24 @@ export function toChatMessages(agent: AgentCore): ChatMessage[] {
   syncTodoMessage(agent);
 
   // Filter out internal/empty messages that can poison the next chat template turn.
-  // Keep the main system prompt and the todo system message (the model needs
-  // todo ids for manage_todos). Other transient system notices are filtered
-  // out — they must never appear mid-history.
+  // Keep the main system prompt, todo system message, and compaction summary
+  // (merged into one leading system below). Other transient system notices are
+  // filtered out — they must never appear mid-history.
   // Reasoning-only assistant messages (empty content, no tool calls) are also
   // dropped: toChatMessage strips reasoning before sending, so they would go
   // out as empty assistant turns — breaking role alternation on strict chat
-  // templates and derailing small models (Qwen thinking turns hit this path).
+  // templates and derailing small models (Qwen/Bonsai thinking turns hit this).
+  // UI notices (notice-*) stay in the TUI but never enter the model payload —
+  // injecting them as assistant turns mid-loop makes Bonsai/Qwen Jinja treat
+  // the turn as finished and often emit EOS on the next generation prompt.
   const messagesToSend = agent.messages.filter(
     (m) =>
-      !(m.role === 'system' && m.id !== 'system-base' && m.id !== 'system-todos') &&
+      !(m.role === 'system' && !KEPT_SYSTEM_IDS.has(m.id)) &&
+      !isNoticeMessage(m) &&
       !(m.role === 'assistant' && !m.toolCalls && m.content.trim() === '')
   );
 
-  // Qwen3.5/3.6 Jinja chat templates raise:
+  // Qwen3.5/3.6 / Bonsai Jinja chat templates raise:
   //   "System message must be at the beginning."
   // if ANY system message is not at index 0 — including a second consecutive
   // system message (system-base + system-todos). Merge all kept system
@@ -79,6 +91,18 @@ export function toChatMessages(agent: AgentCore): ChatMessage[] {
   for (const m of rest) {
     out.push(toChatMessage(m));
   }
+
+  // Safety net for Bonsai/Qwen multi-step templates: a trailing assistant with
+  // no tool_calls looks like a completed turn. The generation prompt then opens
+  // a second assistant block and the model often stops immediately.
+  while (
+    out.length > 0 &&
+    out[out.length - 1]!.role === 'assistant' &&
+    !out[out.length - 1]!.tool_calls?.length
+  ) {
+    out.pop();
+  }
+
   return out;
 }
 
@@ -86,6 +110,22 @@ export function toChatMessages(agent: AgentCore): ChatMessage[] {
 export function addAssistantMessage(agent: AgentCore, content: string) {
   const msg: Message = {
     id: rnd(),
+    role: 'assistant',
+    content,
+    timestamp: now(),
+  };
+  agent.messages.push(msg);
+  agent.contextManager.addMessage(msg);
+  agent.onUpdate?.();
+}
+
+/**
+ * Append a UI-only notice. Shown in the TUI / session history but excluded from
+ * the LLM payload so mid-loop status text cannot break chat-template turns.
+ */
+export function addNoticeMessage(agent: AgentCore, content: string) {
+  const msg: Message = {
+    id: `notice-${rnd()}`,
     role: 'assistant',
     content,
     timestamp: now(),
@@ -126,6 +166,20 @@ export function addToolMessage(agent: AgentCore, content: string, toolCallId?: s
   agent.onUpdate?.();
 }
 
+/** Insert or replace the compaction summary as a mergeable system message. */
+function setCompactionSummaryMessage(agent: AgentCore, summary: string) {
+  agent.messages = agent.messages.filter((m) => m.id !== 'system-compaction');
+  const msg: Message = {
+    id: 'system-compaction',
+    role: 'system',
+    content: summary,
+    timestamp: now(),
+  };
+  const firstNonSystem = agent.messages.findIndex((m) => m.role !== 'system');
+  const insertAt = firstNonSystem === -1 ? agent.messages.length : firstNonSystem;
+  agent.messages.splice(insertAt, 0, msg);
+}
+
 /**
  * Check if context needs compaction and perform it if necessary.
  * Returns true if compaction was performed.
@@ -140,10 +194,13 @@ export function checkAndCompactContext(agent: AgentCore, force = false): boolean
     : agent.contextManager.compact();
 
   if (result.removedCount > 0) {
-    // Preserve non-base system messages (todo context, transient notices)
+    // Preserve non-base system messages (todo context, prior compaction note)
     // that live only in AgentCore.messages, then re-sync from the pruned
     // context manager (which holds system-base + conversation history).
-    const extraSystem = agent.messages.filter((m) => m.role === 'system' && m.id !== 'system-base');
+    // Drop a stale system-compaction — replaced below when a new summary exists.
+    const extraSystem = agent.messages.filter(
+      (m) => m.role === 'system' && m.id !== 'system-base' && m.id !== 'system-compaction'
+    );
     const synced = agent.contextManager.getMessages();
     const firstNonSystem = synced.findIndex((m) => m.role !== 'system');
     const insertAt = firstNonSystem === -1 ? synced.length : firstNonSystem;
@@ -151,9 +208,11 @@ export function checkAndCompactContext(agent: AgentCore, force = false): boolean
     agent.messages = synced;
     syncTodoMessage(agent);
 
-    // Add a system notification about compaction
+    // Compaction summary must NOT be an assistant turn: Bonsai/Qwen Jinja
+    // templates treat a trailing assistant as a finished response and the next
+    // model call often returns empty / stops. Merge it into the system block.
     if (result.summary) {
-      addAssistantMessage(agent, result.summary);
+      setCompactionSummaryMessage(agent, result.summary);
     }
     agent.onUpdate?.();
     return true;

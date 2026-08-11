@@ -5,6 +5,7 @@ export {
   normalizeContent,
   isLocalProvider,
   isSmallModel,
+  shouldEnableThinking,
   countTokens,
   extractDeltaText,
   extractApiMessage,

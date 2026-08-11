@@ -43,6 +43,15 @@ export function isLocalProvider(baseURL?: string): boolean {
   );
 }
 
+/**
+ * Models whose chat templates expect thinking blocks (Qwen3.x, Prism Bonsai).
+ * Bonsai is Qwen3.5/3.6-based but the model id is `Bonsai-*`, not `qwen*`.
+ */
+export function shouldEnableThinking(modelId: string): boolean {
+  const lower = modelId.toLowerCase();
+  return lower.includes('qwen') || lower.includes('bonsai');
+}
+
 export function isSmallModel(
   modelId: string,
   _maxTokens?: number,
