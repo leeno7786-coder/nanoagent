@@ -69,7 +69,8 @@
     "build:bun": "bun build src/main.ts src/opentui/index.tsx --outdir dist --minify --target node",
     "postinstall": "node scripts/install-bun.mjs",
     "prepack": "npm run build",
-    "package": "npm pack"
+    "package": "npm pack",
+    "package:deb": "bash scripts/build-deb.sh"
   },
   "devDependencies": {
     "@types/bun": "latest",

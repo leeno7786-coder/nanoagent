@@ -34,6 +34,7 @@ approach that degrades gracefully on a 2B–4B model.
 | Lint | `npm run lint` |
 | Format | `npm run format` / check with `npm run format:check` |
 | Build | `npm run build` (tsc → `dist/`) |
+| Linux `.deb` (amd64, bundled Node) | `bun run package:deb` → `dist-packages/nanoagent_<ver>_amd64.deb` |
 | Full CI gate | `npm run ci` (typecheck + lint + format:check + test + build) |
 
 **Before considering any task done:** `npm run typecheck` and `bun test` must pass.
@@ -203,3 +204,4 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Main-loop guardrails: default `maxIterations` is 50, and the run loop breaks after 3 consecutive identical tool-call rounds (stuck-loop guard).
 - Streaming requests ask for usage (`stream_options.include_usage`, plus `usage.include` on OpenRouter); API-reported usage drives compaction. Context window is resolved dynamically from the loaded runtime (LM Studio instance context / OpenRouter catalog `context_length`), then auto-compacts at **85%** of that window. The original user request is pinned across compaction. Compaction summaries merge into the leading system prompt (`system-compaction`) — never as a trailing assistant turn (Bonsai/Qwen Jinja treats that as a finished response and often emits EOS). Mid-loop UI status uses `notice-*` messages excluded from the LLM payload. `enable_thinking` is on for `qwen*` and `bonsai*` model ids. Default HTTP timeout is 600s for local providers (LM Studio/Ollama) and 120s for remote.
 - `dist/` is not tracked in git; `prepack` builds it. bun.lock is the canonical lockfile (`bun install --frozen-lockfile` must stay green for CI).
+- Preferred Linux install is the amd64 `.deb` from GitHub Releases (`scripts/build-deb.sh` / `bun run package:deb`): bundles Node 20 + linux-x64 `node_modules` under `/usr/lib/nanoagent`, wrappers at `/usr/bin/nanogent` and `/usr/bin/nanoagent`. Do not commit `.deb-stage/`, `.deb-cache/`, or `dist-packages/*.deb`.
