@@ -44,8 +44,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Build Linux amd64 .deb
+        run: bun run package:deb
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "*.tgz"
+          files: |
+            *.tgz
+            dist-packages/*.deb
           generate_release_notes: true

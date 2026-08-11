@@ -42,3 +42,8 @@ skills/test-*.json
 
 # pack output / scratch
 /*.tgz
+
+# Linux .deb packaging (scripts/build-deb.sh)
+.deb-stage/
+.deb-cache/
+dist-packages/
