@@ -13,6 +13,7 @@ import type { SubAgentSnapshot } from '../agent-subagents.js';
 import type { Theme } from './theme.js';
 import { DEFAULT_THEME } from './theme.js';
 import type { AgentCore } from '../agent.js';
+import { contextUsageFromStats, type ContextUsageSnapshot } from './token-display.js';
 
 type Overlay = 'help' | 'history' | 'skills' | 'connect' | 'permission-mode' | null;
 
@@ -37,6 +38,8 @@ interface AppState {
   currentTool: { name: string; args: string } | undefined;
   lastUsage: { input_tokens: number; output_tokens: number } | undefined;
   totalUsage: { input_tokens: number; output_tokens: number };
+  /** Live context-window fill from ContextManager (drives auto-compact). */
+  contextUsage: ContextUsageSnapshot | undefined;
   subAgents: SubAgentSnapshot[];
 
   sessions: Session[];
@@ -68,6 +71,7 @@ interface AppState {
   setCurrentTool: (t: { name: string; args: string } | undefined) => void;
   setLastUsage: (u: { input_tokens: number; output_tokens: number } | undefined) => void;
   setTotalUsage: (u: { input_tokens: number; output_tokens: number }) => void;
+  setContextUsage: (u: ContextUsageSnapshot | undefined) => void;
   setSubAgents: (s: SubAgentSnapshot[]) => void;
 
   setSessions: (s: Session[]) => void;
@@ -98,6 +102,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   currentTool: undefined,
   lastUsage: undefined,
   totalUsage: { input_tokens: 0, output_tokens: 0 },
+  contextUsage: undefined,
   subAgents: [],
 
   sessions: [],
@@ -146,6 +151,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setCurrentTool: (t) => set({ currentTool: t }),
   setLastUsage: (u) => set({ lastUsage: u }),
   setTotalUsage: (u) => set({ totalUsage: u }),
+  setContextUsage: (u) => set({ contextUsage: u }),
   setSubAgents: (s) => set({ subAgents: s }),
 
   setSessions: (s) => set({ sessions: s }),
@@ -164,6 +170,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     const busy = agent.state === 'thinking' || agent.state === 'executing_tool';
     const messages =
       busy && last?.role === 'assistant' ? [...msgs.slice(0, -1), { ...last }] : [...msgs];
+    const stats = agent.contextManager?.getStats?.();
     set({
       messages,
       state: agent.state,
@@ -171,6 +178,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       currentTool: agent.currentTool,
       lastUsage: agent.lastUsage,
       totalUsage: { ...agent.totalUsage },
+      contextUsage: stats ? contextUsageFromStats(stats) : undefined,
       subAgents: agent.getSubAgentSnapshot(),
       permissionMode: agent.securityManager?.permissionManager?.getMode() ?? 'ask',
     });

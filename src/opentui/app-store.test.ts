@@ -18,6 +18,19 @@ function fakeAgent(state: 'thinking' | 'idle', messages: Message[]): AgentCore {
     currentTool: undefined,
     lastUsage: undefined,
     totalUsage: { input_tokens: 0, output_tokens: 0 },
+    contextManager: {
+      getStats: () => ({
+        currentTokens: 15200,
+        maxTokens: 262144,
+        usagePercent: 15200 / 262144,
+        messageCount: messages.length,
+        needsCompaction: false,
+        compactionCount: 0,
+        tokenSource: 'api' as const,
+        estimatedTokens: 14000,
+        apiPromptTokens: 15200,
+      }),
+    },
     getSubAgentSnapshot: () => [],
     securityManager: undefined,
   } as unknown as AgentCore;
@@ -60,5 +73,18 @@ describe('syncFromAgent streaming clone', () => {
     useAppStore.getState().syncFromAgent(agent);
     const stored = useAppStore.getState().messages;
     expect(stored[2]).toBe(msgs[2]);
+  });
+
+  it('syncs contextUsage from ContextManager (not session totalUsage)', () => {
+    const agent = fakeAgent('idle', makeMessages());
+    agent.totalUsage = { input_tokens: 280000, output_tokens: 20000 };
+
+    useAppStore.getState().syncFromAgent(agent);
+    const { contextUsage, totalUsage } = useAppStore.getState();
+
+    expect(totalUsage.input_tokens + totalUsage.output_tokens).toBe(300000);
+    expect(contextUsage?.used).toBe(15200);
+    expect(contextUsage?.window).toBe(262144);
+    expect(contextUsage?.source).toBe('api');
   });
 });

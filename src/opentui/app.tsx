@@ -50,6 +50,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const currentTool = useAppStore((s) => s.currentTool);
   const lastUsage = useAppStore((s) => s.lastUsage);
   const totalUsage = useAppStore((s) => s.totalUsage);
+  const contextUsage = useAppStore((s) => s.contextUsage);
   const subAgents = useAppStore((s) => s.subAgents);
   const sessions = useAppStore((s) => s.sessions);
   const selectedMessageIndex = useAppStore((s) => s.selectedMessageIndex);
@@ -806,6 +807,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           currentTool={currentTool}
           lastUsage={lastUsage}
           totalUsage={totalUsage}
+          contextUsage={contextUsage}
           elapsedMs={elapsedMs}
           theme={theme}
           mouseEnabled={mouseEnabled}
@@ -863,7 +865,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               elapsedMs={elapsedMs}
               currentTool={currentTool}
               lastUsage={lastUsage}
-              totalUsage={totalUsage}
+              contextUsage={contextUsage}
               subAgents={subAgents}
               onSubmit={handleSubmit}
               selectedMessageIndex={selectedMessageIndex}

@@ -4,6 +4,13 @@ import type { AgentState } from '../types.js';
 import { isSmallModelFromConfig } from '../model-runtime.js';
 import type { Config } from '../types.js';
 import type { Theme } from './theme.js';
+import {
+  formatContextFill,
+  formatSessionUsage,
+  formatTurnUsage,
+  type ContextUsageSnapshot,
+  type TurnUsage,
+} from './token-display.js';
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -13,8 +20,11 @@ interface StatusBarProps {
   modelRuntime?: Pick<Config, 'modelContextLength' | 'modelParamBillions' | 'smallModelMode'>;
   todoCount: number;
   currentTool?: { name: string; args: string };
-  lastUsage?: { input_tokens: number; output_tokens: number };
-  totalUsage?: { input_tokens: number; output_tokens: number };
+  lastUsage?: TurnUsage;
+  /** Session-cumulative billed tokens (Σ). Not context fill. */
+  totalUsage?: TurnUsage;
+  /** Context-window fill from ContextManager — source of truth for compact. */
+  contextUsage?: ContextUsageSnapshot;
   elapsedMs?: number;
   theme: Theme;
   mouseEnabled?: boolean;
@@ -26,19 +36,6 @@ function spinnerFrame(ms: number): string {
   return SPINNER[Math.floor(ms / 80) % SPINNER.length];
 }
 
-function fmt(n: number): string {
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
-  return String(n);
-}
-
-/** Cursor-style token counter ("25.01k"). */
-function fmtPrecise(n: number): string {
-  if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(2) + 'k';
-  return String(n);
-}
-
 export function StatusBar({
   state,
   model,
@@ -47,6 +44,7 @@ export function StatusBar({
   currentTool,
   lastUsage,
   totalUsage,
+  contextUsage,
   elapsedMs,
   theme,
   mouseEnabled = true,
@@ -73,13 +71,18 @@ export function StatusBar({
   const mcpIndicator = mcpToolCount > 0 ? ` · MCP:${mcpToolCount}` : '';
   const spin = state !== 'idle' && state !== 'error' ? spinnerFrame(elapsedMs || 0) + ' ' : '';
 
-  const lastTokens = lastUsage
-    ? `${fmt(lastUsage.input_tokens)}↑${fmt(lastUsage.output_tokens)}↓`
-    : '';
-  const total = totalUsage ? totalUsage.input_tokens + totalUsage.output_tokens : 0;
+  const lastTokens = formatTurnUsage(lastUsage);
+  const sessionTokens = formatSessionUsage(totalUsage);
   const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
-  const totalTokens = totalUsage ? `${fmt(total)} total` : '';
-  const runningTokens = busy && total > 0 ? `${spin}Running ${fmtPrecise(total)} tokens` : '';
+
+  // Prefer ContextManager snapshot; fall back to window size from config only.
+  let ctxIndicator = formatContextFill(contextUsage);
+  if (!ctxIndicator) {
+    const ctxLen = modelRuntime?.modelContextLength;
+    if (ctxLen && ctxLen > 0) {
+      ctxIndicator = `${Math.round(ctxLen / 1000)}k`;
+    }
+  }
 
   const runtimeCfg = {
     model,
@@ -88,34 +91,33 @@ export function StatusBar({
     maxTokens: undefined,
   };
   const smallModelIndicator = isSmallModelFromConfig(runtimeCfg) ? ' [≤8B]' : '';
-  const ctxLen = modelRuntime?.modelContextLength;
-  // Prefer live prompt usage vs window when we know both (API-reported ↑ tokens).
-  let ctxIndicator = '';
-  if (ctxLen && ctxLen > 0) {
-    if (lastUsage && lastUsage.input_tokens > 0) {
-      const pct = Math.min(100, Math.round((lastUsage.input_tokens / ctxLen) * 100));
-      ctxIndicator = ` · ${fmt(lastUsage.input_tokens)}/${fmt(ctxLen)} (${pct}%)`;
-    } else {
-      ctxIndicator = ` · ${Math.round(ctxLen / 1000)}k`;
-    }
-  }
+
+  // One token story on the right: context fill · last turn ↑↓ · session Σ
+  // (never show session cumulative as if it were context fill)
   return (
     <box flexDirection="column" height={2} flexShrink={0} backgroundColor={theme.bgPanel}>
       <box flexDirection="row" paddingX={1} height={1}>
         <text fg={theme.headerFg}>⚡ NanoAgent</text>
         {workspaceName && <text fg={theme.accent || theme.headerFg}> [{workspaceName}]</text>}
-        {runningTokens && <text fg={theme.statusTool}> {runningTokens}</text>}
+        {busy && (
+          <text fg={theme.statusTool}>
+            {' '}
+            {spin}
+            {ctxIndicator || 'working…'}
+          </text>
+        )}
         <box flexGrow={1} />
         <text fg={theme.mutedFg}>
           {displayModel}
           {smallModelIndicator}
-          {ctxIndicator}
+          {!busy && ctxIndicator ? ` · ${ctxIndicator}` : ''}
         </text>
         {lastTokens && <text fg={theme.mutedFg}> · {lastTokens}</text>}
-        {!busy && totalTokens && <text fg={theme.mutedFg}> · {totalTokens}</text>}
+        {sessionTokens && <text fg={theme.mutedFg}> · {sessionTokens}</text>}
         {mcpIndicator && <text fg={theme.mutedFg}>{mcpIndicator}</text>}
         {elapsed && <text fg={theme.mutedFg}> · {elapsed}</text>}
         <text fg={s.color}>
+          {' '}
           {busy ? '' : spin}
           {s.label}
           {toolLabel}

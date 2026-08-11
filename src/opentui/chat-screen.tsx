@@ -13,6 +13,12 @@ import type { Theme } from './theme.js';
 import { buildToolDisplayBlock, type ToolDisplayBlock } from './tool-display.js';
 import { ErrorBoundary } from './error-boundary.js';
 import { useAppStore } from './app-store.js';
+import {
+  formatBusyContext,
+  formatTurnUsage,
+  type ContextUsageSnapshot,
+  type TurnUsage,
+} from './token-display.js';
 
 interface ChatScreenProps {
   theme: Theme;
@@ -24,8 +30,9 @@ interface ChatScreenProps {
     name: string;
     args: string;
   };
-  lastUsage?: { input_tokens: number; output_tokens: number };
-  totalUsage: { input_tokens: number; output_tokens: number };
+  lastUsage?: TurnUsage;
+  /** Context-window fill — never session Σ. */
+  contextUsage?: ContextUsageSnapshot;
   subAgents?: SubAgentSnapshot[];
   onSubmit: (text: string) => void;
   selectedMessageIndex?: number | null;
@@ -187,19 +194,6 @@ const DIFF_PROPS = {
   removedSignColor: '#f7768e',
 };
 
-function formatTokens(n: number): string {
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
-  return String(n);
-}
-
-/** Cursor-style token counter ("25.01k tokens"). */
-function formatTokensPrecise(n: number): string {
-  if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(2) + 'k';
-  return String(n);
-}
-
 /** Compact duration ("12s", "340ms"). */
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
@@ -266,7 +260,7 @@ export function ChatScreen({
   elapsedMs,
   currentTool,
   lastUsage,
-  totalUsage,
+  contextUsage,
   onSubmit,
   subAgents = [],
   selectedMessageIndex = null,
@@ -470,9 +464,10 @@ export function ChatScreen({
           <text fg={theme.statusThinking}>
             {' '}
             {spinnerFrame(elapsedMs)}
-            {totalUsage.input_tokens + totalUsage.output_tokens > 0
-              ? ` Running ${formatTokensPrecise(totalUsage.input_tokens + totalUsage.output_tokens)} tokens`
-              : ' working…'}
+            {(() => {
+              const busyCtx = formatBusyContext(contextUsage);
+              return busyCtx ? ` ${busyCtx}` : ' working…';
+            })()}
           </text>
         )}
 
@@ -789,7 +784,7 @@ type MessageItemProps = {
   message: Message;
   theme: Theme;
   toolInfoByCallId: Map<string, { content: string; duration?: number }>;
-  lastUsage?: { input_tokens: number; output_tokens: number };
+  lastUsage?: TurnUsage;
   state?: AgentState;
   currentTool?: {
     name: string;
@@ -985,11 +980,8 @@ function AssistantMessageView({
           );
         })()}
 
-      {message.role === 'assistant' && lastUsage && (
-        <text fg={theme.mutedFg}>
-          {' '}
-          {formatTokens(lastUsage.input_tokens)}↑ {formatTokens(lastUsage.output_tokens)}↓
-        </text>
+      {message.role === 'assistant' && formatTurnUsage(lastUsage) && (
+        <text fg={theme.mutedFg}> {formatTurnUsage(lastUsage)}</text>
       )}
     </box>
   );
