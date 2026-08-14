@@ -4,6 +4,8 @@ import type { Message, Skill } from './types.js';
 export class SkillManager {
   activeSkills: Map<string, Skill> = new Map();
   private _autoLoadedSkills: Set<string> = new Set();
+  /** Called after system-base is rewritten with active skill prompts. */
+  onPromptSync?: (content: string) => void;
 
   /**
    * Load a skill. Returns true if newly loaded, false if already active.
@@ -58,6 +60,7 @@ export class SkillManager {
     }
 
     base.content = cleanBase + skillSection;
+    this.onPromptSync?.(base.content);
   }
 
   /**

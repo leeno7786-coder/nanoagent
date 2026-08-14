@@ -442,6 +442,57 @@ describe('AgentCore run loop (behavioral)', () => {
     ).toBe(false);
   });
 
+  it('restores cached system-base at index 0 when it is missing before send', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    const original = agent.messages.find((m) => m.id === 'system-base');
+    expect(original).toBeDefined();
+    const prompt = original!.content;
+    expect(prompt.length).toBeGreaterThan(0);
+
+    // Compaction / session edits can drop system-base from AgentCore.messages.
+    // Qwen Jinja crashes unless a system message is first.
+    agent.messages = agent.messages.filter((m) => m.id !== 'system-base');
+    agent.messages.push({
+      id: 'u-after-drop',
+      role: 'user',
+      content: 'continue',
+      timestamp: Date.now(),
+    });
+
+    const payload = agent.toChatMessages();
+    expect(payload[0]?.role).toBe('system');
+    expect(payload[0]?.content).toContain(prompt.slice(0, 40));
+    expect(agent.messages[0]?.id).toBe('system-base');
+  });
+
+  it('cached system prompt includes skill content after load', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    const loaded = agent.skillManager.load(
+      {
+        name: 'prompt-cache-test',
+        description: 'test skill',
+        tools: [],
+        prompt: 'SKILL-PROMPT-UNIQUE-MARKER',
+      },
+      agent.messages,
+      false
+    );
+    expect(loaded).toBe(true);
+    expect(agent.messages.find((m) => m.id === 'system-base')?.content).toContain(
+      'SKILL-PROMPT-UNIQUE-MARKER'
+    );
+
+    agent.messages = agent.messages.filter((m) => m.id !== 'system-base');
+
+    const payload = agent.toChatMessages();
+    expect(payload[0]?.role).toBe('system');
+    expect(payload[0]?.content).toContain('SKILL-PROMPT-UNIQUE-MARKER');
+  });
+
   it('does not feed overflow-retry notices back to the model as assistant turns', async () => {
     const agent = newAgent(makeConfig(ws, { modelContextLength: 2000, rateLimitMs: 0 }));
     await agent.init();
