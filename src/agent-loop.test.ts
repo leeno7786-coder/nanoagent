@@ -214,6 +214,54 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(agent.totalUsage.input_tokens).toBe(20);
   });
 
+  it('auto-continues when a small model check-ins after one shallow tool round', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    // Round 1: git_status. Round 2: premature "let me know what to focus on".
+    // Round 3 (after nudge): real completion.
+    scripted.push([
+      {
+        toolCalls: [{ id: 'call-1', name: 'git_status', arguments: '{}' }],
+      },
+    ]);
+    scripted.push([
+      {
+        content:
+          "The repo looks clean. Let me know if you have specific files or sections you'd like me to focus on.",
+      },
+    ]);
+    scripted.push([
+      {
+        toolCalls: [
+          {
+            id: 'call-2',
+            name: 'list_dir',
+            arguments: JSON.stringify({ path: '.' }),
+          },
+        ],
+      },
+    ]);
+    scripted.push([{ content: 'Reviewed top-level layout: src/, docs/, tests/ present.' }]);
+
+    await agent.run('lets review the codebase');
+
+    expect(sentMessages.length).toBe(4);
+    // Nudge was injected for the model
+    const nudge = agent.messages.find((m) => m.id.startsWith('nudge-'));
+    expect(nudge).toBeDefined();
+    expect(nudge!.role).toBe('user');
+    // Notice visible to the user
+    expect(
+      agent.messages.some(
+        (m) => m.id.startsWith('notice-') && /continuing the task/i.test(m.content)
+      )
+    ).toBe(true);
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.content).toContain('Reviewed top-level layout');
+    expect(agent.state).toBe('idle');
+  });
+
   it('sends the todo system message (with ids) to the LLM', async () => {
     const agent = newAgent();
     await agent.init();

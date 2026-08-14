@@ -54,6 +54,8 @@ function spinnerFrame(ms: number): string {
 export function getVisibleMessages(messages: Message[], state: AgentState): Message[] {
   return messages.filter((msg, idx) => {
     if (msg.role === 'system' || msg.role === 'tool') return false;
+    // Auto-continue nudges are for the model only — hide from the chat panel.
+    if (msg.id.startsWith('nudge-')) return false;
     const isLastMessage = idx === messages.length - 1;
     if (isLastMessage && state !== 'idle') return true;
 

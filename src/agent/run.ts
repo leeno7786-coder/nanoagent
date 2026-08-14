@@ -5,8 +5,13 @@ import { SkillManager } from '../skill-manager.js';
 import type { Message } from '../types.js';
 import { rnd, now } from '../agent-utils.js';
 import { logError } from '../log.js';
+import { EARLY_STOP_CONTINUE_NUDGE, looksLikePrematureCheckin } from './early-stop.js';
 
 const DEFAULT_MAX_REASONING_ONLY = 5;
+/** Only recover when the model barely started (≤ N tool rounds). */
+const EARLY_STOP_MAX_TOOL_ROUNDS = 2;
+/** Cap auto-continues per run so we never loop forever on check-ins. */
+const EARLY_STOP_MAX_CONTINUES = 2;
 
 export async function agentRun(
   agent: AgentCore,
@@ -234,10 +239,27 @@ export async function agentRun(
   /** Retries after silent context overflow (finish_reason=length, 0 output). */
   let overflowRetries = 0;
   const MAX_OVERFLOW_RETRIES = 2;
+  /** Auto-continues after shallow tool work + clarifying-question exit. */
+  let earlyStopContinues = 0;
   /** Stuck-loop guard: consecutive rounds issuing identical tool-call signatures. */
   let lastToolSignature: string | undefined;
   let sameSignatureStreak = 0;
   const MAX_SAME_SIGNATURE_STREAK = 3;
+
+  const tryContinueAfterPrematureCheckin = (content: string): boolean => {
+    if (earlyStopContinues >= EARLY_STOP_MAX_CONTINUES) return false;
+    if (agent.consecutiveToolRounds <= 0) return false;
+    if (agent.consecutiveToolRounds > EARLY_STOP_MAX_TOOL_ROUNDS) return false;
+    if (!looksLikePrematureCheckin(content)) return false;
+    earlyStopContinues++;
+    agent.addNoticeMessage(
+      `↻ Model paused to ask for direction after ${agent.consecutiveToolRounds} tool round(s) — continuing the task…`
+    );
+    agent.addNudgeMessage(EARLY_STOP_CONTINUE_NUDGE);
+    agent.setState('thinking');
+    agent.onUpdate?.();
+    return true;
+  };
   while (true) {
     if (signal?.aborted) {
       agent.setState('idle');
@@ -503,6 +525,10 @@ export async function agentRun(
 
         if (!assistantMsg.toolCalls || assistantMsg.toolCalls.length === 0) {
           reasoningOnlyStreak = 0;
+          if (tryContinueAfterPrematureCheckin(assistantMsg.content)) {
+            await new Promise((r) => setTimeout(r, 0));
+            continue;
+          }
           agent.setState('idle');
           agent.onUpdate?.();
           return;
@@ -702,6 +728,10 @@ export async function agentRun(
             agent.onUpdate?.();
             return;
           }
+          await new Promise((r) => setTimeout(r, 0));
+          continue;
+        }
+        if (tryContinueAfterPrematureCheckin(msg.content || '')) {
           await new Promise((r) => setTimeout(r, 0));
           continue;
         }

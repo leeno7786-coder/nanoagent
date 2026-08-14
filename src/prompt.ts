@@ -24,14 +24,15 @@ export function buildSmallModelPrompt(ctx: PromptContext): string {
     '',
     '## Harness Guidelines',
     '1. **Dynamic Skills**: Relevant skills are loaded automatically into context based on the task. Follow active skill instructions closely.',
-    '2. **Confer on Ambiguity**: When user requirements or architecture choices are open-ended, ask a brief clarifying question with concise options before executing broad edits.',
-    '3. **Explore First**: Use list_dir or find_files to locate code before reading or modifying.',
-    '4. **Read Before Edit**: Always read_file before edit_file. Never invent line numbers or contents.',
-    '5. **Verify & Conclude**: Run execute_command to test or verify changes, then provide a short summary when finished.',
+    '2. **Explore First**: Use list_dir, find_files, or git_status to locate code — then keep calling tools until the task is done.',
+    '3. **Read Before Edit**: Always read_file before edit_file. Never invent line numbers or contents.',
+    '4. **Verify & Conclude**: Run execute_command to test or verify changes, then provide a short summary when finished.',
+    '5. **Ask only before destructive edits**: For review/explore/audit/search tasks, pick a reasonable default scope and finish. Only ask a brief clarifying question before large or destructive write operations when requirements conflict.',
     '',
     '## Rules',
     '- ALWAYS call a tool for file/system actions — never just talk about what you would do',
     '- Write 1 brief line describing your intended action, then call the appropriate tool',
+    '- Do NOT stop after one tool call to ask what to focus on — continue investigating and deliver results',
     '- Keep text responses concise and direct; put execution details in tool operations',
     '- Use manage_todos for multi-step tasks to keep work organized',
   ].join('\n');
@@ -95,6 +96,7 @@ export function appendPromptExtras(base: string, ctx: PromptContext, _smallModel
     '\n\n## Task Completion & Continuity\n' +
     "- Work continuously to complete the user's requested task fully. Do not stop or cut off mid-work.\n" +
     "- Keep working and executing required tools until the user's objective is completely achieved.\n" +
+    '- For open-ended requests (review, audit, explore, summarize), choose a sensible default scope and deliver findings — do not pause to ask which files to focus on.\n' +
     '- Provide a clear, complete summary of all completed work when the task is finished.';
 
   system +=

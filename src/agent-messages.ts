@@ -151,6 +151,22 @@ export function addUserMessage(agent: AgentCore, content: string): void {
 }
 
 /**
+ * Inject a hidden continue-nudge for the model (id prefix `nudge-`).
+ * Shown to the LLM as a user turn; filtered out of the TUI chat panel.
+ */
+export function addNudgeMessage(agent: AgentCore, content: string): void {
+  const msg: Message = {
+    id: `nudge-${rnd()}`,
+    role: 'user',
+    content,
+    timestamp: now(),
+  };
+  agent.messages.push(msg);
+  agent.contextManager.addMessage(msg);
+  agent.onUpdate?.();
+}
+
+/**
  * Add a tool message to the conversation.
  */
 export function addToolMessage(agent: AgentCore, content: string, toolCallId?: string): void {
