@@ -214,6 +214,18 @@ export function checkAndCompactContext(agent: AgentCore, force = false): boolean
     if (result.summary) {
       setCompactionSummaryMessage(agent, result.summary);
     }
+
+    // UI-only notice — keep out of ContextManager so it doesn't inflate the
+    // fill we just reduced. Still excluded from the LLM payload via notice-*.
+    const stats = agent.contextManager.getStats();
+    const pct = Math.min(100, Math.round(stats.usagePercent * 100));
+    const src = stats.tokenSource === 'api' ? 'api' : 'est';
+    agent.messages.push({
+      id: `notice-${rnd()}`,
+      role: 'assistant',
+      content: `Context compacted (−${result.removedCount} msgs) · now ${stats.currentTokens}/${stats.maxTokens} tokens (${pct}%, ${src}).`,
+      timestamp: now(),
+    });
     agent.onUpdate?.();
     return true;
   }

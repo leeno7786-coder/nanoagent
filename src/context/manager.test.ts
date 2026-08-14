@@ -182,6 +182,58 @@ describe('ContextManager', () => {
       expect(stats.currentTokens).toBeGreaterThan(1000);
       expect(stats.apiPromptTokens).toBe(1000);
     });
+
+    it('does not freeze when the provider re-reports a flat prompt_tokens', () => {
+      // Repro: LM Studio often re-sends ~tool-schema size every turn while the
+      // real prompt grows. Resetting the delta counter on each report stuck the
+      // TUI at e.g. 15k/262k even as the agent kept working.
+      const mgr = createContextManager({ ...cfg, modelContextLength: 262144 });
+      mgr.reportApiUsage({ input_tokens: 15000 });
+
+      for (let i = 0; i < 8; i++) {
+        mgr.addMessage({
+          id: `u${i}`,
+          role: 'user',
+          content: ('context-chunk-' + i + '-').repeat(80),
+          timestamp: Date.now(),
+        });
+        mgr.addMessage({
+          id: `a${i}`,
+          role: 'assistant',
+          content: ('reply-chunk-' + i + '-').repeat(80),
+          timestamp: Date.now(),
+        });
+        // Flat/stale report — same as the first turn
+        mgr.reportApiUsage({ input_tokens: 15000 });
+      }
+
+      const stats = mgr.getStats();
+      expect(stats.currentTokens).toBeGreaterThan(15000);
+      // Still growing after the flat reports (not stuck at the baseline)
+      const mid = stats.currentTokens;
+      mgr.addMessage({
+        id: 'more',
+        role: 'tool',
+        content: 'y'.repeat(2000),
+        timestamp: Date.now(),
+      });
+      mgr.reportApiUsage({ input_tokens: 15000 });
+      expect(mgr.getStats().currentTokens).toBeGreaterThan(mid);
+    });
+
+    it('still accepts a genuinely higher API prompt_tokens report', () => {
+      const mgr = createContextManager({ ...cfg, modelContextLength: 262144 });
+      mgr.reportApiUsage({ input_tokens: 15000 });
+      mgr.addMessage({
+        id: '1',
+        role: 'user',
+        content: 'hello',
+        timestamp: Date.now(),
+      });
+      mgr.reportApiUsage({ input_tokens: 40000 });
+      expect(mgr.getStats().currentTokens).toBe(40000);
+      expect(mgr.getStats().apiPromptTokens).toBe(40000);
+    });
   });
 
   describe('canFitMessage', () => {
@@ -340,7 +392,7 @@ describe('ContextManager', () => {
 describe('DEFAULT_CONTEXT_CONFIG', () => {
   it('should have reasonable defaults', () => {
     expect(DEFAULT_CONTEXT_CONFIG.enabled).toBe(true);
-    expect(DEFAULT_CONTEXT_CONFIG.compactThreshold).toBe(0.85);
+    expect(DEFAULT_CONTEXT_CONFIG.compactThreshold).toBe(0.8);
     expect(DEFAULT_CONTEXT_CONFIG.summaryReservedPercent).toBeGreaterThan(0);
     expect(DEFAULT_CONTEXT_CONFIG.summaryReservedPercent).toBeLessThanOrEqual(1);
     expect(DEFAULT_CONTEXT_CONFIG.keepCount).toBeGreaterThan(0);
@@ -349,7 +401,7 @@ describe('DEFAULT_CONTEXT_CONFIG', () => {
 });
 
 describe('ContextManager long-context compaction', () => {
-  it('uses runtime modelContextLength and triggers only above 85%', () => {
+  it('uses runtime modelContextLength and triggers only above 80%', () => {
     const mgr = createContextManager({
       model: 'qwen/qwen3-next-80b-a3b-instruct',
       baseURL: 'https://openrouter.ai/api/v1',
@@ -359,19 +411,56 @@ describe('ContextManager long-context compaction', () => {
       modelContextLength: 262144,
     });
     expect(mgr.getMaxContextSize()).toBe(262144);
-    expect(mgr.getConfig().compactThreshold).toBe(0.85);
+    expect(mgr.getConfig().compactThreshold).toBe(0.8);
 
     // ~50% of window — must not compact
     mgr.reportApiUsage({ input_tokens: 130000 });
     expect(mgr.needsCompaction()).toBe(false);
 
-    // Just under 85%
-    mgr.reportApiUsage({ input_tokens: 222000 });
+    // Just under 80% of 262144 (= 209715)
+    mgr.reportApiUsage({ input_tokens: 209000 });
     expect(mgr.needsCompaction()).toBe(false);
 
-    // Over 85% of 262144 (= 222822)
-    mgr.reportApiUsage({ input_tokens: 230000 });
+    // Over 80% (~210k+)
+    mgr.reportApiUsage({ input_tokens: 211000 });
     expect(mgr.needsCompaction()).toBe(true);
+  });
+
+  it('keeps tool-schema overhead in the fill after compaction clears the API baseline', () => {
+    const mgr = createContextManager({
+      model: 'test-model',
+      baseURL: 'http://127.0.0.1:1234/v1',
+      workspace: '/test',
+      maxIterations: 10,
+      apiKey: 'test',
+      modelContextLength: 10000,
+      contextKeepCount: 4,
+      contextCompactThreshold: 0.5,
+    });
+
+    // Small message content; API reports a much larger prompt (tool schemas).
+    mgr.addMessage({ id: 'u0', role: 'user', content: 'hi', timestamp: Date.now() });
+    mgr.reportApiUsage({ input_tokens: 3000, output_tokens: 10 });
+    const overheadBefore = mgr.getStats().overheadTokens;
+    expect(overheadBefore).toBeGreaterThan(1000);
+
+    for (let i = 0; i < 12; i++) {
+      mgr.addMessage({
+        id: `m${i}`,
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: ('pad-' + i + '-').repeat(40),
+        timestamp: Date.now(),
+      });
+    }
+    const result = mgr.compact({ force: true, keepCount: 4 });
+    expect(result.removedCount).toBeGreaterThan(0);
+
+    // API baseline cleared, but overhead must remain so fill isn't just message text.
+    const stats = mgr.getStats();
+    expect(stats.apiPromptTokens).toBeUndefined();
+    expect(stats.overheadTokens).toBe(overheadBefore);
+    expect(stats.currentTokens).toBe(stats.estimatedTokens + stats.overheadTokens);
+    expect(stats.currentTokens).toBeGreaterThan(stats.estimatedTokens);
   });
 
   it('preserves the original user request when compacting', () => {

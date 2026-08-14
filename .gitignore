@@ -42,3 +42,10 @@ skills/test-*.json
 
 # pack output / scratch
 /*.tgz
+
+# Native packaging (scripts/build-deb.sh, scripts/build-windows.mjs)
+.deb-stage/
+.deb-cache/
+.win-stage/
+.win-cache/
+dist-packages/

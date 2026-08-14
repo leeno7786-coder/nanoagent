@@ -19,7 +19,7 @@ import { THEMES } from '../theme.js';
 import { build_memory_graph, get_graph_stats, get_analysis_report } from '../../graph/tools.js';
 export type { SlashCommandContext } from './types.js';
 import type { SlashCommandContext } from './types.js';
-import { checkAndAutoCompact, pushAssistant } from './utils.js';
+import { pushAssistant } from './utils.js';
 import { handlePermissionsCommand } from './permissions.js';
 import { handleMcpCommand, handleMcpAddCommand, handleMcpRemoveCommand } from './mcp.js';
 
@@ -68,15 +68,21 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       return;
     case 'compact': {
       if (!agent) return;
-      const before = agent.messages.length;
-      checkAndAutoCompact(agent, setMessages);
-      const compacted = before - agent.messages.length;
-      if (compacted > 0) {
-        pushAssistant(agent, `Manually compacted: ${compacted} messages removed.`, setMessages);
-      } else {
+      // Force so /compact always attempts; checkAndCompactContext already
+      // emits a UI notice with ContextManager fill when anything was removed.
+      const did = agent.forceCompactContext?.() ?? agent.checkAndCompactContext?.() ?? false;
+      setMessages([...agent.messages]);
+      if (!did) {
+        const stats = agent.contextManager?.getStats?.();
+        const fill =
+          stats && stats.maxTokens > 0
+            ? `${stats.currentTokens}/${stats.maxTokens} (${Math.min(100, Math.round(stats.usagePercent * 100))}%)`
+            : '';
         pushAssistant(
           agent,
-          'Compact: no compaction needed — conversation is within context budget.',
+          fill
+            ? `Compact: no compaction needed — ${fill}.`
+            : 'Compact: no compaction needed — conversation is within context budget.',
           setMessages
         );
       }

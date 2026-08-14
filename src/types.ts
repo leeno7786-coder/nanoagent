@@ -67,9 +67,9 @@ export interface Config {
   toolCacheMaxSize?: number;
   /** Enable context window management (default: true). */
   contextManagementEnabled?: boolean;
-  /** Threshold for context compaction (0-1, default: 0.85). */
+  /** Threshold for context compaction (0-1, default: 0.8). */
   contextCompactThreshold?: number;
-  /** Percentage of context to reserve for response (0-1, default: 0.3). */
+  /** Percentage of context to reserve for response (0-1, default: 0.15). */
   contextSummaryReservedPercent?: number;
   /** Minimum number of messages to keep (default: varies by model). */
   contextKeepCount?: number;

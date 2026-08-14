@@ -44,8 +44,17 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Install zip tools
+        run: sudo apt-get update && sudo apt-get install -y zip unzip dpkg
+
+      - name: Build Linux amd64 .deb + Windows x64 zip
+        run: bun run package:native
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "*.tgz"
+          files: |
+            *.tgz
+            dist-packages/*.deb
+            dist-packages/*_win_x64.zip
           generate_release_notes: true

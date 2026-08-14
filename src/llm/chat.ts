@@ -3,7 +3,14 @@ import type { Config } from '../types.js';
 import { logError, logWarn } from '../log.js';
 import { ApiError } from './types.js';
 import type { ChatMessage, ChatResponse, ChatRequestOptions } from './types.js';
-import { normalizeContent, getMaxOutputTokens, shouldEnableThinking } from './utils.js';
+import {
+  normalizeContent,
+  getMaxOutputTokens,
+  shouldEnableThinking,
+  normalizeUsage,
+  calculateBackoffDelay,
+  sleepWithSignal,
+} from './utils.js';
 import {
   awaitEndpointRateLimit,
   awaitRateLimitToken,
@@ -11,8 +18,6 @@ import {
   shouldRetry,
   markEndpointRateLimited,
 } from './rate-limit.js';
-import { calculateBackoffDelay } from './utils.js';
-import { sleepWithSignal } from './utils.js';
 
 export async function chat(
   client: OpenAI,
@@ -103,12 +108,7 @@ export async function chat(
             })
             .filter((x): x is NonNullable<typeof x> => x !== null),
         },
-        usage: completionObj.usage
-          ? {
-              input_tokens: completionObj.usage.prompt_tokens,
-              output_tokens: completionObj.usage.completion_tokens,
-            }
-          : undefined,
+        usage: normalizeUsage(completionObj.usage),
         finishReason: choice?.finish_reason as string | undefined,
       };
     } catch (err: unknown) {

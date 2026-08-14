@@ -261,4 +261,24 @@ function getMaxOutputTokens(modelId: string, configuredMax?: number): number {
   return configuredMax ?? 65536;
 }
 
+/**
+ * Normalize provider usage blocks to { input_tokens, output_tokens }.
+ * Accepts OpenAI-style prompt_tokens/completion_tokens and the newer
+ * input_tokens/output_tokens aliases (some LM Studio / proxy builds).
+ */
+export function normalizeUsage(
+  usage: unknown
+): { input_tokens: number; output_tokens: number } | undefined {
+  if (!usage || typeof usage !== 'object') return undefined;
+  const u = usage as Record<string, unknown>;
+  const input = Number(u.prompt_tokens ?? u.input_tokens ?? 0);
+  const output = Number(u.completion_tokens ?? u.output_tokens ?? 0);
+  if (!Number.isFinite(input) || !Number.isFinite(output)) return undefined;
+  if (!(input > 0) && !(output > 0)) return undefined;
+  return {
+    input_tokens: Math.max(0, Math.floor(input)),
+    output_tokens: Math.max(0, Math.floor(output)),
+  };
+}
+
 export { getMaxOutputTokens };

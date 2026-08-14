@@ -31,7 +31,11 @@ interface AgentStub {
   permissionManager: PermissionManager;
   runCalls: Array<{ text: string; signal?: AbortSignal }>;
   reconfigureCalls: Array<Record<string, unknown>>;
-  contextManager: { clear: ReturnType<typeof mock>; setMessages: ReturnType<typeof mock> };
+  contextManager: {
+    clear: ReturnType<typeof mock>;
+    setMessages: ReturnType<typeof mock>;
+    getStats: ReturnType<typeof mock>;
+  };
 }
 
 function makeAgent(ws: string): AgentStub {
@@ -44,7 +48,21 @@ function makeAgent(ws: string): AgentStub {
   const permissionManager = new PermissionManager({ mode: 'ask' });
   const runCalls: AgentStub['runCalls'] = [];
   const reconfigureCalls: AgentStub['reconfigureCalls'] = [];
-  const contextManager = { clear: mock(() => {}), setMessages: mock(() => {}) };
+  const contextManager = {
+    clear: mock(() => {}),
+    setMessages: mock(() => {}),
+    getStats: mock(() => ({
+      currentTokens: 1200,
+      maxTokens: 262144,
+      usagePercent: 1200 / 262144,
+      messageCount: 2,
+      needsCompaction: false,
+      compactionCount: 0,
+      tokenSource: 'estimate' as const,
+      estimatedTokens: 1200,
+      apiPromptTokens: undefined,
+    })),
+  };
 
   const agent = {
     cfg,
@@ -72,6 +90,8 @@ function makeAgent(ws: string): AgentStub {
     reloadFromDisk: mock(async () => {}),
     executeToolDirect: mock(async () => JSON.stringify({ ok: true })),
     compactContextIfNeeded: async () => false,
+    forceCompactContext: mock(() => false),
+    checkAndCompactContext: mock(() => false),
     onUpdate: undefined,
   } as unknown as AgentCore;
 
@@ -153,7 +173,9 @@ describe('handleSlashCommand', () => {
 
   it('/compact reports when no compaction is needed', async () => {
     await handleSlashCommand('/compact', h.ctx);
-    expect(lastAssistantContent(h)).toContain('no compaction needed');
+    const content = lastAssistantContent(h);
+    expect(content).toContain('no compaction needed');
+    expect(content).toContain('1200/262144');
   });
 
   it('/todo <text> adds a todo to the agent', async () => {

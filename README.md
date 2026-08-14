@@ -28,17 +28,39 @@ An ultra-lightweight, scalable CLI/TUI coding agent built from the ground up to 
 
 ## 🚀 Quick Start & Installation
 
-### Option 1: Install Globally via NPM (Recommended)
-Run this single command on any machine:
+### Option 1: Native packages (recommended)
+
+**Linux (Ubuntu/Debian amd64)** — self-contained `.deb` with bundled Node 20:
+
+```bash
+# Download the latest nanoagent_*_amd64.deb from GitHub Releases, then:
+sudo apt install ./nanoagent_*_amd64.deb
+nanogent --help
+```
+
+**Windows (x64)** — portable zip with bundled Node 20 (no installer required):
+
+```text
+Download nanoagent_*_win_x64.zip from GitHub Releases
+Extract → run nanogent.cmd  (or nanoagent.cmd)
+```
+
+Build both locally from this repo:
+
+```bash
+bun install --frozen-lockfile   # or: npm install
+bun run package:deb             # → dist-packages/nanoagent_<version>_amd64.deb
+bun run package:win             # → dist-packages/nanoagent_<version>_win_x64.zip
+# or: bun run package:native    # both
+```
+
+Remove Linux package: `sudo apt remove nanoagent`
+
+### Option 2: Install Globally via NPM
 ```bash
 npm install -g @omega3_0/nanoagent
 ```
-
-### Option 2: Direct GitHub One-Liner Install
-Install directly from the GitHub repository on any PC:
-```bash
-npm install -g https://github.com/leeno7786-coder/nanoagent.git
-```
+Requires **Node ≥ 20**. On Linux/Windows, prefer the native packages if global npm installs miss `dist/` or native deps.
 
 ### Option 3: Zero-Install via `npx`
 ```bash
@@ -48,10 +70,11 @@ npx @omega3_0/nanoagent
 ### Option 4: Build & Link from Source
 ```bash
 git clone https://github.com/leeno7786-coder/nanoagent.git
-cd qwen-agent-tui
+cd nanoagent
 npm install
 npm run build
-npm link --force
+sudo ln -sfn "$(pwd)/dist/main.js" /usr/local/bin/nanogent
+sudo ln -sfn "$(pwd)/dist/main.js" /usr/local/bin/nanoagent
 ```
 
 ---
