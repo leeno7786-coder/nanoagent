@@ -1,6 +1,6 @@
 # Security Hardening
 
-qwen-agent-tui includes built-in security features to protect against common security risks when using AI agents with file system and command execution capabilities.
+NanoAgent includes built-in security features to protect against common security risks when using AI agents with file system and command execution capabilities.
 
 ## Overview
 
@@ -51,7 +51,7 @@ able to escalate privileges just by being opened in the agent:
 
 Security settings can be configured via:
 
-1. **Configuration file** (`~/.qwen-agent.json`)
+1. **Configuration file** (`~/.nanogent.json` or `~/.nanoagent.json`; legacy `~/.qwen-agent.json` is still read)
 2. **Environment variables** (prefixed with `QWEN_SECURITY_`)
 3. **Programmatically** via the `SecurityManager` API
 
@@ -115,7 +115,7 @@ and dependency lockfiles — project manifests like `package.json`, `go.mod`,
 
 ### Example Configuration
 
-**Via `~/.qwen-agent.json`:**
+**Via `~/.nanogent.json`:**
 
 ```json
 {
@@ -399,11 +399,11 @@ If a legitimate operation is blocked, review why it was blocked and consider:
 - Adjusting your workflow to use safer alternatives
 
 ### 3. Regularly Update
-Keep qwen-agent-tui updated to receive the latest security improvements.
+Keep NanoAgent updated to receive the latest security improvements.
 
 ### 4. Report Security Issues
 If you find a security vulnerability or a false positive/negative, please report it at:
-🔗 [https://github.com/leeno7786-coder/qwen-agent-tui/issues](https://github.com/leeno7786-coder/qwen-agent-tui/issues)
+🔗 [https://github.com/leeno7786-coder/nanoagent/issues](https://github.com/leeno7786-coder/nanoagent/issues)
 
 ### 5. Use Least Privilege
 Configure the workspace to the minimum necessary directory. Avoid running the agent with access to sensitive system directories.
@@ -478,7 +478,7 @@ The security system is designed to be fast and non-intrusive.
 
 ## License
 
-The security hardening features are part of qwen-agent-tui and are licensed under the same terms as the main project.
+The security hardening features are part of NanoAgent and are licensed under the same terms as the main project.
 
 ---
 
