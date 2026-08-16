@@ -162,6 +162,9 @@ OUT_PATH="${OUT_DIR}/${DEB_NAME}"
 rm -f "$OUT_PATH"
 
 echo "==> Building ${OUT_PATH}"
+# WSL/NTFS stages often land as 777; dpkg-deb requires 0755–0775 on DEBIAN/.
+chmod 0755 "${STAGE}/DEBIAN"
+find "${STAGE}/DEBIAN" -type f -exec chmod 0644 {} +
 dpkg-deb --root-owner-group --build "$STAGE" "$OUT_PATH"
 
 echo "==> Package info"

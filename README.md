@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.1.6** (`@omega3_0/nanoagent`)
+Current release: **2.1.7** (`@omega3_0/nanoagent`)
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -81,6 +81,7 @@ Remove Linux package: `sudo apt remove nanoagent`
 
 ```bash
 npm install -g @omega3_0/nanoagent
+npm install -g @omega3_0/nanoagent@latest   # update
 ```
 
 Requires **Node ≥ 18**. On Linux/Windows, prefer the native packages if a global npm install misses `dist/` or native deps.
