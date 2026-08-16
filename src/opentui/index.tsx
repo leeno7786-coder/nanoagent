@@ -46,6 +46,6 @@ export async function runTui() {
     return;
   }
 
-  const appRenderer = await createCliRenderer({ useMouse: true });
+  const appRenderer = await createCliRenderer({ useMouse: false });
   createRoot(appRenderer).render(<App renderer={appRenderer} />);
 }

@@ -4,6 +4,22 @@ import { join, resolve } from 'path';
 import { config as dotenvConfig } from 'dotenv';
 import { logError, logWarn } from '../log.js';
 
+/** TUI mask character previously written back as the stored key. */
+const API_KEY_MASK = '\u2022';
+
+/**
+ * True when a value can be stored and sent as an HTTP Authorization token.
+ * Rejects empty strings, the all-bullets mask leak, and non-ASCII bytes
+ * that make fetch() throw "Header has invalid value".
+ */
+export function isUsableApiKey(value: string | undefined | null): value is string {
+  if (typeof value !== 'string') return false;
+  const key = value.trim();
+  if (!key) return false;
+  if (key.split('').every((ch) => ch === API_KEY_MASK)) return false;
+  return /^[\x21-\x7E]+$/.test(key);
+}
+
 function ensureEnvFile(): string {
   const envDir = join(homedir(), '.qwen-agent-tui');
   const envPath = join(envDir, '.env');
@@ -25,6 +41,10 @@ function ensureEnvFile(): string {
 }
 
 export function saveApiKeyToEnv(envVarName: string, apiKey: string, envPath?: string): boolean {
+  if (!isUsableApiKey(apiKey)) {
+    logError('Refusing to save unusable API key for', envVarName);
+    return false;
+  }
   try {
     const targetPath = envPath || ensureEnvFile();
     let existingContent = '';
@@ -61,8 +81,9 @@ export function saveApiKeyToEnv(envVarName: string, apiKey: string, envPath?: st
 }
 
 export function getApiKey(envVarName: string): string | undefined {
-  if (process.env[envVarName]) {
-    return process.env[envVarName];
+  const fromEnv = process.env[envVarName];
+  if (isUsableApiKey(fromEnv)) {
+    return fromEnv.trim();
   }
   // Trust model: API keys are only honored from the real process environment
   // (checked above) or trusted home-dir .env files. The workspace .env is
@@ -73,8 +94,9 @@ export function getApiKey(envVarName: string): string | undefined {
       try {
         const content = readFileSync(envPath, 'utf-8');
         const match = content.match(new RegExp(`^${envVarName}=(.+)$`, 'm'));
-        if (match) {
-          return match[1]?.trim() || undefined;
+        const value = match?.[1]?.trim();
+        if (isUsableApiKey(value)) {
+          return value;
         }
       } catch {
         /* ignore */

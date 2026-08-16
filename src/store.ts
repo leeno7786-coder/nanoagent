@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { createRequire } from 'module';
 import type { Todo, Session, Message, Config } from './types.js';
 import { VersionedStore } from './storage.js';
 
@@ -27,7 +26,6 @@ export function buildConfigSnapshot(cfg: Config): Partial<Config> {
   };
 }
 
-const requireOptional = createRequire(import.meta.url);
 const DATA_DIR = join(homedir(), '.qwen-agent-tui');
 const SESSION_DIR = join(DATA_DIR, 'sessions');
 const HISTORY_FILE = join(DATA_DIR, 'input-history.json');
@@ -198,24 +196,6 @@ export function resumeSession(id?: string): Session | null {
     return loadSession(id);
   }
   return getLatestSession();
-}
-
-/**
- * Copy text to system clipboard.
- * Returns true if successful, false otherwise.
- */
-export function copyToClipboard(text: string): boolean {
-  try {
-    const clipboardy = requireOptional('clipboardy') as
-      { writeSync?: (text: string) => void } | undefined;
-    if (clipboardy?.writeSync) {
-      clipboardy.writeSync(text);
-      return true;
-    }
-  } catch {
-    // clipboardy not installed
-  }
-  return false;
 }
 
 /**

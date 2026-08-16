@@ -105,12 +105,22 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.userFg}>Input:</text>
       <text fg={theme.mutedFg}> Shift+Enter Multi-line input</text>
       <text fg={theme.mutedFg}> Ctrl+↑/↓ Select message</text>
-      <text fg={theme.mutedFg}> Ctrl+C Copy selected message</text>
+      <text fg={theme.mutedFg}> Ctrl+C Copy selection or selected message</text>
+      <text fg={theme.mutedFg}> Ctrl+Shift+V or right-click Paste (terminal paste)</text>
       <text> </text>
 
-      <text fg={theme.userFg}>Copying text:</text>
-      <text fg={theme.mutedFg}> Hold Shift + drag to select and copy</text>
-      <text fg={theme.mutedFg}> Or press F7 to disable mouse capture, then drag normally</text>
+      <text fg={theme.userFg}>Copying and pasting:</text>
+      <text fg={theme.mutedFg}>
+        {' '}Mouse capture is OFF by default for easy terminal paste
+      </text>
+      <text fg={theme.mutedFg}> Select text and use terminal copy (Ctrl+Shift+C)</text>
+      <text fg={theme.mutedFg}> Right-click or Ctrl+Shift+V to paste into focused field</text>
+      <text fg={theme.mutedFg}>
+        {' '}Press F7 to enable mouse capture for drag-select
+      </text>
+      <text fg={theme.statusError} marginTop={1}>
+        {' '}(Note: Mouse capture breaks right-click paste)
+      </text>
     </scrollbox>
   );
 }

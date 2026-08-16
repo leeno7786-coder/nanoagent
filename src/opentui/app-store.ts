@@ -87,7 +87,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   overlay: null,
   showPermissionMode: false,
   showTodos: false,
-  mouseEnabled: true,
+  mouseEnabled: false,
   theme: DEFAULT_THEME,
   selectedMessageIndex: null,
   pendingPermissionReq: null,

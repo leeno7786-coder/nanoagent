@@ -15,6 +15,7 @@ import {
   providerRequiresAuth,
   getApiKeyEnvVar,
   checkRuntimeHealth,
+  fetchOpenRouterModels,
   RUNTIME_PROVIDERS,
 } from './providers.js';
 
@@ -216,5 +217,50 @@ describe('providers.ts - Provider Resolution', () => {
       const uniqueIds = new Set(ids);
       expect(uniqueIds.size).toBe(ids.length);
     });
+  });
+});
+
+describe('fetchOpenRouterModels', () => {
+  let origFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  it('throws instead of returning [] when the key is only mask bullets', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(fetchOpenRouterModels('\u2022'.repeat(73))).rejects.toThrow(/API key/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces HTTP errors instead of an empty list', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+    }) as unknown as typeof fetch;
+
+    await expect(fetchOpenRouterModels('sk-or-v1-test')).rejects.toThrow(/401/);
+  });
+
+  it('returns models from a successful catalog response', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          data: [{ id: 'openrouter/free', name: 'Free', context_length: 200000 }],
+        }),
+    }) as unknown as typeof fetch;
+
+    const models = await fetchOpenRouterModels('sk-or-v1-test');
+    expect(models).toHaveLength(1);
+    expect(models[0]?.id).toBe('openrouter/free');
   });
 });
