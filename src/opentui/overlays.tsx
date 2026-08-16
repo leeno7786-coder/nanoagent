@@ -110,16 +110,13 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text> </text>
 
       <text fg={theme.userFg}>Copying and pasting:</text>
-      <text fg={theme.mutedFg}>
-        {' '}Mouse capture is OFF by default for easy terminal paste
-      </text>
+      <text fg={theme.mutedFg}> Mouse capture is OFF by default for easy terminal paste</text>
       <text fg={theme.mutedFg}> Select text and use terminal copy (Ctrl+Shift+C)</text>
       <text fg={theme.mutedFg}> Right-click or Ctrl+Shift+V to paste into focused field</text>
-      <text fg={theme.mutedFg}>
-        {' '}Press F7 to enable mouse capture for drag-select
-      </text>
+      <text fg={theme.mutedFg}> Press F7 to enable mouse capture for drag-select</text>
       <text fg={theme.statusError} marginTop={1}>
-        {' '}(Note: Mouse capture breaks right-click paste)
+        {' '}
+        (Note: Mouse capture breaks right-click paste)
       </text>
     </scrollbox>
   );
