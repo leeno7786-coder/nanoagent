@@ -125,6 +125,8 @@ async function main() {
   console.log('==> Staging application files');
   cpSync(path.join(ROOT, 'dist'), path.join(STAGE, 'dist'), { recursive: true });
   cpSync(path.join(ROOT, 'skills'), path.join(STAGE, 'skills'), { recursive: true });
+  mkdirSync(path.join(STAGE, 'scripts'), { recursive: true });
+  cpSync(path.join(ROOT, 'scripts', 'run-nanoagent.mjs'), path.join(STAGE, 'scripts', 'run-nanoagent.mjs'));
   for (const f of ['package.json', 'README.md', 'LICENSE', 'SECURITY.md', 'AGENTS.md']) {
     cpSync(path.join(ROOT, f), path.join(STAGE, f));
   }
@@ -151,7 +153,7 @@ async function main() {
   const launcher = `@echo off\r
 setlocal\r
 set "ROOT=%~dp0"\r
-"%ROOT%node\\node.exe" "%ROOT%dist\\main.js" %*\r
+"%ROOT%node\\node.exe" "%ROOT%scripts\\run-nanoagent.mjs" %*\r
 `;
   writeFileSync(path.join(STAGE, 'nanogent.cmd'), launcher);
   writeFileSync(path.join(STAGE, 'nanoagent.cmd'), launcher);

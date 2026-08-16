@@ -71,11 +71,12 @@ npx @omega3_0/nanoagent
 ```bash
 git clone https://github.com/leeno7786-coder/nanoagent.git
 cd nanoagent
-npm install
-npm run build
-sudo ln -sfn "$(pwd)/dist/main.js" /usr/local/bin/nanogent
-sudo ln -sfn "$(pwd)/dist/main.js" /usr/local/bin/nanoagent
+bun install --frozen-lockfile   # or: npm install
+sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanogent
+sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanoagent
 ```
+
+The launcher runs `src/main.ts` via bun (same as `bun run start`) in a git checkout. Packaged `.deb` / Windows zip / npm installs have no `src/` and use compiled `dist/`.
 
 ---
 

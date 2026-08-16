@@ -51,7 +51,7 @@ Users need a one-shot Linux install that does not depend on npm login or a worki
   node/                 # official Node 20 linux-x64 distribution
     bin/node
     ...
-/usr/bin/nanogent       # wrapper → bundled node + dist/main.js
+/usr/bin/nanogent       # wrapper → bundled node + scripts/run-nanoagent.mjs
 /usr/bin/nanoagent      # same wrapper (alias)
 ```
 
@@ -59,7 +59,8 @@ Users need a one-shot Linux install that does not depend on npm login or a worki
 
 `/usr/bin/nanogent` (and `nanoagent`) is a small shell script:
 
-- `exec /usr/lib/nanoagent/node/bin/node /usr/lib/nanoagent/dist/main.js "$@"`
+- `exec /usr/lib/nanoagent/node/bin/node /usr/lib/nanoagent/scripts/run-nanoagent.mjs "$@"`
+- The launcher loads `dist/main.js` in the packaged tree (no `src/`). A git checkout with bun uses `src/main.ts` instead.
 - Does not rely on system `node` or `PATH` for the runtime.
 
 ### Debian control

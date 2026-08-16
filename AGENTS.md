@@ -27,7 +27,7 @@ approach that degrades gracefully on a 2B–4B model.
 
 | Task | Command |
 |---|---|
-| Run the TUI (dev) | `bun run start` |
+| Run the TUI (dev) | `bun run start` or `nanoagent` (source checkout launcher = bun + `src/main.ts`) |
 | Headless run | `bun run src/main.ts run --prompt "task" --workspace .` |
 | Tests | `bun test` (npm test aliases it) |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) |
@@ -181,31 +181,18 @@ These exist because breaking them has caused real incidents. Do not violate them
 - **Recommended Local Model**: `Jackrong\Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF` for optimal performance.
 - Prefers structured diff-style chat output for tool/file edits (● Update headers with line deltas).
 - Attach the frontend-design skill for TUI/UI work when polishing panels and layout.
+- Prefers native terminal paste (right-click / Ctrl+Shift+V) for TUI inputs including `/connect` API keys; F7 mouse capture blocks paste.
 
 ## 10. Learned Workspace Facts
 
 - Bun + OpenTUI agent; TUI code lives in `src/opentui/`; config at `~/.nanogent.json` or `.nanogent.json`.
-- Default local backend is LM Studio at `http://127.0.0.1:1234/v1`.
-- Sub-agent tool: `explore_subagent` (dispatch ONE remote Qwen with a focused `prompt` + optional `focus_path`). The blind "fan to all" tool was removed because vague prompts time out on large codebases.
-- Remote sub-agents run on Qwen3.5 model(s) (≤9B, currently the 4B) in this machine's LM Studio. A single
-  loaded model with N parallel prediction slots serves N workers (scheduler counts
-  per-endpoint slots); LM Studio auto-links to the other device that hosts the models.
-  Sub-agents hit `http://127.0.0.1:1234/v1`.
-- Sub-agents get the FULL local tool set (read/write/search/shell/git) against the shared workspace, so they can actually investigate and act — not just answer prompts.
-- Pool is auto-discovered: `resolveSubAgentPool` (src/subagents.ts) prefers explicit `cfg.subagents`, then `REMOTE_LMSTUDIO_URL`, then local LM Studio's `qwen3.5-2b*` models. No manual config needed.
-- Main agent calls `explore_subagent` 1–3× in parallel with narrow, file-specific prompts;
-  default concurrency 4 (configurable to 16 via `maxBackgroundSubAgents`). It synthesizes results itself.
-- Parallel `code_review` sub-agent mode was removed; main agent crafts per-agent prompts.
-- Detects loaded model size and context from LM Studio dynamically.
+- Default local backend is LM Studio at `http://127.0.0.1:1234/v1`. Remote sub-agents run on Qwen3.5 (≤9B, currently the 4B) there; a loaded model with N prediction slots serves N workers. Detects loaded model size and context dynamically.
+- Sub-agent tool: `explore_subagent` (one focused `prompt` + optional `focus_path`; full local tool set). Pool via `resolveSubAgentPool`: `cfg.subagents` → `REMOTE_LMSTUDIO_URL` → local Qwen3.5 ≤9B. Main agent dispatches 1–3 in parallel (default concurrency 4, max 16) and synthesizes results. Parallel `code_review` mode was removed.
 - OpenRouter sub-agents reuse `OPENROUTER_API_KEY` when the main agent also uses OpenRouter.
-- Tests run with `bun test` (`npm test` aliases it; the suite imports `bun:test` and cannot run under plain `node --test`).
-- Headless `nanogent run` supports `--yes`/`-y` (auto-approve all permissions) and `--permission-mode <mode>`; without them, permission prompts auto-deny with a stderr hint.
-- MCP servers from a PROJECT-LOCAL config are NOT auto-connected (RCE/key-exfil guard). Trust = the exact global config paths in the home dir, an explicit config path, or `NANOGENT_TRUST_PROJECT_MCP=1`. Configs merge (global base + project override); `mcp` maps merge too and project-sourced servers are tracked in `cfg.mcpUntrusted` and blocked individually — global servers still connect. MCP tools use category `mcp` and are auto-allowed except in `read_only` (shell/`execute_command` still asks). Put MCP servers in `~/.nanogent.json`.
-- Workspace `.env` files are UNTRUSTED: `NANOGENT_TRUST_PROJECT_MCP`, `QWEN_SECURITY_*`, `QWEN_BASE_URL`, `REMOTE_LMSTUDIO_URL`, and `*_API_KEY` are only honored from the real process environment or the trusted home-dir `.env` — never from a project `.env`. Home `.env` wins over cwd `.env` on conflicts. `getApiKey()` likewise only reads home-dir `.env` files.
-- Project-local skills (workspace `skills/` dir, `.json` and `SKILL.md`) default to `enabled: false` — prompt-injection guard; home-dir skills keep their defaults.
-- Main-loop guardrails: default `maxIterations` is 50, and the run loop breaks after 3 consecutive identical tool-call rounds (stuck-loop guard).
-- Streaming requests ask for usage (`stream_options.include_usage`, plus `usage.include` on OpenRouter); API-reported usage drives compaction. Context window is resolved dynamically from the loaded runtime (LM Studio instance context / OpenRouter catalog `context_length`), then auto-compacts at **80%** of that window (~210k on a 262k model — ~50k headroom for the summary). The original user request is pinned across compaction. Compaction summaries merge into the leading system prompt (`system-compaction`) — never as a trailing assistant turn (Bonsai/Qwen Jinja treats that as a finished response and often emits EOS). Mid-loop UI status uses `notice-*` messages excluded from the LLM payload. `enable_thinking` is on for `qwen*` and `bonsai*` model ids. Default HTTP timeout is 600s for local providers (LM Studio/Ollama) and 120s for remote.
-- `dist/` is not tracked in git; `prepack` builds it. bun.lock is the canonical lockfile (`bun install --frozen-lockfile` must stay green for CI).
-- Preferred Linux install is the amd64 `.deb` from GitHub Releases (`scripts/build-deb.sh` / `bun run package:deb`): bundles Node 20 + linux-x64 `node_modules` under `/usr/lib/nanoagent`, wrappers at `/usr/bin/nanogent` and `/usr/bin/nanoagent`.
-- Preferred Windows install is the portable zip (`scripts/build-windows.mjs` / `bun run package:win`): bundles Node 20 + win32-x64 natives; run `nanogent.cmd`. Can be built on Linux via `npm install --os=win32 --cpu=x64`.
+- Tests run with `bun test` (`npm test` aliases it; the suite imports `bun:test`). Headless `nanogent run` supports `--yes`/`-y` and `--permission-mode`; without them, permission prompts auto-deny.
+- MCP servers from a PROJECT-LOCAL config are NOT auto-connected. Trust = home-dir config paths, an explicit config path, or `NANOGENT_TRUST_PROJECT_MCP=1`. Workspace `.env` is untrusted for keys/URLs; `getApiKey()` reads home-dir `.env` only (`~/.qwen-agent-tui/.env` then `~/.env`).
+- Project-local skills (workspace `skills/` dir, `.json` and `SKILL.md`) default to `enabled: false`; home-dir skills keep their defaults.
+- Main-loop guardrails: default `maxIterations` is 50; the run loop breaks after 3 consecutive identical tool-call rounds. Streaming usage drives compaction at **80%** of the dynamic context window; summaries merge into the leading `system-compaction` prompt. `enable_thinking` is on for `qwen*` and `bonsai*` model ids. HTTP timeout is 600s local / 120s remote.
+- `dist/` is gitignored (`npm run build` / `prepack`). `scripts/run-nanoagent.mjs` is the `nanoagent`/`nanogent` bin: a git checkout with bun runs `src/main.ts` (same as `bun run start`); `.deb` / Windows zip / npm pack have no `src/` and load `dist/main.js`. `bun.lock` is the canonical lockfile.
+- Preferred Linux install is the amd64 `.deb` (`bun run package:deb`): Node 20 + linux-x64 `node_modules` under `/usr/lib/nanoagent`, wrappers at `/usr/bin/nanogent` and `/usr/bin/nanoagent` → `scripts/run-nanoagent.mjs`. Windows: portable zip (`bun run package:win`); run `nanogent.cmd`.
 - Do not commit `.deb-stage/`, `.deb-cache/`, `.win-stage/`, `.win-cache/`, or `dist-packages/*`.
