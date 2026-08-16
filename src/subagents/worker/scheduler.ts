@@ -1,3 +1,4 @@
+import { awaitEndpointRateLimit } from '../../llm/rate-limit.js';
 import type { SubAgentEndpoint } from '../../types.js';
 
 /**
@@ -18,18 +19,28 @@ export class SubAgentScheduler {
   async acquire(
     endpoints: SubAgentEndpoint[],
     preferred?: string,
-    timeoutMs = 60000
+    timeoutMs = 60000,
+    signal?: AbortSignal
   ): Promise<SubAgentEndpoint | undefined> {
     const usable = endpoints.filter((e) => e.baseURL && e.model);
     if (usable.length === 0) return undefined;
 
     let ep = this.tryAcquire(usable, preferred);
-    if (ep) return ep;
+    if (ep) {
+      try {
+        await awaitEndpointRateLimit(ep.baseURL, signal);
+        return ep;
+      } catch (err) {
+        this.release(ep.name);
+        throw err;
+      }
+    }
 
     const start = Date.now();
     while (!ep) {
       const elapsed = Date.now() - start;
       if (elapsed >= timeoutMs) return undefined;
+      if (signal?.aborted) return undefined;
 
       await new Promise<void>((res) => {
         const waiter: { fired: boolean; wake: () => void } = { fired: false, wake: () => {} };
@@ -55,7 +66,13 @@ export class SubAgentScheduler {
       });
       ep = this.tryAcquire(usable, preferred);
     }
-    return ep;
+    try {
+      await awaitEndpointRateLimit(ep.baseURL, signal);
+      return ep;
+    } catch (err) {
+      this.release(ep.name);
+      throw err;
+    }
   }
 
   private tryAcquire(usable: SubAgentEndpoint[], preferred?: string): SubAgentEndpoint | undefined {

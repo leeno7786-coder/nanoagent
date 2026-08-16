@@ -9,9 +9,14 @@ import {
   getProviderBaseURL,
   providerRequiresAuth,
   getApiKeyEnvVar,
+  getApiKeyEnvVars,
   fetchLocalModels,
   fetchOpenRouterModels,
+  fetchRemoteModels,
   checkRuntimeHealth,
+  sortProvidersForConnect,
+  CUSTOM_MODEL_ID,
+  CUSTOM_MODEL,
 } from '../providers.js';
 import { saveApiKeyToEnv, getApiKey, isUsableApiKey } from '../config.js';
 import type { RuntimeProvider, ModelInfo } from '../types.js';
@@ -21,12 +26,19 @@ import { sanitizePastedLine } from '../clipboard.js';
 interface ConnectOverlayProps {
   theme: Theme;
   onClose: () => void;
-  onSelect?: (provider: RuntimeProvider, model: ModelInfo, apiKey?: string) => void | Promise<void>;
+  onSelect?: (
+    provider: RuntimeProvider,
+    model: ModelInfo,
+    apiKey?: string,
+    baseURL?: string
+  ) => void | Promise<void>;
 }
 
 type ConnectState =
   | 'selecting-provider'
   | 'entering-api-key'
+  | 'entering-base-url'
+  | 'entering-model-id'
   | 'selecting-model'
   | 'checking-runtime'
   | 'fetching-models';
@@ -34,12 +46,30 @@ type ConnectState =
 const VISIBLE_PROVIDERS = 12;
 const VISIBLE_MODELS = 10;
 
+function existingProviderApiKey(provider: RuntimeProvider | undefined): string {
+  if (!provider) return '';
+  for (const envVar of getApiKeyEnvVars(provider.id)) {
+    const key = getApiKey(envVar);
+    if (key) return key;
+  }
+  return '';
+}
+
+function withCustomModelOption(provider: RuntimeProvider, models: ModelInfo[]): ModelInfo[] {
+  if (!provider.requiresCustomBaseURL) return models;
+  if (models.some((m) => m.id === CUSTOM_MODEL_ID)) return models;
+  return [CUSTOM_MODEL, ...models];
+}
+
 export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps) {
   const renderer = useRenderer();
   const [selectedProviderIndex, setSelectedProviderIndex] = useState(0);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [state, setState] = useState<ConnectState>('selecting-provider');
   const [apiKeyInput, setApiKeyInput] = useState('');
+  const [baseURLInput, setBaseURLInput] = useState('');
+  const [modelIdInput, setModelIdInput] = useState('');
+  const [customBaseURL, setCustomBaseURL] = useState<string | undefined>();
   const [runtimeModels, setRuntimeModels] = useState<ModelInfo[]>([]);
   const [isCheckingRuntime, setIsCheckingRuntime] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
@@ -65,17 +95,14 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     setApiKeyInput(sanitizePastedLine(display));
   };
 
-  const sortedProviders = useMemo(
-    () => [...RUNTIME_PROVIDERS].sort((a, b) => a.name.localeCompare(b.name)),
-    []
-  );
+  const sortedProviders = useMemo(() => sortProvidersForConnect(RUNTIME_PROVIDERS), []);
 
   const selectedProvider = sortedProviders[selectedProviderIndex];
 
   const providerModels = useMemo(() => {
     if (!selectedProvider) return [];
-    if (runtimeModels.length > 0) return runtimeModels;
-    return selectedProvider.models || [];
+    const models = runtimeModels.length > 0 ? runtimeModels : selectedProvider.models || [];
+    return withCustomModelOption(selectedProvider, models);
   }, [selectedProvider, runtimeModels]);
 
   const selectedModel = providerModels[selectedModelIndex];
@@ -88,19 +115,72 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     return selectedProvider?.isLocal === true;
   }, [selectedProvider]);
 
-  const hasApiKey = useMemo(() => {
-    if (!selectedProvider) return false;
-    const envVar = getApiKeyEnvVar(selectedProvider.id);
-    if (!envVar) return false;
-    return !!getApiKey(envVar);
-  }, [selectedProvider]);
+  const existingApiKey = useMemo(
+    () => existingProviderApiKey(selectedProvider),
+    [selectedProvider]
+  );
+  const hasApiKey = !!existingApiKey;
 
-  const existingApiKey = useMemo(() => {
-    if (!selectedProvider) return '';
-    const envVar = getApiKeyEnvVar(selectedProvider.id);
-    if (!envVar) return '';
-    return getApiKey(envVar) || '';
-  }, [selectedProvider]);
+  const resolveEffectiveKey = useCallback((): string => {
+    return apiKeyInput.trim() || existingApiKey;
+  }, [apiKeyInput, existingApiKey]);
+
+  const fetchCloudModels = useCallback(
+    async (provider: RuntimeProvider, key: string, baseURL: string) => {
+      setState('fetching-models');
+      setIsCheckingRuntime(true);
+      setRuntimeError(null);
+      try {
+        const models =
+          provider.id === 'openrouter'
+            ? await fetchOpenRouterModels(key)
+            : await fetchRemoteModels(baseURL, key);
+        if (models.length > 0) {
+          setRuntimeModels(models);
+        } else if (provider.models.length > 0) {
+          setRuntimeModels([]);
+        } else {
+          setRuntimeError('No models returned; enter a model id');
+          setRuntimeModels([CUSTOM_MODEL]);
+        }
+        setState('selecting-model');
+        setSelectedModelIndex(0);
+      } catch (error) {
+        if (provider.models.length > 0) {
+          setRuntimeModels([]);
+          setState('selecting-model');
+          setSelectedModelIndex(0);
+        } else {
+          setRuntimeError(`Error fetching models: ${error}`);
+          setState(provider.requiresCustomBaseURL ? 'entering-base-url' : 'entering-api-key');
+        }
+      } finally {
+        setIsCheckingRuntime(false);
+      }
+    },
+    []
+  );
+
+  const proceedAfterCredentials = useCallback(
+    async (provider: RuntimeProvider, key: string, baseURL?: string) => {
+      if (provider.requiresCustomBaseURL && !baseURL) {
+        const existing = (provider.endpointEnvVar && getApiKey(provider.endpointEnvVar)) || '';
+        setBaseURLInput(existing);
+        setState('entering-base-url');
+        setRuntimeError(null);
+        return;
+      }
+      const url = baseURL || getProviderBaseURL(provider);
+      if (url) setCustomBaseURL(url);
+      if (provider.dynamicModels && !provider.isLocal) {
+        await fetchCloudModels(provider, key, url);
+        return;
+      }
+      setState('selecting-model');
+      setSelectedModelIndex(0);
+    },
+    [fetchCloudModels]
+  );
 
   const handleProviderSelect = useCallback(async () => {
     if (!selectedProvider) return;
@@ -112,6 +192,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
 
       try {
         const baseURL = getProviderBaseURL(selectedProvider) || 'http://localhost:1234/v1';
+        setCustomBaseURL(baseURL);
         const isHealthy = await checkRuntimeHealth(baseURL);
 
         if (isHealthy) {
@@ -152,7 +233,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
       setState('selecting-model');
       setSelectedModelIndex(0);
     }
-  }, [selectedProvider, isLocal, requiresAuth]);
+  }, [selectedProvider, isLocal, requiresAuth, hasApiKey, existingApiKey]);
 
   const handleApiKeySubmit = useCallback(async () => {
     if (!selectedProvider) {
@@ -167,7 +248,6 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     }
 
     const key = apiKeyInput.trim();
-    // If empty but has existing key, use the existing key
     const effectiveKey = key || existingApiKey;
     if (!isUsableApiKey(effectiveKey)) {
       setRuntimeError(
@@ -178,7 +258,6 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
       return;
     }
 
-    // Only save if the key actually changed or this is a first-time set
     if (key && key !== existingApiKey) {
       const saved = saveApiKeyToEnv(envVar, key);
       if (!saved) {
@@ -187,60 +266,105 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
       }
     }
     setApiKeyInput('');
+    await proceedAfterCredentials(selectedProvider, effectiveKey);
+  }, [selectedProvider, apiKeyInput, existingApiKey, proceedAfterCredentials]);
 
-    // For OpenRouter, fetch models after confirming key
-    if (selectedProvider?.id === 'openrouter') {
-      setState('fetching-models');
-      setIsCheckingRuntime(true);
-      setRuntimeError(null);
-      try {
-        const models = await fetchOpenRouterModels(effectiveKey);
-        if (models.length > 0) {
-          setRuntimeModels(models);
-          setState('selecting-model');
-          setSelectedModelIndex(0);
-        } else {
-          setRuntimeError('No models found from OpenRouter');
-          setState('entering-api-key');
-        }
-      } catch (error) {
-        setRuntimeError(`Error fetching OpenRouter models: ${error}`);
-        setState('entering-api-key');
-      } finally {
-        setIsCheckingRuntime(false);
-      }
+  const handleBaseURLSubmit = useCallback(async () => {
+    if (!selectedProvider) {
+      setState('selecting-provider');
       return;
     }
+    const url = baseURLInput.trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(url)) {
+      setRuntimeError('Enter a full http(s) URL, e.g. https://myres.openai.azure.com/openai/v1');
+      return;
+    }
+    if (selectedProvider.endpointEnvVar) {
+      saveApiKeyToEnv(selectedProvider.endpointEnvVar, url);
+    }
+    setCustomBaseURL(url);
+    const key = resolveEffectiveKey();
+    await proceedAfterCredentials(selectedProvider, key, url);
+  }, [selectedProvider, baseURLInput, proceedAfterCredentials, resolveEffectiveKey]);
 
-    setState('selecting-model');
-    setSelectedModelIndex(0);
-  }, [selectedProvider, apiKeyInput, existingApiKey]);
+  const handleModelIdSubmit = useCallback(async () => {
+    if (!selectedProvider) return;
+    const id = modelIdInput.trim();
+    if (!id) {
+      setRuntimeError('Model / deployment id is required');
+      return;
+    }
+    const envVar = getApiKeyEnvVar(selectedProvider.id);
+    const apiKey = envVar ? existingProviderApiKey(selectedProvider) : undefined;
+    const model: ModelInfo = { id, name: id };
+    await onSelect?.(
+      selectedProvider,
+      model,
+      apiKey,
+      customBaseURL || getProviderBaseURL(selectedProvider)
+    );
+    onClose();
+  }, [selectedProvider, modelIdInput, customBaseURL, onSelect, onClose]);
 
   const handleModelSelect = useCallback(async () => {
     if (!selectedProvider || !selectedModel) return;
 
-    const envVar = getApiKeyEnvVar(selectedProvider.id);
-    const apiKey = envVar ? getApiKey(envVar) : undefined;
+    if (selectedModel.id === CUSTOM_MODEL_ID) {
+      setModelIdInput('');
+      setRuntimeError(null);
+      setState('entering-model-id');
+      return;
+    }
 
-    await onSelect?.(selectedProvider, selectedModel, apiKey);
+    const envVar = getApiKeyEnvVar(selectedProvider.id);
+    const apiKey = envVar ? existingProviderApiKey(selectedProvider) : undefined;
+
+    await onSelect?.(
+      selectedProvider,
+      selectedModel,
+      apiKey,
+      customBaseURL || getProviderBaseURL(selectedProvider)
+    );
     onClose();
-  }, [selectedProvider, selectedModel, onSelect, onClose]);
+  }, [selectedProvider, selectedModel, customBaseURL, onSelect, onClose]);
 
   const handleBack = useCallback(() => {
+    if (state === 'entering-model-id') {
+      setState('selecting-model');
+      setModelIdInput('');
+      setRuntimeError(null);
+      return;
+    }
+    if (state === 'entering-base-url') {
+      setState(requiresAuth ? 'entering-api-key' : 'selecting-provider');
+      setRuntimeError(null);
+      return;
+    }
+    if (state === 'selecting-model' && selectedProvider?.requiresCustomBaseURL) {
+      setState('entering-base-url');
+      setRuntimeError(null);
+      return;
+    }
     setState('selecting-provider');
     setApiKeyInput('');
+    setBaseURLInput('');
+    setModelIdInput('');
+    setCustomBaseURL(undefined);
     setRuntimeError(null);
     setRuntimeStatus(null);
     setRuntimeModels([]);
-  }, []);
+  }, [state, requiresAuth, selectedProvider]);
 
   useKeyboard(
     (keyEvent) => {
       if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
         if (
           state === 'entering-api-key' ||
+          state === 'entering-base-url' ||
+          state === 'entering-model-id' ||
           state === 'selecting-model' ||
-          state === 'checking-runtime'
+          state === 'checking-runtime' ||
+          state === 'fetching-models'
         ) {
           handleBack();
         } else {
@@ -254,6 +378,18 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
       if (keyEvent.name === 'return' || keyEvent.name === 'Enter') {
         if (state === 'entering-api-key') {
           handleApiKeySubmit();
+          keyEvent.preventDefault?.();
+          keyEvent.stopPropagation?.();
+          return;
+        }
+        if (state === 'entering-base-url') {
+          handleBaseURLSubmit();
+          keyEvent.preventDefault?.();
+          keyEvent.stopPropagation?.();
+          return;
+        }
+        if (state === 'entering-model-id') {
+          handleModelIdSubmit();
           keyEvent.preventDefault?.();
           keyEvent.stopPropagation?.();
           return;
@@ -273,8 +409,11 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
         return;
       }
 
-      // Let input component handle text when entering API key
-      if (state === 'entering-api-key') {
+      if (
+        state === 'entering-api-key' ||
+        state === 'entering-base-url' ||
+        state === 'entering-model-id'
+      ) {
         return;
       }
 
@@ -424,6 +563,80 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     );
   }
 
+  if (state === 'entering-base-url' && selectedProvider) {
+    return (
+      <box
+        flexDirection="column"
+        flexGrow={1}
+        minHeight={0}
+        overflow="hidden"
+        borderStyle="double"
+        borderColor={theme.borderColor}
+        backgroundColor={theme.bgPanel}
+      >
+        {header}
+        <box flexDirection="column" paddingX={2} paddingY={1}>
+          <text fg={theme.headerFg}>
+            {selectedProvider.icon} {selectedProvider.name}
+          </text>
+          <text fg={theme.mutedFg}>
+            Resource endpoint
+            {selectedProvider.endpointEnvVar ? ` (${selectedProvider.endpointEnvVar})` : ''}
+          </text>
+          <box flexDirection="row" paddingY={1}>
+            <text fg={theme.inputFg}>URL: </text>
+            <input
+              focused
+              flexGrow={1}
+              value={baseURLInput}
+              onInput={setBaseURLInput}
+              placeholder={
+                selectedProvider.baseURLPlaceholder ||
+                'https://YOUR-RESOURCE.openai.azure.com/openai/v1'
+              }
+            />
+          </box>
+          {runtimeError && <text fg={theme.errorFg}>Error: {runtimeError}</text>}
+          <text fg={theme.mutedFg}>Enter to continue · Esc to go back</text>
+        </box>
+      </box>
+    );
+  }
+
+  if (state === 'entering-model-id' && selectedProvider) {
+    return (
+      <box
+        flexDirection="column"
+        flexGrow={1}
+        minHeight={0}
+        overflow="hidden"
+        borderStyle="double"
+        borderColor={theme.borderColor}
+        backgroundColor={theme.bgPanel}
+      >
+        {header}
+        <box flexDirection="column" paddingX={2} paddingY={1}>
+          <text fg={theme.headerFg}>
+            {selectedProvider.icon} {selectedProvider.name}
+          </text>
+          <text fg={theme.mutedFg}>Model or Azure deployment name</text>
+          <box flexDirection="row" paddingY={1}>
+            <text fg={theme.inputFg}>Model: </text>
+            <input
+              focused
+              flexGrow={1}
+              value={modelIdInput}
+              onInput={setModelIdInput}
+              placeholder="gpt-4o"
+            />
+          </box>
+          {runtimeError && <text fg={theme.errorFg}>Error: {runtimeError}</text>}
+          <text fg={theme.mutedFg}>Enter to connect · Esc to go back</text>
+        </box>
+      </box>
+    );
+  }
+
   if (state === 'checking-runtime' && selectedProvider) {
     return (
       <box
@@ -471,11 +684,11 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
             {selectedProvider.icon} {selectedProvider.name}
           </text>
           <text fg={theme.mutedFg}>
-            {isCheckingRuntime ? 'Fetching models from OpenRouter...' : 'Fetching models...'}
+            {isCheckingRuntime ? 'Fetching models...' : 'Fetching models...'}
           </text>
           {runtimeError && <text fg={theme.errorFg}>Error: {runtimeError}</text>}
           <text fg={theme.mutedFg} marginTop={1}>
-            Connecting to OpenRouter API to get latest model list
+            Listing models from the provider API
           </text>
           <text fg={theme.mutedFg}>Esc to go back</text>
         </box>
@@ -495,7 +708,6 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     >
       {header}
       <box flexDirection="row" flexGrow={1} minHeight={0} overflow="hidden">
-        {/* Left: Providers */}
         <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden" paddingX={1}>
           <text fg={theme.headerFg}>Providers</text>
           <scrollbox
@@ -507,16 +719,30 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
           >
             {sortedProviders.map((provider, i) => {
               const isSel = i === selectedProviderIndex;
+              const showLocalHeader = i === 0 && provider.isLocal === true;
+              const showCloudHeader =
+                provider.isLocal !== true && (i === 0 || sortedProviders[i - 1]?.isLocal === true);
               return (
-                <text
-                  key={provider.id}
-                  id={`provider-${i}`}
-                  fg={isSel ? theme.headerFg : theme.mutedFg}
-                  bg={isSel ? theme.bgSelected : undefined}
-                >
-                  {isSel ? '> ' : '  '}
-                  {provider.icon} {provider.name}
-                </text>
+                <box key={provider.id} flexDirection="column" flexShrink={0}>
+                  {showLocalHeader && (
+                    <text fg={theme.headerFg} id={`section-local`}>
+                      Local
+                    </text>
+                  )}
+                  {showCloudHeader && (
+                    <text fg={theme.headerFg} id={`section-cloud`} marginTop={i === 0 ? 0 : 1}>
+                      Cloud
+                    </text>
+                  )}
+                  <text
+                    id={`provider-${i}`}
+                    fg={isSel ? theme.headerFg : theme.mutedFg}
+                    bg={isSel ? theme.bgSelected : undefined}
+                  >
+                    {isSel ? '> ' : '  '}
+                    {provider.icon} {provider.name}
+                  </text>
+                </box>
               );
             })}
           </scrollbox>
@@ -525,10 +751,8 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
           </text>
         </box>
 
-        {/* Divider */}
         <box width={1} flexShrink={0} border={true} borderColor={theme.borderColor} />
 
-        {/* Right: Details */}
         <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden" paddingX={1}>
           <text fg={theme.headerFg}>Available Models</text>
           {selectedProvider ? (
@@ -546,6 +770,9 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
                   </text>
                 )}
                 {isLocal && <text fg={theme.mutedFg}>Local runtime</text>}
+                {selectedProvider.requiresCustomBaseURL && (
+                  <text fg={theme.mutedFg}>Needs a resource endpoint</text>
+                )}
               </box>
 
               {state === 'selecting-model' ? (

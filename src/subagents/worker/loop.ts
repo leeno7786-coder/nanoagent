@@ -6,6 +6,11 @@ import type { SubAgentPoolConfig } from '../../types.js';
 import { summarizeToolResult, type SubAgentResult } from '../format.js';
 import type { WorkerContext } from './context.js';
 import { buildWorkerContext } from './context.js';
+import {
+  initialWorkerTriedFallbacks,
+  switchWorkerToFallback,
+  workerFailureToFailoverError,
+} from './failover.js';
 import { SUBAGENT_TOOLS, runWorkerTool } from './tool-runner.js';
 import { scheduler } from './scheduler.js';
 
@@ -76,6 +81,13 @@ async function runSingleSubAgent(
   const toolCallCounts = new Map<string, number>();
   const DISCOVERY_TOOLS = new Set(['list_dir', 'map_project_tree', 'stat_path', 'find_files']);
   const TOOL_BUDGET = 18;
+  const triedFallbacks = initialWorkerTriedFallbacks(wctx.cfg);
+  const failoverNotices: string[] = [];
+  const withNotices = (output: string): string => {
+    if (failoverNotices.length === 0) return output;
+    const block = failoverNotices.join('\n');
+    return output ? `${block}\n\n${output}` : block;
+  };
 
   emit({
     type: 'subagent_start',
@@ -93,7 +105,7 @@ async function runSingleSubAgent(
         agent: wctx.endpoint.name,
         model: wctx.cfg.model,
         ok: false,
-        output: '',
+        output: withNotices(''),
         toolCalls: toolCallCount,
       });
       return {
@@ -101,7 +113,7 @@ async function runSingleSubAgent(
         model: wctx.cfg.model,
         baseURL: wctx.cfg.baseURL,
         ok: false,
-        output: '',
+        output: withNotices(''),
         durationMs: Math.round(performance.now() - start),
         error: 'aborted',
         toolCalls: toolCallCount,
@@ -143,6 +155,7 @@ async function runSingleSubAgent(
     }
 
     let streamError: string | undefined;
+    let streamErr: unknown;
     let turnTimedOut = false;
     try {
       const stream = streamChat(wctx.client, wctx.cfg, messages, toolDefs, turnController.signal, {
@@ -182,24 +195,12 @@ async function runSingleSubAgent(
         }
       }
     } catch (e: unknown) {
+      streamErr = e;
       if (turnController.signal.aborted) {
-        // Per-turn 60s timeout (or parent abort) fired mid-stream. Track it so
-        // an empty result is reported as an error, never as a silent success.
+        // Per-turn inactivity timeout (or parent abort) fired mid-stream.
         turnTimedOut = true;
-        emit({
-          type: 'subagent_chunk',
-          agent: wctx.endpoint.name,
-          model: wctx.cfg.model,
-          text: '\n[Sub-agent turn timed out — proceeding with gathered findings]\n',
-        });
       } else {
         streamError = (e as { message?: string }).message || String(e);
-        emit({
-          type: 'subagent_chunk',
-          agent: wctx.endpoint.name,
-          model: wctx.cfg.model,
-          text: `\n[Sub-agent stream error: ${streamError}]\n`,
-        });
       }
     } finally {
       if (turnTimer) clearTimeout(turnTimer);
@@ -211,6 +212,58 @@ async function runSingleSubAgent(
     // output would fall through as an empty ok:true "success".
     if (turnController.signal.aborted && !turnTimedOut && !streamError) {
       turnTimedOut = true;
+    }
+
+    if ((streamError || turnTimedOut) && !signal?.aborted) {
+      const failoverErr = workerFailureToFailoverError({
+        err: streamErr,
+        turnTimedOut,
+        parentAborted: false,
+      });
+      const noticeStart = failoverNotices.length;
+      const switched = await switchWorkerToFallback(
+        wctx,
+        failoverErr,
+        triedFallbacks,
+        failoverNotices,
+        signal
+      );
+      for (const n of failoverNotices.slice(noticeStart)) {
+        emit({
+          type: 'subagent_chunk',
+          agent: wctx.endpoint.name,
+          model: wctx.cfg.model,
+          text: `\n[${n}]\n`,
+        });
+      }
+      if (switched) {
+        const notice = `Switched to ${switched.model} after ${switched.reason}`;
+        failoverNotices.push(notice);
+        emit({
+          type: 'subagent_chunk',
+          agent: wctx.endpoint.name,
+          model: wctx.cfg.model,
+          text: `\n[${notice}]\n`,
+        });
+        i -= 1;
+        continue;
+      }
+    }
+
+    if (turnTimedOut && !signal?.aborted) {
+      emit({
+        type: 'subagent_chunk',
+        agent: wctx.endpoint.name,
+        model: wctx.cfg.model,
+        text: '\n[Sub-agent turn timed out — proceeding with gathered findings]\n',
+      });
+    } else if (streamError) {
+      emit({
+        type: 'subagent_chunk',
+        agent: wctx.endpoint.name,
+        model: wctx.cfg.model,
+        text: `\n[Sub-agent stream error: ${streamError}]\n`,
+      });
     }
 
     const msg = {
@@ -427,7 +480,7 @@ async function runSingleSubAgent(
         agent: wctx.endpoint.name,
         model: wctx.cfg.model,
         ok: false,
-        output: reason,
+        output: withNotices(reason),
         toolCalls: toolCallCount,
       });
       return {
@@ -435,7 +488,7 @@ async function runSingleSubAgent(
         model: wctx.cfg.model,
         baseURL: wctx.cfg.baseURL,
         ok: false,
-        output: '',
+        output: withNotices(''),
         error: reason,
         durationMs: Math.round(performance.now() - start),
         toolCalls: toolCallCount,
@@ -447,7 +500,7 @@ async function runSingleSubAgent(
       agent: wctx.endpoint.name,
       model: wctx.cfg.model,
       ok: true,
-      output: answer,
+      output: withNotices(answer),
       toolCalls: toolCallCount,
     });
     return {
@@ -455,7 +508,7 @@ async function runSingleSubAgent(
       model: wctx.cfg.model,
       baseURL: wctx.cfg.baseURL,
       ok: true,
-      output: answer,
+      output: withNotices(answer),
       durationMs: Math.round(performance.now() - start),
       toolCalls: toolCallCount,
     };
@@ -473,7 +526,7 @@ async function runSingleSubAgent(
     agent: wctx.endpoint.name,
     model: wctx.cfg.model,
     ok: partial.length > 0,
-    output: partial,
+    output: withNotices(partial),
     toolCalls: toolCallCount,
   });
   return {
@@ -481,7 +534,7 @@ async function runSingleSubAgent(
     model: wctx.cfg.model,
     baseURL: wctx.cfg.baseURL,
     ok: partial.length > 0,
-    output: partial,
+    output: withNotices(partial),
     durationMs: Math.round(performance.now() - start),
     error: partial ? undefined : 'max iterations reached without a final answer',
     toolCalls: toolCallCount,
@@ -512,7 +565,7 @@ export async function exploreWithSubAgent(
       toolCalls: 0,
     };
   }
-  const ep = await scheduler.acquire(endpoints, endpointName);
+  const ep = await scheduler.acquire(endpoints, endpointName, 60000, signal);
   if (!ep) {
     return {
       name: endpointName || 'pool',
@@ -525,13 +578,16 @@ export async function exploreWithSubAgent(
       toolCalls: 0,
     };
   }
-  const wctx = buildWorkerContext(ep, base);
   try {
-    return await runSingleSubAgent(wctx, task, signal, hooks, resolveTurnTimeoutMs(pool));
+    const wctx = buildWorkerContext(ep, base);
+    try {
+      return await runSingleSubAgent(wctx, task, signal, hooks, resolveTurnTimeoutMs(pool));
+    } finally {
+      // The per-dispatch ToolCacheManager starts fs.watch handles on cached
+      // dependencies — close them so each dispatch doesn't leak watchers.
+      wctx.cache.stopAllWatchers();
+    }
   } finally {
-    // The per-dispatch ToolCacheManager starts fs.watch handles on cached
-    // dependencies — close them so each dispatch doesn't leak watchers.
-    wctx.cache.stopAllWatchers();
     scheduler.release(ep.name);
   }
 }

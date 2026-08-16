@@ -39,6 +39,7 @@ import {
   forceCompactContext,
 } from '../agent-messages.js';
 import { agentRun } from './run.js';
+import { estimateUsageCostUsd } from '../llm/cost.js';
 
 /**
  * Core agent orchestrator: manages conversation state, tool execution,
@@ -63,6 +64,24 @@ export class AgentCore {
     input_tokens: 0,
     output_tokens: 0,
   };
+  /** Last-turn estimated USD when prices are known. */
+  public lastCostUsd?: number;
+  /** Session-cumulative estimated USD (0 when prices are unknown). */
+  public totalCostUsd = 0;
+
+  /** Accumulate API usage and optional $ estimate. */
+  public recordUsage(usage: { input_tokens: number; output_tokens: number }): void {
+    this.lastUsage = usage;
+    this.totalUsage.input_tokens += usage.input_tokens;
+    this.totalUsage.output_tokens += usage.output_tokens;
+    const cost = estimateUsageCostUsd(usage, this.cfg);
+    if (cost !== undefined) {
+      this.lastCostUsd = cost;
+      this.totalCostUsd += cost;
+    } else {
+      this.lastCostUsd = undefined;
+    }
+  }
   /** Called whenever the agent state changes. */
   public onUpdate?: () => void;
   /** Timestamp of the last throttled UI update emission. */

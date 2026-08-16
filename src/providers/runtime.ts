@@ -2,6 +2,7 @@ import type { ModelInfo } from '../types.js';
 import {
   fetchLMStudioModels,
   isLMStudioURL,
+  parseOpenAICompatModelList,
   parseParamBillionsFromModelId,
 } from '../model-runtime.js';
 import { isLocalProvider } from '../llm.js';
@@ -34,40 +35,18 @@ export async function fetchLocalModels(baseURL: string): Promise<ModelInfo[]> {
 
       if (response.ok) {
         const body: unknown = await response.json();
-        const modelResponse = body as { data?: Array<Record<string, unknown>> } | null;
-
-        if (modelResponse?.data && Array.isArray(modelResponse.data)) {
-          return modelResponse.data.map((m: Record<string, unknown>) => {
-            const id = (m.id as string) || (m.name as string) || 'unknown';
-            const params = parseParamBillionsFromModelId(id);
+        const parsed = parseOpenAICompatModelList(body);
+        if (parsed.length > 0) {
+          return parsed.map((m) => {
+            const params = m.paramBillions;
             const paramsStr = params
               ? params < 1
                 ? `${Math.round(params * 1000)}M`
                 : `${params}B`
               : '';
             return {
-              id,
-              name: (m.name as string) || id,
-              description: [paramsStr, m.description as string].filter(Boolean).join(' · '),
-              paramBillions: params,
-            };
-          });
-        }
-
-        if (Array.isArray(body)) {
-          return body.map((m: Record<string, unknown>) => {
-            const id = (m.id as string) || (m.name as string) || 'unknown';
-            const params = parseParamBillionsFromModelId(id);
-            const paramsStr = params
-              ? params < 1
-                ? `${Math.round(params * 1000)}M`
-                : `${params}B`
-              : '';
-            return {
-              id,
-              name: (m.name as string) || id,
-              description: [paramsStr, m.description as string].filter(Boolean).join(' · '),
-              paramBillions: params,
+              ...m,
+              description: [paramsStr, m.description].filter(Boolean).join(' · '),
             };
           });
         }
@@ -158,6 +137,37 @@ export async function checkRuntimeHealth(baseURL: string): Promise<boolean> {
   }
 }
 
+function parseOpenAIModelList(body: unknown): ModelInfo[] {
+  return parseOpenAICompatModelList(body);
+}
+
+export async function fetchRemoteModels(baseURL: string, apiKey?: string): Promise<ModelInfo[]> {
+  if (!baseURL) return [];
+  try {
+    const apiBase = baseURL.replace(/\/+$/, '');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+    const response = await fetch(`${apiBase}/models`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) {
+      logError('Failed to fetch remote models:', response.status, response.statusText);
+      return [];
+    }
+    const body: unknown = await response.json();
+    return parseOpenAIModelList(body);
+  } catch (error) {
+    logError('Error fetching remote models:', error);
+    return [];
+  }
+}
+
 export async function fetchOpenRouterModels(apiKey?: string): Promise<ModelInfo[]> {
   if (apiKey && !isUsableApiKey(apiKey)) {
     throw new Error('API key is not usable (looks like a masked value). Paste the real key.');
@@ -183,24 +193,5 @@ export async function fetchOpenRouterModels(apiKey?: string): Promise<ModelInfo[
   }
 
   const body: unknown = await response.json();
-  const modelResponse = body as { data?: Array<Record<string, unknown>> } | null;
-  if (!modelResponse?.data || !Array.isArray(modelResponse.data)) {
-    return [];
-  }
-
-  return modelResponse.data.map((model: Record<string, unknown>) => ({
-    id: model.id as string,
-    name: (model.name as string) || (model.id as string),
-    description: (model.description as string) || '',
-    contextLength: model.context_length as number | undefined,
-    maxContextLength: model.context_length as number | undefined,
-    ...(model.pricing
-      ? {
-          pricing: {
-            prompt: (model.pricing as Record<string, unknown>).prompt as number,
-            completion: (model.pricing as Record<string, unknown>).completion as number,
-          },
-        }
-      : {}),
-  }));
+  return parseOpenAICompatModelList(body);
 }

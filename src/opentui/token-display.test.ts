@@ -3,6 +3,7 @@ import {
   contextUsageFromStats,
   formatBusyContext,
   formatContextFill,
+  formatSessionCost,
   formatSessionUsage,
   formatTokenCount,
   formatTurnUsage,
@@ -37,6 +38,14 @@ describe('token-display', () => {
     expect(formatTurnUsage(undefined)).toBe('');
     expect(formatSessionUsage({ input_tokens: 0, output_tokens: 0 })).toBe('');
     expect(formatBusyContext(undefined)).toBe('');
+    expect(formatSessionCost(undefined)).toBe('');
+    expect(formatSessionCost(0)).toBe('');
+  });
+
+  it('shows $ only when cost is known and greater than zero', () => {
+    expect(formatSessionCost(0.0123)).toBe('$0.012');
+    expect(formatSessionCost(1.2)).toBe('$1.20');
+    expect(formatSessionCost(0.0004)).toBe('$0.0004');
   });
 
   it('busy context label never uses session Σ', () => {

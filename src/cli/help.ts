@@ -50,6 +50,7 @@ Options:
       --verbose               Log tool calls to stderr
   -y, --yes                   Auto-approve all tool/command permissions (headless)
       --permission-mode <m>   Permission mode: read_only|ask|allow_edits|always_allow
+      --profile <name>        Apply a named config profile before the run
   -h, --help                  Show help
 
 Examples:
@@ -57,6 +58,7 @@ Examples:
   nanogent run -p "what does agent.ts do?" -w ./src --quiet
   cat task.txt | nanogent run --stdin --workspace /repo
   nanogent run --prompt "status" --json --model qwen3-8b
+  nanogent run --profile local --prompt "status" --workspace .
 `);
 }
 
@@ -86,6 +88,10 @@ Options:
 Examples:
   nanogent doctor
   nanogent doctor --json
+  QWEN_MAX_REQUESTS_PER_MINUTE=20 QWEN_MAX_CONCURRENT_LLM=2 nanogent doctor
+  QWEN_MAX_TOKENS_PER_MINUTE=200000 QWEN_MAX_TOOL_RESULT_TOKENS=8000 nanogent doctor --json
+  QWEN_FALLBACK_MODEL=qwen/qwen3-8b nanogent doctor --json
+  QWEN_PROMPT_CACHE=0 nanogent doctor --json
 `);
 }
 

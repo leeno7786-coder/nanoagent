@@ -38,6 +38,8 @@ interface AppState {
   currentTool: { name: string; args: string } | undefined;
   lastUsage: { input_tokens: number; output_tokens: number } | undefined;
   totalUsage: { input_tokens: number; output_tokens: number };
+  totalCostUsd: number;
+  lastCostUsd?: number;
   /** Live context-window fill from ContextManager (drives auto-compact). */
   contextUsage: ContextUsageSnapshot | undefined;
   subAgents: SubAgentSnapshot[];
@@ -71,6 +73,7 @@ interface AppState {
   setCurrentTool: (t: { name: string; args: string } | undefined) => void;
   setLastUsage: (u: { input_tokens: number; output_tokens: number } | undefined) => void;
   setTotalUsage: (u: { input_tokens: number; output_tokens: number }) => void;
+  setTotalCostUsd: (n: number) => void;
   setContextUsage: (u: ContextUsageSnapshot | undefined) => void;
   setSubAgents: (s: SubAgentSnapshot[]) => void;
 
@@ -102,6 +105,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
   currentTool: undefined,
   lastUsage: undefined,
   totalUsage: { input_tokens: 0, output_tokens: 0 },
+  totalCostUsd: 0,
+  lastCostUsd: undefined,
   contextUsage: undefined,
   subAgents: [],
 
@@ -151,6 +156,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setCurrentTool: (t) => set({ currentTool: t }),
   setLastUsage: (u) => set({ lastUsage: u }),
   setTotalUsage: (u) => set({ totalUsage: u }),
+  setTotalCostUsd: (n) => set({ totalCostUsd: n }),
   setContextUsage: (u) => set({ contextUsage: u }),
   setSubAgents: (s) => set({ subAgents: s }),
 
@@ -178,6 +184,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
       currentTool: agent.currentTool,
       lastUsage: agent.lastUsage,
       totalUsage: { ...agent.totalUsage },
+      totalCostUsd: agent.totalCostUsd ?? 0,
+      lastCostUsd: agent.lastCostUsd,
       contextUsage: stats ? contextUsageFromStats(stats) : undefined,
       subAgents: agent.getSubAgentSnapshot(),
       permissionMode: agent.securityManager?.permissionManager?.getMode() ?? 'ask',

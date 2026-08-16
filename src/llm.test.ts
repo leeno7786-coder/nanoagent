@@ -146,6 +146,31 @@ describe('rate limit & backoff handling', () => {
     expect(extractRetryAfterDelayMs(errWithGetHeader)).toBe(5000);
   });
 
+  it('reads retry-after-ms as milliseconds', () => {
+    expect(extractRetryAfterDelayMs({ headers: { 'retry-after-ms': '1500' } })).toBe(1500);
+  });
+
+  it('parses OpenAI duration strings and unix reset timestamps', () => {
+    expect(extractRetryAfterDelayMs({ headers: { 'retry-after': '6m0s' } })).toBe(300000);
+    expect(extractRetryAfterDelayMs({ headers: { 'retry-after': '1s' } })).toBe(1000);
+    expect(extractRetryAfterDelayMs({ headers: { 'retry-after': '180' } })).toBe(180000);
+
+    const resetSec = Math.floor(Date.now() / 1000) + 30;
+    const guessed = extractRetryAfterDelayMs({
+      headers: { 'x-ratelimit-reset': String(resetSec) },
+    });
+    expect(guessed).toBeGreaterThan(20000);
+    expect(guessed).toBeLessThanOrEqual(120000);
+  });
+
+  it('prefers retry-after over guessed reset headers', () => {
+    expect(
+      extractRetryAfterDelayMs({
+        headers: { 'retry-after': '2', 'x-ratelimit-reset': '999' },
+      })
+    ).toBe(2000);
+  });
+
   it('extracts retry-after from error message text', () => {
     const err = { message: 'Rate limit reached for gpt-4. Please try again in 8.4s.' };
     expect(extractRetryAfterDelayMs(err)).toBe(8400);

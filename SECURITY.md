@@ -21,11 +21,13 @@ able to escalate privileges just by being opened in the agent:
 
 - **Workspace `.env` files are untrusted.** Trust-sensitive variables —
   `NANOGENT_TRUST_PROJECT_MCP`, `QWEN_SECURITY_*`, `QWEN_BASE_URL`, `REMOTE_LMSTUDIO_URL`,
-  and all `*_API_KEY` overrides — are only honored from the **real process environment**
+  `AZURE_OPENAI_ENDPOINT`, `HF_TOKEN`, `QWEN_FALLBACK_MODEL`, `QWEN_FALLBACK_BASE_URL`,
+  `QWEN_FALLBACK_PROVIDER`, and all `*_API_KEY` overrides — are only honored
+  from the **real process environment**
   (or the trusted home-directory `.env`), never from a workspace/project `.env` loaded
   via dotenv. `getApiKey()` also reads only home-directory `.env` files.
-  This prevents a repo from disabling security, redirecting the API or sub-agent
-  endpoint (key/code exfiltration), or auto-trusting its own MCP servers.
+  This prevents a repo from disabling security, redirecting the API, sub-agent,
+  or failover endpoint (key/code exfiltration), or auto-trusting its own MCP servers.
 - **MCP trust = exact global config paths.** Only the global config files directly in
   the home directory (`~/.nanogent.json`, `~/.nanoagent.json`, `~/.nanogent/config.json`,
   `~/.qwen-agent.json`) or an explicitly-passed config path are trusted to auto-connect

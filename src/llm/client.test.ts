@@ -31,6 +31,16 @@ describe('createClient default timeout', () => {
     expect((client as unknown as { timeout: number }).timeout).toBe(120000);
   });
 
+  it('uses 600s for Docker Model Runner localhost /engines/v1', () => {
+    const client = createClient(cfg('http://localhost:12434/engines/v1'));
+    expect((client as unknown as { timeout: number }).timeout).toBe(600000);
+  });
+
+  it('uses 120s for Azure AI Foundry hosts', () => {
+    const client = createClient(cfg('https://myres.openai.azure.com/openai/v1'));
+    expect((client as unknown as { timeout: number }).timeout).toBe(120000);
+  });
+
   it('honors an explicit cfg.timeout over the provider-aware default', () => {
     const local = createClient(cfg('http://127.0.0.1:1234/v1', { timeout: 5000 }));
     expect((local as unknown as { timeout: number }).timeout).toBe(5000);

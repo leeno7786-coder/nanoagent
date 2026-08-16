@@ -187,12 +187,24 @@ describe('AgentCore', () => {
     it('should initialize with zero usage', () => {
       expect(agent.totalUsage.input_tokens).toBe(0);
       expect(agent.totalUsage.output_tokens).toBe(0);
+      expect(agent.totalCostUsd).toBe(0);
+      expect(agent.lastCostUsd).toBeUndefined();
     });
 
     it('should track last usage', () => {
       agent.lastUsage = { input_tokens: 100, output_tokens: 50 };
       expect(agent.lastUsage.input_tokens).toBe(100);
       expect(agent.lastUsage.output_tokens).toBe(50);
+    });
+
+    it('accumulates estimated USD only when prices are known', () => {
+      agent.recordUsage({ input_tokens: 1_000_000, output_tokens: 0 });
+      expect(agent.totalCostUsd).toBe(0);
+      expect(agent.lastCostUsd).toBeUndefined();
+      agent.cfg.promptPricePerMillion = 0.15;
+      agent.recordUsage({ input_tokens: 1_000_000, output_tokens: 0 });
+      expect(agent.lastCostUsd).toBeCloseTo(0.15, 8);
+      expect(agent.totalCostUsd).toBeCloseTo(0.15, 8);
     });
   });
 

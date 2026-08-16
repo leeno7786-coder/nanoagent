@@ -48,6 +48,10 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
         {' '}
         /set &lt;key&gt; &lt;val&gt; [--global] Quick-set config options (model, baseURL, etc)
       </text>
+      <text fg={theme.agentFg}>
+        {' '}
+        /profile [list|&lt;name&gt;] Apply a named model snapshot (--global to persist)
+      </text>
       <text fg={theme.agentFg}> /todo Toggle todo sidebar (/todo add ...)</text>
       <text fg={theme.agentFg}> /skill List loaded skills</text>
       <text fg={theme.agentFg}> /skills Manage skills (F8) — create, enable, disable</text>
@@ -63,6 +67,7 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
         {' '}
         /connect Connect provider — browse runtimes, enter API keys, select models
       </text>
+      <text fg={theme.agentFg}> /usage Session tokens + estimated USD (when prices are known)</text>
       <text fg={theme.agentFg}> /doctor Health check (config + LM Studio / local runtimes)</text>
       <text fg={theme.agentFg}> /models List local models, context, load state</text>
       <text fg={theme.agentFg}> /graph [sub] Memory graph — build|stats|report</text>

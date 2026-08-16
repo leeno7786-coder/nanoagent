@@ -1,7 +1,7 @@
 import { parseArgs } from 'util';
 import { resolve } from 'path';
 import { AgentCore } from '../agent.js';
-import { loadConfig } from '../config.js';
+import { loadConfig, applyModelProfile } from '../config.js';
 import { printRunHelp, cliError } from './help.js';
 import type { PermissionMode } from '../security/index.js';
 
@@ -12,7 +12,7 @@ export interface RunResult {
   answer: string;
   state: string;
   tool_calls: Array<{ name: string; duration_ms?: number }>;
-  usage: { input_tokens: number; output_tokens: number };
+  usage: { input_tokens: number; output_tokens: number; estimated_usd?: number };
   rounds: number;
 }
 
@@ -32,6 +32,7 @@ export async function cmdRun(argv: string[]): Promise<number> {
       verbose: { type: 'boolean', default: false },
       yes: { type: 'boolean', short: 'y', default: false },
       'permission-mode': { type: 'string' },
+      profile: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
     allowPositionals: false,
@@ -71,6 +72,17 @@ export async function cmdRun(argv: string[]): Promise<number> {
   }
 
   const cfg = loadConfig();
+  if (values.profile) {
+    const applied = applyModelProfile(cfg, values.profile);
+    if ('error' in applied) {
+      cliError(
+        applied.error.replace(/^Unknown profile/, 'Unknown --profile'),
+        '  nanogent run --profile local --prompt "status" --workspace .\n' +
+          '  List profiles: nanogent doctor --json'
+      );
+    }
+    Object.assign(cfg, applied.patch);
+  }
   if (values.workspace) cfg.workspace = resolve(values.workspace);
   if (values.model) cfg.model = values.model;
   if (values['base-url']) cfg.baseURL = values['base-url'];
@@ -141,7 +153,12 @@ export async function cmdRun(argv: string[]): Promise<number> {
     answer,
     state: agent.state,
     tool_calls: toolCalls,
-    usage: { ...agent.totalUsage },
+    usage: {
+      ...agent.totalUsage,
+      ...(agent.totalCostUsd > 0 || agent.lastCostUsd !== undefined
+        ? { estimated_usd: agent.totalCostUsd }
+        : {}),
+    },
     rounds: agent.roundCounter,
   };
 

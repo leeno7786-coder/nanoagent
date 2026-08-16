@@ -78,6 +78,10 @@ function makeAgent(ws: string): AgentStub {
       unload: mock(() => true),
     },
     securityManager: { permissionManager },
+    totalUsage: { input_tokens: 12345, output_tokens: 678 },
+    lastUsage: { input_tokens: 1000, output_tokens: 50 },
+    totalCostUsd: 0,
+    lastCostUsd: undefined,
     addTodo(text: string) {
       todos.push({ id: 'todo-1', text, done: false, createdAt: Date.now() });
     },
@@ -86,6 +90,7 @@ function makeAgent(ws: string): AgentStub {
     }),
     reconfigure: mock(async (cfgPart: Record<string, unknown>) => {
       reconfigureCalls.push(cfgPart);
+      Object.assign(cfg, cfgPart);
     }),
     reloadFromDisk: mock(async () => {}),
     executeToolDirect: mock(async () => JSON.stringify({ ok: true })),
@@ -237,6 +242,15 @@ describe('handleSlashCommand', () => {
     expect(stub.runCalls[0].signal).toBeDefined();
   });
 
+  it('/usage prints copy-pasteable token counts', async () => {
+    await handleSlashCommand('/usage', h.ctx);
+    const content = lastAssistantContent(h);
+    expect(content).toContain('input_tokens: 12345');
+    expect(content).toContain('output_tokens: 678');
+    expect(content).toContain('last_turn_input_tokens: 1000');
+    expect(content).not.toContain('estimated_usd');
+  });
+
   it('/config shows the current configuration', async () => {
     await handleSlashCommand('/config', h.ctx);
     const content = lastAssistantContent(h);
@@ -343,5 +357,38 @@ describe('handleSlashCommand', () => {
     await handleSlashCommand('/skill-load fake-skill', h.ctx);
     expect(stub.runCalls).toHaveLength(1);
     expect(stub.runCalls[0].text).toBe('/skill-load fake-skill');
+  });
+
+  it('/profile lists configured snapshots and the current name', async () => {
+    stub.agent.cfg.profiles = {
+      local: { model: 'qwen3.5-4b', baseURL: 'http://127.0.0.1:1234/v1' },
+      cloud: { model: 'openrouter/free', baseURL: 'https://openrouter.ai/api/v1' },
+    };
+    stub.agent.cfg.profile = 'local';
+    await handleSlashCommand('/profile', h.ctx);
+    const content = lastAssistantContent(h);
+    expect(content).toContain('local');
+    expect(content).toContain('(current)');
+    expect(content).toContain('/profile <name>');
+  });
+
+  it('/profile <name> applies the snapshot via reconfigure', async () => {
+    stub.agent.cfg.profiles = {
+      local: { model: 'qwen3.5-4b', baseURL: 'http://127.0.0.1:1234/v1' },
+    };
+    await handleSlashCommand('/profile local', h.ctx);
+    expect(stub.reconfigureCalls.length).toBeGreaterThan(0);
+    expect(stub.agent.cfg.model).toBe('qwen3.5-4b');
+    expect(stub.agent.cfg.profile).toBe('local');
+    expect(lastAssistantContent(h)).toContain('Applied profile');
+  });
+
+  it('/profile unknown prints a usable error', async () => {
+    stub.agent.cfg.profiles = {
+      local: { model: 'qwen3.5-4b', baseURL: 'http://127.0.0.1:1234/v1' },
+    };
+    await handleSlashCommand('/profile missing', h.ctx);
+    expect(stub.reconfigureCalls).toHaveLength(0);
+    expect(lastAssistantContent(h)).toContain('Unknown profile');
   });
 });

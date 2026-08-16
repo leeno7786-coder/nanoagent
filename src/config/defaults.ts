@@ -61,7 +61,7 @@ export function getDefault(): Config {
     workspace: process.cwd(),
     temperature: 0.3,
     maxTokens: 4096,
-    rateLimitMs: 250,
+    rateLimitMs: 0,
     securityEnabled: true,
   };
 }

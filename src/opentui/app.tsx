@@ -52,6 +52,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const currentTool = useAppStore((s) => s.currentTool);
   const lastUsage = useAppStore((s) => s.lastUsage);
   const totalUsage = useAppStore((s) => s.totalUsage);
+  const totalCostUsd = useAppStore((s) => s.totalCostUsd);
   const contextUsage = useAppStore((s) => s.contextUsage);
   const subAgents = useAppStore((s) => s.subAgents);
   const sessions = useAppStore((s) => s.sessions);
@@ -525,13 +526,15 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     async (
       provider: import('../types.js').RuntimeProvider,
       model: import('../types.js').ModelInfo,
-      apiKey?: string
+      apiKey?: string,
+      baseURL?: string
     ) => {
       const agent = agentRef.current;
       if (agent) {
         const newConfig: Partial<Config> = {
-          baseURL: getProviderBaseURL(provider) || agent.cfg.baseURL,
+          baseURL: baseURL || getProviderBaseURL(provider) || agent.cfg.baseURL,
           model: model.id,
+          provider: provider.id,
           modelContextLength: model.contextLength,
           modelMaxContextLength: model.maxContextLength,
           modelParamBillions: model.paramBillions,
@@ -814,6 +817,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           currentTool={currentTool}
           lastUsage={lastUsage}
           totalUsage={totalUsage}
+          sessionCostUsd={totalCostUsd}
           contextUsage={contextUsage}
           elapsedMs={elapsedMs}
           theme={theme}

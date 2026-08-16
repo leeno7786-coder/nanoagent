@@ -16,4 +16,19 @@ describe('cli', () => {
     const code = await runCli(['run', '--help']);
     expect(code).toBe(0);
   });
+
+  it('run --help documents --profile', async () => {
+    const orig = console.log;
+    const chunks: string[] = [];
+    console.log = (...args: unknown[]) => {
+      chunks.push(args.map(String).join(' '));
+    };
+    try {
+      const code = await runCli(['run', '--help']);
+      expect(code).toBe(0);
+      expect(chunks.join('\n')).toContain('--profile');
+    } finally {
+      console.log = orig;
+    }
+  });
 });

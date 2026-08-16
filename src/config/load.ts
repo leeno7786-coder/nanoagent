@@ -2,11 +2,17 @@ import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync } from 'fs
 import { homedir } from 'os';
 import { join, resolve } from 'path';
 import { config as dotenvConfig } from 'dotenv';
-import type { Config } from '../types.js';
+import type { Config, FallbackEndpoint } from '../types.js';
 import { isSmallModel } from '../llm.js';
 import { logError, logWarn } from '../log.js';
 import { getDefault, sanitizeBaseURL, MODELS } from './defaults.js';
 import { validateConfig } from './validate.js';
+import {
+  resolveApiKeyFromEnv,
+  resolveRateLimitsForBaseURL,
+  getProvider,
+} from '../providers/lookup.js';
+import { parseFallbacksConfig } from '../llm/failover.js';
 
 /**
  * Trust-sensitive environment variables. Workspace/project .env files are
@@ -22,6 +28,14 @@ const TRUST_SENSITIVE_ENV_VARS = new Set([
   // Sub-agent endpoint: prompts carry workspace code, so redirecting it is
   // the same exfiltration class as QWEN_BASE_URL.
   'REMOTE_LMSTUDIO_URL',
+  // Per-resource Azure endpoint — a planted URL is the same redirect class.
+  'AZURE_OPENAI_ENDPOINT',
+  // Hugging Face token alias (does not match *_API_KEY).
+  'HF_TOKEN',
+  // Failover redirect: same exfiltration class as QWEN_BASE_URL.
+  'QWEN_FALLBACK_MODEL',
+  'QWEN_FALLBACK_BASE_URL',
+  'QWEN_FALLBACK_PROVIDER',
 ]);
 
 function isTrustSensitiveEnvVar(key: string): boolean {
@@ -82,6 +96,128 @@ function asConfigFile(p: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function fallbacksFromEnv(): FallbackEndpoint[] | undefined {
+  const modelRaw = process.env.QWEN_FALLBACK_MODEL;
+  const urlRaw = process.env.QWEN_FALLBACK_BASE_URL;
+  const providerRaw = process.env.QWEN_FALLBACK_PROVIDER;
+  if (
+    (modelRaw === undefined || modelRaw === '') &&
+    (urlRaw === undefined || urlRaw === '') &&
+    (providerRaw === undefined || providerRaw === '')
+  ) {
+    return undefined;
+  }
+
+  const model = modelRaw?.trim() ?? '';
+  if (!model || model.length > 256) {
+    logError(
+      `Error: QWEN_FALLBACK_MODEL must be a non-empty model id (max 256 chars), got ${JSON.stringify(modelRaw)}.\n` +
+        `  Example: QWEN_FALLBACK_MODEL=qwen/qwen3-8b QWEN_FALLBACK_BASE_URL=https://openrouter.ai/api/v1\n` +
+        `  Or in ~/.nanogent.json: { "fallbacks": [{ "model": "qwen/qwen3-8b", "baseURL": "https://openrouter.ai/api/v1" }] }`
+    );
+    return undefined;
+  }
+
+  const fb: FallbackEndpoint = { model };
+  if (urlRaw !== undefined && urlRaw !== '') {
+    const url = urlRaw.trim();
+    try {
+      new URL(url);
+      fb.baseURL = sanitizeBaseURL(url);
+    } catch {
+      logError(
+        `Error: QWEN_FALLBACK_BASE_URL must be a valid URL, got ${JSON.stringify(urlRaw)}.\n` +
+          `  Example: QWEN_FALLBACK_BASE_URL=https://openrouter.ai/api/v1`
+      );
+      return undefined;
+    }
+  }
+  if (providerRaw !== undefined && providerRaw !== '') {
+    const provider = providerRaw.trim();
+    if (!getProvider(provider)) {
+      logError(
+        `Error: QWEN_FALLBACK_PROVIDER is not a known catalog id, got ${JSON.stringify(providerRaw)}.\n` +
+          `  Example: QWEN_FALLBACK_PROVIDER=openrouter`
+      );
+      return undefined;
+    }
+    fb.provider = provider;
+  }
+  return [fb];
+}
+
+function applyFallbacksFromConfigAndEnv(cfg: Config): void {
+  const fromFile = parseFallbacksConfig(cfg.fallbacks);
+  if (fromFile !== undefined) {
+    cfg.fallbacks = fromFile;
+    return;
+  }
+  if (cfg.fallbacks !== undefined) {
+    logError(
+      'Error: fallbacks must be an array of { model, baseURL?, provider? }.\n' +
+        '  Example: { "fallbacks": [{ "model": "qwen/qwen3-8b", "baseURL": "https://openrouter.ai/api/v1" }] }'
+    );
+    delete cfg.fallbacks;
+  }
+  const fromEnv = fallbacksFromEnv();
+  if (fromEnv) cfg.fallbacks = fromEnv;
+}
+
+function normalizeProfiles(cfg: Config): void {
+  const raw = cfg.profiles as unknown;
+  if (raw === undefined) return;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    logError(
+      'Error: profiles must be an object of named snapshots.\n' +
+        '  Example: { "profiles": { "local": { "model": "qwen3.5-4b", "baseURL": "http://127.0.0.1:1234/v1" } } }'
+    );
+    delete cfg.profiles;
+    return;
+  }
+  const cleaned: NonNullable<Config['profiles']> = {};
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!name.trim() || !value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const rec = value as Record<string, unknown>;
+    const profile: NonNullable<Config['profiles']>[string] = {};
+    if (typeof rec.model === 'string' && rec.model.trim()) profile.model = rec.model.trim();
+    if (typeof rec.baseURL === 'string' && rec.baseURL.trim()) {
+      profile.baseURL = sanitizeBaseURL(rec.baseURL.trim());
+    }
+    if (typeof rec.provider === 'string' && rec.provider.trim()) {
+      profile.provider = rec.provider.trim();
+    }
+    if (typeof rec.maxTokens === 'number' && Number.isFinite(rec.maxTokens)) {
+      profile.maxTokens = rec.maxTokens;
+    }
+    if (typeof rec.temperature === 'number' && Number.isFinite(rec.temperature)) {
+      profile.temperature = rec.temperature;
+    }
+    if (typeof rec.timeout === 'number' && Number.isFinite(rec.timeout)) {
+      profile.timeout = rec.timeout;
+    }
+    if (typeof rec.retryCount === 'number' && Number.isFinite(rec.retryCount)) {
+      profile.retryCount = rec.retryCount;
+    }
+    if (typeof rec.maxToolResultTokens === 'number' && Number.isFinite(rec.maxToolResultTokens)) {
+      profile.maxToolResultTokens = rec.maxToolResultTokens;
+    }
+    if (typeof rec.maxRequestsPerMinute === 'number' && Number.isFinite(rec.maxRequestsPerMinute)) {
+      profile.maxRequestsPerMinute = rec.maxRequestsPerMinute;
+    }
+    if (typeof rec.maxTokensPerMinute === 'number' && Number.isFinite(rec.maxTokensPerMinute)) {
+      profile.maxTokensPerMinute = rec.maxTokensPerMinute;
+    }
+    if (
+      typeof rec.maxConcurrentLlmRequests === 'number' &&
+      Number.isFinite(rec.maxConcurrentLlmRequests)
+    ) {
+      profile.maxConcurrentLlmRequests = rec.maxConcurrentLlmRequests;
+    }
+    cleaned[name.trim()] = profile;
+  }
+  cfg.profiles = cleaned;
 }
 
 export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
@@ -231,32 +367,14 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   if (process.env.QWEN_BASE_URL) cfg.baseURL = sanitizeBaseURL(process.env.QWEN_BASE_URL);
 
   if (cfg.baseURL && !cfg.apiKey) {
-    const providerKeyPatterns: [string, string][] = [
-      ['mistral.ai', 'MISTRAL_API_KEY'],
-      ['anthropic.com', 'ANTHROPIC_API_KEY'],
-      ['googleapis.com', 'GOOGLE_API_KEY'],
-      ['nebius.com', 'NEBIUS_API_KEY'],
-      ['api.z.ai', 'ZAI_API_KEY'],
-      ['bigmodel.cn', 'ZHIPU_API_KEY'],
-      ['helicone.ai', 'HELICONE_API_KEY'],
-      ['cohere.ai', 'COHERE_API_KEY'],
-      ['openrouter.ai', 'OPENROUTER_API_KEY'],
-    ];
-    for (const [pattern, envVar] of providerKeyPatterns) {
-      if (cfg.baseURL.includes(pattern) && process.env[envVar]) {
-        cfg.apiKey = process.env[envVar];
-        break;
-      }
-    }
+    const catalogKey = resolveApiKeyFromEnv(cfg.baseURL);
+    if (catalogKey) cfg.apiKey = catalogKey;
   }
   if (!cfg.apiKey && process.env.OPENAI_API_KEY) {
     const isOpenAIEndpoint = /openai\.com|api\.openai\.com/i.test(cfg.baseURL);
     if (isOpenAIEndpoint) {
       cfg.apiKey = process.env.OPENAI_API_KEY;
     }
-  }
-  if (cfg.maxRequestsPerMinute === undefined && cfg.baseURL?.includes('openrouter.ai')) {
-    cfg.maxRequestsPerMinute = 20;
   }
   if (process.env.QWEN_MODEL) {
     const preset = MODELS[process.env.QWEN_MODEL];
@@ -266,6 +384,92 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
       cfg.baseURL = preset.baseURL;
     } else {
       cfg.model = process.env.QWEN_MODEL;
+    }
+  }
+  const rpmEnv = process.env.QWEN_MAX_REQUESTS_PER_MINUTE ?? process.env.QWEN_MAX_RPM;
+  if (rpmEnv !== undefined && rpmEnv !== '') {
+    const n = parseInt(rpmEnv, 10);
+    if (Number.isNaN(n) || n < 0 || n > 10000) {
+      logError(
+        `Error: QWEN_MAX_REQUESTS_PER_MINUTE must be an integer 0-10000, got ${JSON.stringify(rpmEnv)}.\n` +
+          `  Example: QWEN_MAX_REQUESTS_PER_MINUTE=20\n` +
+          `  Or in ~/.nanogent.json: { "maxRequestsPerMinute": 20 }`
+      );
+    } else if (cfg.maxRequestsPerMinute === undefined) {
+      cfg.maxRequestsPerMinute = n;
+    }
+  }
+  if (process.env.QWEN_MAX_CONCURRENT_LLM) {
+    const n = parseInt(process.env.QWEN_MAX_CONCURRENT_LLM, 10);
+    if (Number.isNaN(n) || n < 0 || n > 100) {
+      logError(
+        `Error: QWEN_MAX_CONCURRENT_LLM must be an integer 0-100, got ${JSON.stringify(process.env.QWEN_MAX_CONCURRENT_LLM)}.\n` +
+          `  Example: QWEN_MAX_CONCURRENT_LLM=2\n` +
+          `  Or in ~/.nanogent.json: { "maxConcurrentLlmRequests": 2 }`
+      );
+    } else if (cfg.maxConcurrentLlmRequests === undefined) {
+      cfg.maxConcurrentLlmRequests = n;
+    }
+  }
+  const tpmEnv = process.env.QWEN_MAX_TOKENS_PER_MINUTE ?? process.env.QWEN_MAX_TPM;
+  if (tpmEnv !== undefined && tpmEnv !== '') {
+    const n = parseInt(tpmEnv, 10);
+    if (Number.isNaN(n) || n < 0 || n > 10_000_000) {
+      logError(
+        `Error: QWEN_MAX_TOKENS_PER_MINUTE must be an integer 0-10000000, got ${JSON.stringify(tpmEnv)}.\n` +
+          `  Example: QWEN_MAX_TOKENS_PER_MINUTE=200000\n` +
+          `  Or in ~/.nanogent.json: { "maxTokensPerMinute": 200000 }`
+      );
+    } else if (cfg.maxTokensPerMinute === undefined) {
+      cfg.maxTokensPerMinute = n;
+    }
+  }
+  const toolTokEnv = process.env.QWEN_MAX_TOOL_RESULT_TOKENS;
+  if (toolTokEnv !== undefined && toolTokEnv !== '') {
+    const n = parseInt(toolTokEnv, 10);
+    if (Number.isNaN(n) || n < 0 || n > 1_000_000) {
+      logError(
+        `Error: QWEN_MAX_TOOL_RESULT_TOKENS must be an integer 0-1000000, got ${JSON.stringify(toolTokEnv)}.\n` +
+          `  Example: QWEN_MAX_TOOL_RESULT_TOKENS=8000\n` +
+          `  Or in ~/.nanogent.json: { "maxToolResultTokens": 8000 }`
+      );
+    } else if (cfg.maxToolResultTokens === undefined) {
+      cfg.maxToolResultTokens = n;
+    }
+  }
+  const promptPriceEnv = process.env.QWEN_PROMPT_PRICE_PER_MILLION;
+  if (promptPriceEnv !== undefined && promptPriceEnv !== '') {
+    const n = parseFloat(promptPriceEnv);
+    if (Number.isNaN(n) || n < 0 || n > 10000) {
+      logError(
+        `Error: QWEN_PROMPT_PRICE_PER_MILLION must be a number 0-10000 ($/1M tokens), got ${JSON.stringify(promptPriceEnv)}.\n` +
+          `  Example: QWEN_PROMPT_PRICE_PER_MILLION=0.15\n` +
+          `  Or in ~/.nanogent.json: { "promptPricePerMillion": 0.15 }`
+      );
+    } else if (cfg.promptPricePerMillion === undefined) {
+      cfg.promptPricePerMillion = n;
+    }
+  }
+  const completionPriceEnv = process.env.QWEN_COMPLETION_PRICE_PER_MILLION;
+  if (completionPriceEnv !== undefined && completionPriceEnv !== '') {
+    const n = parseFloat(completionPriceEnv);
+    if (Number.isNaN(n) || n < 0 || n > 10000) {
+      logError(
+        `Error: QWEN_COMPLETION_PRICE_PER_MILLION must be a number 0-10000 ($/1M tokens), got ${JSON.stringify(completionPriceEnv)}.\n` +
+          `  Example: QWEN_COMPLETION_PRICE_PER_MILLION=0.60\n` +
+          `  Or in ~/.nanogent.json: { "completionPricePerMillion": 0.6 }`
+      );
+    } else if (cfg.completionPricePerMillion === undefined) {
+      cfg.completionPricePerMillion = n;
+    }
+  }
+  if (cfg.maxRequestsPerMinute === undefined || cfg.maxConcurrentLlmRequests === undefined) {
+    const limits = resolveRateLimitsForBaseURL(cfg.baseURL);
+    if (cfg.maxRequestsPerMinute === undefined && limits.rpm > 0) {
+      cfg.maxRequestsPerMinute = limits.rpm;
+    }
+    if (cfg.maxConcurrentLlmRequests === undefined && limits.maxInFlight > 0) {
+      cfg.maxConcurrentLlmRequests = limits.maxInFlight;
     }
   }
   if (process.env.QWEN_MAX_ITERATIONS) {
@@ -286,16 +490,17 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     const n = parseInt(process.env.QWEN_RATE_LIMIT_MS, 10);
     if (!Number.isNaN(n) && n >= 0 && n <= 10000) cfg.rateLimitMs = n;
   }
-  if (process.env.QWEN_MAX_RPM) {
-    const n = parseInt(process.env.QWEN_MAX_RPM, 10);
-    if (!Number.isNaN(n) && n >= 0) cfg.maxRequestsPerMinute = n;
-  }
 
   if (
     process.env.QWEN_TOOL_CACHE_ENABLED === '0' ||
     process.env.QWEN_TOOL_CACHE_ENABLED === 'false'
   ) {
     cfg.toolCacheEnabled = false;
+  }
+  if (cfg.promptCache === undefined) {
+    const raw = process.env.QWEN_PROMPT_CACHE;
+    if (raw === '0' || raw === 'false') cfg.promptCache = false;
+    else if (raw === '1' || raw === 'true') cfg.promptCache = true;
   }
   if (process.env.QWEN_TOOL_CACHE_TTL_MS) {
     const n = parseInt(process.env.QWEN_TOOL_CACHE_TTL_MS, 10);
@@ -387,6 +592,9 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
       );
     }
   }
+
+  applyFallbacksFromConfigAndEnv(cfg);
+  normalizeProfiles(cfg);
 
   const validation = validateConfig(cfg);
   if (validation.warnings.length > 0) {

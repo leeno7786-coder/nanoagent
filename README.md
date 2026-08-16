@@ -123,7 +123,7 @@ nanoagent tui      # force TUI
 | `nanoagent doctor` | Config + runtime health check |
 | `nanoagent todo` | CLI todo list (`add`, `list`, `done`, `delete`, `clear`) |
 
-`run` flags: `--prompt` / `--stdin`, `--workspace`, `--model`, `--base-url`, `--max-rounds`, `--max-iterations`, `--json`, `--quiet`, `--verbose`, `--yes` (auto-approve permissions), `--permission-mode <read_only\|ask\|allow_edits\|always_allow>`.
+`run` flags: `--prompt` / `--stdin`, `--workspace`, `--model`, `--base-url`, `--profile`, `--max-rounds`, `--max-iterations`, `--json`, `--quiet`, `--verbose`, `--yes` (auto-approve permissions), `--permission-mode <read_only\|ask\|allow_edits\|always_allow>`.
 
 ---
 
@@ -134,7 +134,9 @@ nanoagent tui      # force TUI
 
 When LM Studio has extra small models loaded (`qwen3.5-2b`, etc.), NanoAgent can use them as an exploration sub-agent pool. You can also point at a remote pool with `REMOTE_LMSTUDIO_URL` or a `subagents` block in config.
 
-First-run: type `/connect` in the TUI to pick a provider, enter an API key if needed, and choose a model.
+First-run: type `/connect` in the TUI to pick a provider (Local first, then Cloud), enter an API key if needed, and choose a model.
+
+Cloud providers include OpenAI, OpenRouter, Azure AI Foundry (per-resource URL), Alibaba Cloud Model Studio / DashScope (intl, China, and Coding Plan), Kimi Code, Moonshot, DeepSeek, Groq, xAI, Together, Fireworks, Cerebras, MiniMax, NVIDIA NIM, Hugging Face, Gemini (OpenAI-compat), and others. Local extras include Foundry Local, SGLang, MLX, KoboldCpp, and Docker Model Runner. All of these speak OpenAI Chat Completions — no extra SDKs.
 
 ---
 
@@ -149,6 +151,32 @@ Global defaults live in `~/.nanogent.json` or `~/.nanoagent.json`. Project overr
   "workspace": "./",
   "permissionMode": "ask",
   "contextCompactThreshold": 0.8,
+  "maxRequestsPerMinute": 20,
+  "maxConcurrentLlmRequests": 2,
+  "maxTokensPerMinute": 200000,
+  "maxToolResultTokens": 8000,
+  "profiles": {
+    "local": {
+      "model": "Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
+      "baseURL": "http://127.0.0.1:1234/v1",
+      "maxToolResultTokens": 0
+    },
+    "cloud": {
+      "model": "openrouter/free",
+      "baseURL": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "maxRequestsPerMinute": 20,
+      "maxConcurrentLlmRequests": 2,
+      "maxToolResultTokens": 8000
+    }
+  },
+  "fallbacks": [
+    {
+      "model": "openrouter/free",
+      "baseURL": "https://openrouter.ai/api/v1",
+      "provider": "openrouter"
+    }
+  ],
   "subAgentEnabled": true,
   "maxBackgroundSubAgents": 4,
   "securityEnabled": true,
@@ -157,13 +185,38 @@ Global defaults live in `~/.nanogent.json` or `~/.nanoagent.json`. Project overr
 }
 ```
 
+Paid/cloud pacing (local runtimes stay unlimited): `maxRequestsPerMinute` and `maxConcurrentLlmRequests` in config, or:
+
+```bash
+QWEN_MAX_REQUESTS_PER_MINUTE=20 QWEN_MAX_CONCURRENT_LLM=2 nanogent run --prompt "status" --workspace .
+QWEN_MAX_TOKENS_PER_MINUTE=200000 QWEN_MAX_TOOL_RESULT_TOKENS=8000 nanogent doctor --json
+nanogent doctor --json
+```
+
+Catalog defaults when unset: OpenRouter 20 RPM / 2 in-flight, Groq 30/2, Cerebras 30/2, Hugging Face 15/1. `0` is unlimited. File/env always win over catalog. `rateLimitMs` is an optional extra pause between agent iterations (default 0; do not use it for cloud 429s). `QWEN_MAX_RPM` is an alias for `QWEN_MAX_REQUESTS_PER_MINUTE`.
+
+Optional TPM (`maxTokensPerMinute` / `QWEN_MAX_TOKENS_PER_MINUTE`, alias `QWEN_MAX_TPM`) is off unless you set it — there is no catalog TPM default. Cloud tool results are capped at 8000 tokens by default after secrets sanitize (`maxToolResultTokens` / `QWEN_MAX_TOOL_RESULT_TOKENS`; `0` = off; local stays uncapped unless you set a value). Session `$` estimates use OpenRouter catalog prices when available, or `promptPricePerMillion` / `completionPricePerMillion` (`QWEN_PROMPT_PRICE_PER_MILLION`, `QWEN_COMPLETION_PRICE_PER_MILLION`). Prices are never invented; `/usage` and the status bar show tokens only when rates are unknown.
+
+Context windows come from the live runtime when the catalog reports them: LM Studio loaded instance, OpenRouter `context_length`, or a cached GET `/models` on other OpenAI-compatible clouds (`context_length` / `max_model_len` / `max_context_length`). Missing fields stay on the existing heuristic — NanoAgent never invents a smaller window. Catalog capability flags (`supportsTools`, `supportsThinking`, `supportsPromptCache`) are opt-in only when the provider is explicit; unknown keeps today's request shape (`enable_thinking` for `qwen*` / `bonsai*`, tools always sent). Cloud endpoints that advertise prompt cache get a stable `prompt_cache_key` (workspace + model). Opt out with `"promptCache": false` or `QWEN_PROMPT_CACHE=0`. Local providers skip cache hints. `/config show` and `nanogent doctor --json` include the resolved context source and known flags when set.
+
+**Failover** is explicit only — NanoAgent never invents a cloud backup. After LLM retries are exhausted, a 429 / 502 / 503 / 504, timeout, or connection error retries the same turn on the next `fallbacks[]` entry (or `QWEN_FALLBACK_MODEL` + optional `QWEN_FALLBACK_BASE_URL` / `QWEN_FALLBACK_PROVIDER` when the file omits `fallbacks`). File wins over env; invalid env is logged and ignored. Auth failures (401/403), bad requests (400), and user abort do not fail over. Each fallback is tried once per main-agent turn, and once per `explore_subagent` worker run. The live session or that worker's in-memory client switches — not `~/.nanogent.json`, and not the shared pool default for other workers. API keys are resolved per fallback provider — the primary key is never sent to a different provider.
+
+**Profiles** are named snapshots in `profiles`. `/profile` lists them; `/profile cloud` applies `cloud` to the live session (rebuilds the LLM client). Persist with `/profile cloud --global`. Headless: `nanogent run --profile local --prompt "status"`. Do not hardcode a paid model id; put your OpenRouter/DashScope model in the `cloud` snapshot.
+
 In the TUI:
 
 - `/config` or `/config show` — active config and loaded files
 - `/config set model <name>` — project-local
 - `/config set baseURL http://127.0.0.1:1234/v1 --global` — machine-wide
+- `/config set maxRequestsPerMinute 20`
+- `/config set maxConcurrentLlmRequests 2`
+- `/config set maxTokensPerMinute 200000`
+- `/config set maxToolResultTokens 8000`
+- `/config set promptCache false`
 - `/config reload` or `/reload` — reload from disk
 - `/set <key> <val>` — same as `/config set`
+- `/profile` / `/profile list` — named snapshots
+- `/profile <name>` — apply live (`--global` / `--local` to persist)
 
 ---
 
@@ -177,7 +230,9 @@ In the TUI:
 | `/compact` | Force context compaction |
 | `/auto <task>` | Autonomous run (F3 prefills `/auto`) |
 | `/config` `/set` | View or edit `.nanogent.json` |
+| `/profile` | List or apply a named model snapshot (`--global` to persist) |
 | `/connect` | Pick runtime, API key, and model |
+| `/usage` | Session input/output tokens and estimated USD (when prices are known) |
 | `/doctor` | Health check |
 | `/models` | Local/remote models and context |
 | `/todo` `/todos` | Todo sidebar (F4) / list |
@@ -225,6 +280,7 @@ nanoagent run --prompt "Refactor index.ts to use async/await" --workspace .
 cat task.txt | nanoagent run --stdin --workspace . --quiet
 nanoagent run --prompt "check test coverage" --json
 nanoagent run -p "run tests and fix failures" -y --permission-mode allow_edits
+nanoagent run --profile local --prompt "status" --workspace .
 nanoagent doctor --json
 nanoagent models --base-url http://127.0.0.1:1234/v1
 nanoagent todo add "Write the README"

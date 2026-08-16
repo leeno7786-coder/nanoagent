@@ -60,6 +60,14 @@ export function formatSessionUsage(usage: TurnUsage | undefined): string {
   return `Σ${formatTokenCount(total)}`;
 }
 
+/** Status-bar $ only when pricing is known and cost > 0. */
+export function formatSessionCost(usd: number | undefined): string {
+  if (usd === undefined || !(usd > 0) || !Number.isFinite(usd)) return '';
+  if (usd >= 1) return `$${usd.toFixed(2)}`;
+  if (usd >= 0.01) return `$${usd.toFixed(3)}`;
+  return `$${usd.toFixed(4)}`;
+}
+
 /** Busy-line label: context fill only — never session Σ. */
 export function formatBusyContext(snap: ContextUsageSnapshot | undefined): string {
   const fill = formatContextFill(snap);

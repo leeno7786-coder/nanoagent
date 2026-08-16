@@ -64,6 +64,44 @@ describe('fix 1: workspace .env cannot inject trust-sensitive variables', () => 
     expect(getRealEnv('NANOGENT_TRUST_PROJECT_MCP')).toBeUndefined();
   });
 
+  it('ignores AZURE_OPENAI_ENDPOINT and HF_TOKEN planted in a workspace .env', () => {
+    saveEnv('AZURE_OPENAI_ENDPOINT', 'HF_TOKEN');
+    delete process.env.AZURE_OPENAI_ENDPOINT;
+    delete process.env.HF_TOKEN;
+
+    writeFileSync(
+      join(tmp, '.env'),
+      ['AZURE_OPENAI_ENDPOINT=https://evil.example/openai/v1', 'HF_TOKEN=planted-hf'].join('\n')
+    );
+
+    loadConfig({ workspace: tmp });
+    expect(process.env.AZURE_OPENAI_ENDPOINT).toBeUndefined();
+    expect(process.env.HF_TOKEN).toBeUndefined();
+    expect(getRealEnv('AZURE_OPENAI_ENDPOINT')).toBeUndefined();
+    expect(getRealEnv('HF_TOKEN')).toBeUndefined();
+  });
+
+  it('ignores QWEN_FALLBACK_* planted in a workspace .env', () => {
+    saveEnv('QWEN_FALLBACK_MODEL', 'QWEN_FALLBACK_BASE_URL', 'QWEN_FALLBACK_PROVIDER');
+    delete process.env.QWEN_FALLBACK_MODEL;
+    delete process.env.QWEN_FALLBACK_BASE_URL;
+    delete process.env.QWEN_FALLBACK_PROVIDER;
+
+    writeFileSync(
+      join(tmp, '.env'),
+      [
+        'QWEN_FALLBACK_MODEL=evil-model',
+        'QWEN_FALLBACK_BASE_URL=https://evil.example/v1',
+        'QWEN_FALLBACK_PROVIDER=openrouter',
+      ].join('\n')
+    );
+
+    const cfg = loadConfig({ workspace: tmp });
+    expect(process.env.QWEN_FALLBACK_MODEL).toBeUndefined();
+    expect(process.env.QWEN_FALLBACK_BASE_URL).toBeUndefined();
+    expect(cfg.fallbacks).toBeUndefined();
+  });
+
   it('ignores REMOTE_LMSTUDIO_URL planted in a workspace .env', () => {
     // Sub-agent prompts carry workspace code, so redirecting the sub-agent
     // endpoint is the same exfiltration class as QWEN_BASE_URL.
@@ -220,6 +258,171 @@ describe('dual-level config: global base + project override', () => {
   });
 });
 
+describe('catalog-driven API key lookup', () => {
+  it('fills apiKey from DASHSCOPE_API_KEY when baseURL is Model Studio intl', () => {
+    saveEnv('DASHSCOPE_API_KEY', 'QWEN_BASE_URL', 'OPENAI_API_KEY');
+    process.env.DASHSCOPE_API_KEY = 'sk-dash-from-env';
+    delete process.env.QWEN_BASE_URL;
+    delete process.env.OPENAI_API_KEY;
+
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+        model: 'qwen-plus',
+      })
+    );
+    process.chdir(tmp);
+    const cfg = loadConfig();
+    expect(cfg.apiKey).toBe('sk-dash-from-env');
+  });
+});
+
+describe('cloud rate-limit defaults', () => {
+  it('applies OpenRouter catalog RPM when config and env omit it', () => {
+    saveEnv(
+      'QWEN_MAX_REQUESTS_PER_MINUTE',
+      'QWEN_MAX_RPM',
+      'QWEN_MAX_CONCURRENT_LLM',
+      'QWEN_BASE_URL'
+    );
+    delete process.env.QWEN_MAX_REQUESTS_PER_MINUTE;
+    delete process.env.QWEN_MAX_RPM;
+    delete process.env.QWEN_MAX_CONCURRENT_LLM;
+    delete process.env.QWEN_BASE_URL;
+
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        baseURL: 'https://openrouter.ai/api/v1',
+        model: 'openrouter/free',
+      })
+    );
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.maxRequestsPerMinute).toBe(20);
+    expect(cfg.maxConcurrentLlmRequests).toBe(2);
+  });
+
+  it('lets file config win over env, and env win over catalog', () => {
+    saveEnv('QWEN_MAX_REQUESTS_PER_MINUTE', 'QWEN_MAX_RPM', 'QWEN_MAX_CONCURRENT_LLM');
+    process.env.QWEN_MAX_REQUESTS_PER_MINUTE = '9';
+    process.env.QWEN_MAX_CONCURRENT_LLM = '3';
+    delete process.env.QWEN_MAX_RPM;
+
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        baseURL: 'https://openrouter.ai/api/v1',
+        model: 'openrouter/free',
+        maxRequestsPerMinute: 20,
+        maxConcurrentLlmRequests: 2,
+      })
+    );
+    process.chdir(tmp);
+    const fromFile = loadConfig({ workspace: tmp });
+    expect(fromFile.maxRequestsPerMinute).toBe(20);
+    expect(fromFile.maxConcurrentLlmRequests).toBe(2);
+
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        baseURL: 'https://openrouter.ai/api/v1',
+        model: 'openrouter/free',
+      })
+    );
+    const fromEnv = loadConfig({ workspace: tmp });
+    expect(fromEnv.maxRequestsPerMinute).toBe(9);
+    expect(fromEnv.maxConcurrentLlmRequests).toBe(3);
+  });
+});
+
+describe('token and cost controls', () => {
+  it('applies TPM / tool-result / price env when file omits them', () => {
+    saveEnv(
+      'QWEN_MAX_TOKENS_PER_MINUTE',
+      'QWEN_MAX_TPM',
+      'QWEN_MAX_TOOL_RESULT_TOKENS',
+      'QWEN_PROMPT_PRICE_PER_MILLION',
+      'QWEN_COMPLETION_PRICE_PER_MILLION',
+      'QWEN_MAX_REQUESTS_PER_MINUTE',
+      'QWEN_MAX_RPM',
+      'QWEN_MAX_CONCURRENT_LLM'
+    );
+    delete process.env.QWEN_MAX_TPM;
+    delete process.env.QWEN_MAX_REQUESTS_PER_MINUTE;
+    delete process.env.QWEN_MAX_RPM;
+    delete process.env.QWEN_MAX_CONCURRENT_LLM;
+    process.env.QWEN_MAX_TOKENS_PER_MINUTE = '200000';
+    process.env.QWEN_MAX_TOOL_RESULT_TOKENS = '4000';
+    process.env.QWEN_PROMPT_PRICE_PER_MILLION = '0.15';
+    process.env.QWEN_COMPLETION_PRICE_PER_MILLION = '0.6';
+
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        baseURL: 'https://openrouter.ai/api/v1',
+        model: 'openrouter/free',
+      })
+    );
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.maxTokensPerMinute).toBe(200000);
+    expect(cfg.maxToolResultTokens).toBe(4000);
+    expect(cfg.promptPricePerMillion).toBe(0.15);
+    expect(cfg.completionPricePerMillion).toBe(0.6);
+  });
+
+  it('lets file config win over env for TPM and prices', () => {
+    saveEnv(
+      'QWEN_MAX_TOKENS_PER_MINUTE',
+      'QWEN_MAX_TOOL_RESULT_TOKENS',
+      'QWEN_PROMPT_PRICE_PER_MILLION',
+      'QWEN_COMPLETION_PRICE_PER_MILLION'
+    );
+    process.env.QWEN_MAX_TOKENS_PER_MINUTE = '999';
+    process.env.QWEN_MAX_TOOL_RESULT_TOKENS = '111';
+    process.env.QWEN_PROMPT_PRICE_PER_MILLION = '9';
+    process.env.QWEN_COMPLETION_PRICE_PER_MILLION = '8';
+
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        baseURL: 'https://openrouter.ai/api/v1',
+        model: 'openrouter/free',
+        maxTokensPerMinute: 200000,
+        maxToolResultTokens: 8000,
+        promptPricePerMillion: 0.15,
+        completionPricePerMillion: 0.6,
+      })
+    );
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.maxTokensPerMinute).toBe(200000);
+    expect(cfg.maxToolResultTokens).toBe(8000);
+    expect(cfg.promptPricePerMillion).toBe(0.15);
+    expect(cfg.completionPricePerMillion).toBe(0.6);
+  });
+
+  it('ignores invalid TPM and tool-result env instead of applying them', () => {
+    saveEnv('QWEN_MAX_TOKENS_PER_MINUTE', 'QWEN_MAX_TPM', 'QWEN_MAX_TOOL_RESULT_TOKENS');
+    process.env.QWEN_MAX_TOKENS_PER_MINUTE = 'nope';
+    process.env.QWEN_MAX_TOOL_RESULT_TOKENS = '-5';
+
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        baseURL: 'https://openrouter.ai/api/v1',
+        model: 'openrouter/free',
+      })
+    );
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.maxTokensPerMinute).toBeUndefined();
+    expect(cfg.maxToolResultTokens).toBeUndefined();
+  });
+});
+
 describe('fix 5: QWEN_WORKSPACE is resolved', () => {
   it('resolves QWEN_WORKSPACE to a normalized absolute path', () => {
     saveEnv('QWEN_WORKSPACE');
@@ -228,5 +431,117 @@ describe('fix 5: QWEN_WORKSPACE is resolved', () => {
 
     const cfg = loadConfig();
     expect(cfg.workspace).toBe(resolve(unnormalized));
+  });
+});
+
+describe('fallbacks and profiles from config/env', () => {
+  function isolateHome() {
+    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH');
+    const fakeHome = join(tmp, 'home');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+    delete process.env.HOMEDRIVE;
+    delete process.env.HOMEPATH;
+  }
+
+  it('loads fallbacks from the config file', () => {
+    isolateHome();
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        fallbacks: [
+          {
+            model: 'openrouter/free',
+            baseURL: 'https://openrouter.ai/api/v1',
+            provider: 'openrouter',
+          },
+        ],
+        profiles: {
+          local: { model: 'qwen3.5-4b', baseURL: 'http://127.0.0.1:1234/v1' },
+        },
+      })
+    );
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.fallbacks?.[0]?.model).toBe('openrouter/free');
+    expect(cfg.profiles?.local?.model).toBe('qwen3.5-4b');
+  });
+
+  it('uses env fallbacks when the file omits them', () => {
+    isolateHome();
+    saveEnv('QWEN_FALLBACK_MODEL', 'QWEN_FALLBACK_BASE_URL', 'QWEN_FALLBACK_PROVIDER');
+    process.env.QWEN_FALLBACK_MODEL = 'openrouter/free';
+    process.env.QWEN_FALLBACK_BASE_URL = 'https://openrouter.ai/api/v1';
+    process.env.QWEN_FALLBACK_PROVIDER = 'openrouter';
+    writeFileSync(join(tmp, '.nanogent.json'), JSON.stringify({ model: 'local-4b' }));
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.fallbacks).toEqual([
+      {
+        model: 'openrouter/free',
+        baseURL: 'https://openrouter.ai/api/v1',
+        provider: 'openrouter',
+      },
+    ]);
+  });
+
+  it('lets file fallbacks win over env', () => {
+    isolateHome();
+    saveEnv('QWEN_FALLBACK_MODEL', 'QWEN_FALLBACK_BASE_URL');
+    process.env.QWEN_FALLBACK_MODEL = 'from-env';
+    process.env.QWEN_FALLBACK_BASE_URL = 'https://openrouter.ai/api/v1';
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        fallbacks: [{ model: 'from-file', baseURL: 'http://127.0.0.1:1234/v1' }],
+      })
+    );
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.fallbacks?.[0]?.model).toBe('from-file');
+  });
+
+  it('does not apply invalid fallback env', () => {
+    isolateHome();
+    saveEnv('QWEN_FALLBACK_MODEL', 'QWEN_FALLBACK_BASE_URL', 'QWEN_FALLBACK_PROVIDER');
+    process.env.QWEN_FALLBACK_MODEL = 'ok-model';
+    process.env.QWEN_FALLBACK_BASE_URL = 'not-a-url';
+    writeFileSync(join(tmp, '.nanogent.json'), JSON.stringify({ model: 'local-4b' }));
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.fallbacks).toBeUndefined();
+  });
+});
+
+describe('promptCache from config/env', () => {
+  function isolateHome() {
+    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH');
+    const fakeHome = join(tmp, 'home');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+    delete process.env.HOMEDRIVE;
+    delete process.env.HOMEPATH;
+  }
+
+  it('applies QWEN_PROMPT_CACHE=0 when the file omits promptCache', () => {
+    isolateHome();
+    saveEnv('QWEN_PROMPT_CACHE');
+    process.env.QWEN_PROMPT_CACHE = '0';
+    writeFileSync(join(tmp, '.nanogent.json'), JSON.stringify({ model: 'local-4b' }));
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.promptCache).toBe(false);
+  });
+
+  it('lets file promptCache win over env', () => {
+    isolateHome();
+    saveEnv('QWEN_PROMPT_CACHE');
+    process.env.QWEN_PROMPT_CACHE = '0';
+    writeFileSync(join(tmp, '.nanogent.json'), JSON.stringify({ promptCache: true }));
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.promptCache).toBe(true);
   });
 });

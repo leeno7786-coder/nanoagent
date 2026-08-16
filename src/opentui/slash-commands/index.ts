@@ -1,5 +1,5 @@
 import { loadSkills, getSkill, getSkillCommands } from '../../skills.js';
-import { loadConfig, saveConfigFile } from '../../config.js';
+import { loadConfig, saveConfigFile, applyModelProfile, formatProfileList } from '../../config.js';
 import {
   getDoctorReport,
   formatDoctorReport,
@@ -22,6 +22,8 @@ import type { SlashCommandContext } from './types.js';
 import { pushAssistant } from './utils.js';
 import { handlePermissionsCommand } from './permissions.js';
 import { handleMcpCommand, handleMcpAddCommand, handleMcpRemoveCommand } from './mcp.js';
+import { formatUsageReport, hasKnownPrices } from '../../llm/cost.js';
+import { resolveToolResultTokenBudget } from '../../llm/tool-result-budget.js';
 
 export { checkAndAutoCompact, pushAssistant } from './utils.js';
 
@@ -96,9 +98,30 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       pushAssistant(agent, formatDoctorReport(report), setMessages);
       return;
     }
+    case 'usage': {
+      const pricesKnown = hasKnownPrices(agent.cfg);
+      pushAssistant(
+        agent,
+        formatUsageReport({
+          total: agent.totalUsage ?? { input_tokens: 0, output_tokens: 0 },
+          last: agent.lastUsage,
+          totalCostUsd: pricesKnown ? agent.totalCostUsd : undefined,
+          lastCostUsd: pricesKnown ? agent.lastCostUsd : undefined,
+          pricesKnown,
+        }),
+        setMessages
+      );
+      return;
+    }
     case 'models': {
       const models = await getModelsList(undefined, agent.cfg);
-      pushAssistant(agent, formatModelsList(models), setMessages);
+      const list = formatModelsList(models);
+      const profileNames = Object.keys(agent.cfg.profiles ?? {});
+      const profileNote =
+        profileNames.length > 0
+          ? `\n\nProfiles: ${profileNames.join(', ')}${agent.cfg.profile ? ` (current: ${agent.cfg.profile})` : ''}\nUse /profile <name> to switch.`
+          : '';
+      pushAssistant(agent, `${list}${profileNote}`, setMessages);
       return;
     }
     case 'auto': {
@@ -419,10 +442,37 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           `- **Model**: \`${currentCfg.model || 'auto-detect'}\``,
           `- **Base URL**: \`${currentCfg.baseURL || 'http://127.0.0.1:1234/v1'}\``,
           `- **Provider**: \`${currentCfg.baseURL?.includes('openrouter') ? 'OpenRouter' : 'LM Studio / Local'}\``,
+          `- **Profile**: \`${currentCfg.profile || '(none)'}\``,
+          `- **Fallbacks**: \`${
+            currentCfg.fallbacks && currentCfg.fallbacks.length > 0
+              ? currentCfg.fallbacks.map((f) => f.model).join(', ')
+              : '(none)'
+          }\``,
           `- **Workspace**: \`${currentCfg.workspace || process.cwd()}\``,
           `- **API Key**: ${currentCfg.apiKey ? '`••••••••` (set)' : '*(not set)*'}`,
           `- **Temperature**: \`${currentCfg.temperature ?? 0.7}\``,
           `- **Max Tokens**: \`${currentCfg.maxTokens ?? 4096}\``,
+          `- **Max Requests/min**: \`${currentCfg.maxRequestsPerMinute ?? 0}\` (0 = unlimited)`,
+          `- **Max Concurrent LLM**: \`${currentCfg.maxConcurrentLlmRequests ?? 0}\` (0 = unlimited)`,
+          `- **Max Tokens/min**: \`${currentCfg.maxTokensPerMinute ?? 0}\` (0 = off; no catalog default)`,
+          `- **Max tool result tokens**: \`${resolveToolResultTokenBudget(currentCfg)}\`${currentCfg.maxToolResultTokens === undefined ? ' (default)' : ''} (0 = off)`,
+          `- **Prompt $/1M**: \`${currentCfg.promptPricePerMillion ?? 'unknown'}\``,
+          `- **Completion $/1M**: \`${currentCfg.completionPricePerMillion ?? 'unknown'}\``,
+          ...(currentCfg.modelRuntimeSource
+            ? [`- **Context source**: \`${currentCfg.modelRuntimeSource}\``]
+            : []),
+          ...(currentCfg.supportsTools !== undefined
+            ? [`- **Supports tools**: \`${currentCfg.supportsTools}\``]
+            : []),
+          ...(currentCfg.supportsThinking !== undefined
+            ? [`- **Supports thinking**: \`${currentCfg.supportsThinking}\``]
+            : []),
+          ...(currentCfg.supportsPromptCache !== undefined
+            ? [`- **Supports prompt cache**: \`${currentCfg.supportsPromptCache}\``]
+            : []),
+          ...(currentCfg.promptCache !== undefined
+            ? [`- **Prompt cache**: \`${currentCfg.promptCache ? 'on' : 'off'}\``]
+            : []),
           '',
           '**Configuration Files:**',
           '- Local: `.nanogent.json` in workspace root',
@@ -432,7 +482,13 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           '- `/config set model <name>` (set model locally)',
           '- `/config set model <name> --global` (set model globally)',
           '- `/config set baseURL http://localhost:1234/v1`',
+          '- `/config set maxRequestsPerMinute 20`',
+          '- `/config set maxConcurrentLlmRequests 2`',
+          '- `/config set maxTokensPerMinute 200000`',
+          '- `/config set maxToolResultTokens 8000`',
+          '- `/config set promptCache false`',
           '- `/config reload` (reload from disk)',
+          '- `/profile <name>` (apply a named snapshot; add `--global` to persist)',
         ].join('\n');
 
         pushAssistant(agent, info, setMessages);
@@ -468,7 +524,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
         );
 
         if (agent) {
-          agent.cfg = newConfig;
+          await agent.reconfigure(newConfig);
         }
 
         // Never echo secrets into the chat history (it is autosaved to disk).
@@ -483,10 +539,46 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
 
       if (subCommand === 'reload') {
         const reloaded = loadConfig(agent?.cfg?.workspace);
-        if (agent) agent.cfg = reloaded;
+        if (agent) await agent.reconfigure(reloaded);
         pushAssistant(agent, '✅ Configuration reloaded from disk.', setMessages);
         return;
       }
+      return;
+    }
+    case 'profile': {
+      const profileTokens = args.trim().split(/\s+/).filter(Boolean);
+      const persistFlag = profileTokens.find((t) => t === '--global' || t === '--local');
+      const name = profileTokens.filter((t) => t !== '--global' && t !== '--local').join(' ');
+
+      if (!name || name === 'list') {
+        pushAssistant(agent, formatProfileList(agent.cfg), setMessages);
+        return;
+      }
+
+      const applied = applyModelProfile(agent.cfg, name);
+      if ('error' in applied) {
+        pushAssistant(agent, applied.error, setMessages);
+        return;
+      }
+
+      await agent.reconfigure(applied.patch);
+      let persistNote =
+        'Session only — persist with `/profile ' +
+        (agent.cfg.profile ?? name) +
+        ' --global` or `--local`.';
+      if (persistFlag === '--global' || persistFlag === '--local') {
+        const scope = persistFlag === '--global' ? 'global' : 'local';
+        const { targetPath } = saveConfigFile(applied.persist, scope, agent?.cfg?.workspace);
+        persistNote = `Saved to **${targetPath}** (${scope}).`;
+      }
+      const ctxNote = agent.cfg.modelContextLength
+        ? ` · ${Math.round(agent.cfg.modelContextLength / 1000)}k ctx`
+        : '';
+      pushAssistant(
+        agent,
+        `Applied profile **${agent.cfg.profile ?? name}**: \`${agent.cfg.model}\` @ \`${agent.cfg.baseURL}\`${ctxNote}\n${persistNote}`,
+        setMessages
+      );
       return;
     }
     case 'exit':

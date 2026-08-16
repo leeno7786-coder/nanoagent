@@ -1,5 +1,6 @@
 import type { AgentCore } from './core.js';
-import { chat, streamChat } from '../llm.js';
+import { chat, streamChat, isEndpointRateLimited } from '../llm.js';
+import { switchSessionToFallback } from '../llm/failover.js';
 import { groupToolsForParallelExecution } from '../tools/index.js';
 import { SkillManager } from '../skill-manager.js';
 import type { Message } from '../types.js';
@@ -245,6 +246,8 @@ export async function agentRun(
   let lastToolSignature: string | undefined;
   let sameSignatureStreak = 0;
   const MAX_SAME_SIGNATURE_STREAK = 3;
+  /** Each configured fallback is tried at most once per user turn. */
+  const triedFallbacks = new Set<string>();
 
   const tryContinueAfterPrematureCheckin = (content: string): boolean => {
     if (earlyStopContinues >= EARLY_STOP_MAX_CONTINUES) return false;
@@ -417,9 +420,7 @@ export async function agentRun(
           iterResult.value as { usage?: { input_tokens: number; output_tokens: number } }
         )?.usage;
         if (streamUsage) {
-          agent.lastUsage = streamUsage;
-          agent.totalUsage.input_tokens += streamUsage.input_tokens;
-          agent.totalUsage.output_tokens += streamUsage.output_tokens;
+          agent.recordUsage(streamUsage);
           agent.contextManager.reportApiUsage(streamUsage);
         }
 
@@ -474,6 +475,14 @@ export async function agentRun(
           agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
 
           if (silentOverflow && overflowRetries < MAX_OVERFLOW_RETRIES) {
+            if (isEndpointRateLimited(agent.cfg.baseURL)) {
+              agent.addNoticeMessage(
+                'Context overflow detected, but the provider is rate-limited — skipping extra retry. Wait a moment, then `/compact` or retry.'
+              );
+              agent.setState('idle');
+              agent.onUpdate?.();
+              return;
+            }
             overflowRetries++;
             const compacted = agent.forceCompactContext();
             // Notice (not assistant): mid-loop assistant text poisons Bonsai/Qwen
@@ -519,13 +528,24 @@ export async function agentRun(
             agent.onUpdate?.();
             return;
           }
+          if (isEndpointRateLimited(agent.cfg.baseURL)) {
+            agent.addNoticeMessage(
+              'Model produced a reasoning-only response while the provider is rate-limited — stopping extra retries.'
+            );
+            agent.setState('idle');
+            agent.onUpdate?.();
+            return;
+          }
           await new Promise((r) => setTimeout(r, 0));
           continue;
         }
 
         if (!assistantMsg.toolCalls || assistantMsg.toolCalls.length === 0) {
           reasoningOnlyStreak = 0;
-          if (tryContinueAfterPrematureCheckin(assistantMsg.content)) {
+          if (
+            !isEndpointRateLimited(agent.cfg.baseURL) &&
+            tryContinueAfterPrematureCheckin(assistantMsg.content)
+          ) {
             await new Promise((r) => setTimeout(r, 0));
             continue;
           }
@@ -555,12 +575,31 @@ export async function agentRun(
           return;
         }
 
+        const switched = await switchSessionToFallback(agent, err, triedFallbacks, signal);
+        if (switched) {
+          agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
+          agent.addNoticeMessage(`Switched to ${switched.model} after ${switched.reason}`);
+          iterationCount -= 1;
+          agent.setState('thinking');
+          agent.onUpdate?.();
+          continue;
+        }
+
         const status = e.status || e.status_code;
         const msg = e.message || String(err);
         const overflowHint =
           /context.?length|maximum context|too many tokens|prompt is too long/i.test(msg);
 
         if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
+          if (isEndpointRateLimited(agent.cfg.baseURL)) {
+            agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
+            agent.addNoticeMessage(
+              `Context overflow from API (${status || 'error'}), but the provider is rate-limited — skipping extra retry.`
+            );
+            agent.setState('idle');
+            agent.onUpdate?.();
+            return;
+          }
           agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
           overflowRetries++;
           agent.forceCompactContext();
@@ -625,12 +664,29 @@ export async function agentRun(
           return;
         }
 
+        const switched = await switchSessionToFallback(agent, err, triedFallbacks, signal);
+        if (switched) {
+          agent.addNoticeMessage(`Switched to ${switched.model} after ${switched.reason}`);
+          iterationCount -= 1;
+          agent.setState('thinking');
+          agent.onUpdate?.();
+          continue;
+        }
+
         const status = e.status || e.status_code;
         const msg = e.message || String(err);
         const overflowHint =
           /context.?length|maximum context|too many tokens|prompt is too long/i.test(msg);
 
         if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
+          if (isEndpointRateLimited(agent.cfg.baseURL)) {
+            agent.addNoticeMessage(
+              `Context overflow from API (${status || 'error'}), but the provider is rate-limited — skipping extra retry.`
+            );
+            agent.setState('idle');
+            agent.onUpdate?.();
+            return;
+          }
           overflowRetries++;
           agent.forceCompactContext();
           agent.addNoticeMessage(
@@ -661,9 +717,7 @@ export async function agentRun(
 
       const msg = response.message;
       if (response.usage) {
-        agent.lastUsage = response.usage;
-        agent.totalUsage.input_tokens += response.usage.input_tokens;
-        agent.totalUsage.output_tokens += response.usage.output_tokens;
+        agent.recordUsage(response.usage);
         agent.contextManager.reportApiUsage(response.usage);
       }
 
@@ -676,6 +730,14 @@ export async function agentRun(
 
       if (emptyNonStream) {
         if (silentOverflow && overflowRetries < MAX_OVERFLOW_RETRIES) {
+          if (isEndpointRateLimited(agent.cfg.baseURL)) {
+            agent.addNoticeMessage(
+              'Context overflow detected, but the provider is rate-limited — skipping extra retry. Wait a moment, then `/compact` or retry.'
+            );
+            agent.setState('idle');
+            agent.onUpdate?.();
+            return;
+          }
           overflowRetries++;
           const compacted = agent.forceCompactContext();
           agent.addNoticeMessage(
@@ -728,10 +790,21 @@ export async function agentRun(
             agent.onUpdate?.();
             return;
           }
+          if (isEndpointRateLimited(agent.cfg.baseURL)) {
+            agent.addNoticeMessage(
+              'Model produced a reasoning-only response while the provider is rate-limited — stopping extra retries.'
+            );
+            agent.setState('idle');
+            agent.onUpdate?.();
+            return;
+          }
           await new Promise((r) => setTimeout(r, 0));
           continue;
         }
-        if (tryContinueAfterPrematureCheckin(msg.content || '')) {
+        if (
+          !isEndpointRateLimited(agent.cfg.baseURL) &&
+          tryContinueAfterPrematureCheckin(msg.content || '')
+        ) {
           await new Promise((r) => setTimeout(r, 0));
           continue;
         }

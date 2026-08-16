@@ -26,7 +26,33 @@ export {
 
 export { createClient } from './client.js';
 
-export { markEndpointRateLimited, awaitEndpointRateLimit, errorMessage } from './rate-limit.js';
+export {
+  markEndpointRateLimited,
+  awaitEndpointRateLimit,
+  awaitEndpointTurn,
+  releaseEndpointTurn,
+  noteEndpointSuccess,
+  noteEndpointRateLimited,
+  noteEndpointPromptTokens,
+  estimatePromptTokensForRequest,
+  isEndpointRateLimited,
+  errorMessage,
+} from './rate-limit.js';
+
+export { capToolResultForLlm, resolveToolResultTokenBudget } from './tool-result-budget.js';
+export {
+  estimateUsageCostUsd,
+  formatUsageReport,
+  hasKnownPrices,
+  openRouterPriceToPerMillion,
+  parseOpenRouterModelPricing,
+} from './cost.js';
 
 export { chat } from './chat.js';
 export { streamChat } from './stream.js';
+export {
+  buildChatCompletionsParams,
+  shouldSendThinkingExtra,
+  shouldSendPromptCacheKey,
+  promptCacheKeyFor,
+} from './request.js';

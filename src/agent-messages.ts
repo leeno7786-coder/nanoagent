@@ -8,6 +8,7 @@ import type { Message } from './types.js';
 import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
+import { capToolResultForLlm, resolveToolResultTokenBudget } from './llm/tool-result-budget.js';
 
 /** UI-only assistant notices (overflow retry, stuck-loop, etc.). Never sent to the LLM. */
 export function isNoticeMessage(m: Message): boolean {
@@ -207,10 +208,15 @@ export function addNudgeMessage(agent: AgentCore, content: string): void {
  * Add a tool message to the conversation.
  */
 export function addToolMessage(agent: AgentCore, content: string, toolCallId?: string): void {
+  const budget = resolveToolResultTokenBudget(agent.cfg);
+  const capped =
+    budget > 0
+      ? capToolResultForLlm(content, { maxTokens: budget, modelId: agent.cfg.model })
+      : content;
   const msg: Message = {
     id: rnd(),
     role: 'tool',
-    content,
+    content: capped,
     timestamp: now(),
     toolCallId,
   };

@@ -174,41 +174,32 @@ export function extractRetryAfterDelayMs(err: unknown): number | undefined {
   if (!err) return undefined;
   const e = err as Record<string, unknown>;
 
-  let headerVal: string | undefined;
   const headers = (e.headers || (e.response as Record<string, unknown> | undefined)?.headers) as
     Record<string, unknown> | undefined;
-  if (headers) {
-    if (typeof (headers as { get?: unknown }).get === 'function') {
-      const getFn = (headers as { get: (name: string) => string | null }).get.bind(headers);
-      headerVal =
-        getFn('retry-after') ||
-        getFn('Retry-After') ||
-        getFn('x-ratelimit-reset-requests') ||
-        getFn('x-ratelimit-reset-tokens') ||
-        getFn('x-ratelimit-reset') ||
-        undefined;
-    } else if (typeof headers === 'object') {
-      const hdrs = headers as Record<string, string>;
-      headerVal =
-        hdrs['retry-after'] ||
-        hdrs['Retry-After'] ||
-        hdrs['x-ratelimit-reset-requests'] ||
-        hdrs['x-ratelimit-reset-tokens'] ||
-        hdrs['x-ratelimit-reset'];
-    }
+
+  const retryAfterHdr = readHeaderValue(headers, 'retry-after');
+  if (retryAfterHdr) {
+    const parsed = parseDelayValue(retryAfterHdr, EXPLICIT_RETRY_AFTER_CAP_MS);
+    if (parsed !== undefined) return parsed;
   }
 
-  if (headerVal) {
-    const cleaned = String(headerVal).trim().replace(/s$/i, '');
-    const parsedSec = parseFloat(cleaned);
-    if (!isNaN(parsedSec) && parsedSec > 0) {
-      return Math.min(Math.ceil(parsedSec * 1000), 120000);
-    }
-    const dateMs = Date.parse(headerVal);
-    if (!isNaN(dateMs)) {
-      const diffMs = dateMs - Date.now();
-      if (diffMs > 0) return Math.min(diffMs, 120000);
-    }
+  const retryAfterMsHdr = readHeaderValue(headers, 'retry-after-ms');
+  if (retryAfterMsHdr) {
+    const parsed = parseDelayValue(retryAfterMsHdr, EXPLICIT_RETRY_AFTER_CAP_MS, {
+      isMilliseconds: true,
+    });
+    if (parsed !== undefined) return parsed;
+  }
+
+  for (const name of [
+    'x-ratelimit-reset-requests',
+    'x-ratelimit-reset-tokens',
+    'x-ratelimit-reset',
+  ]) {
+    const guessed = readHeaderValue(headers, name);
+    if (!guessed) continue;
+    const parsed = parseDelayValue(guessed, GUESSED_RESET_CAP_MS);
+    if (parsed !== undefined) return parsed;
   }
 
   const msg = extractApiMessage(err) || (e.message as string) || '';
@@ -218,11 +209,89 @@ export function extractRetryAfterDelayMs(err: unknown): number | undefined {
   if (matchSec && matchSec[1]) {
     const sec = parseFloat(matchSec[1]);
     if (!isNaN(sec) && sec > 0) {
-      return Math.min(Math.ceil(sec * 1000), 120000);
+      return Math.min(Math.ceil(sec * 1000), GUESSED_RESET_CAP_MS);
     }
   }
 
   return undefined;
+}
+
+/** Honor explicit Retry-After up to 5 minutes. */
+const EXPLICIT_RETRY_AFTER_CAP_MS = 5 * 60 * 1000;
+/** Cap guessed x-ratelimit-reset* headers at 2 minutes. */
+const GUESSED_RESET_CAP_MS = 120000;
+
+function readHeaderValue(
+  headers: Record<string, unknown> | undefined,
+  name: string
+): string | undefined {
+  if (!headers) return undefined;
+  const lower = name.toLowerCase();
+  if (typeof (headers as { get?: unknown }).get === 'function') {
+    const getFn = (headers as { get: (n: string) => string | null }).get.bind(headers);
+    return getFn(name) || getFn(lower) || undefined;
+  }
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === lower && v != null) return String(v);
+  }
+  return undefined;
+}
+
+function parseDurationToMs(raw: string): number | undefined {
+  const s = raw.trim();
+  const msOnly = s.match(/^([0-9]+(?:\.[0-9]+)?)ms$/i);
+  if (msOnly) {
+    const n = parseFloat(msOnly[1]);
+    return !isNaN(n) && n > 0 ? n : undefined;
+  }
+  if (!/[hms]/i.test(s)) return undefined;
+  const compound = s.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/i);
+  if (!compound || !(compound[1] || compound[2] || compound[3])) return undefined;
+  const hours = parseFloat(compound[1] || '0');
+  const minutes = parseFloat(compound[2] || '0');
+  const seconds = parseFloat(compound[3] || '0');
+  const total = (hours * 3600 + minutes * 60 + seconds) * 1000;
+  return total > 0 ? total : undefined;
+}
+
+function parseDelayValue(
+  raw: string,
+  capMs: number,
+  opts?: { isMilliseconds?: boolean }
+): number | undefined {
+  const s = String(raw).trim();
+  if (!s) return undefined;
+
+  if (opts?.isMilliseconds) {
+    const n = parseFloat(s);
+    if (!isNaN(n) && n > 0) return Math.min(Math.ceil(n), capMs);
+  }
+
+  const durationMs = parseDurationToMs(s);
+  if (durationMs !== undefined) return Math.min(Math.ceil(durationMs), capMs);
+
+  const dateMs = Date.parse(s);
+  if (!isNaN(dateMs) && /[a-z]{3}|,/i.test(s)) {
+    const diffMs = dateMs - Date.now();
+    if (diffMs > 0) return Math.min(diffMs, capMs);
+  }
+
+  const n = parseFloat(s);
+  if (isNaN(n) || n <= 0) return undefined;
+
+  // Unix epoch milliseconds or seconds (not a small retry delay).
+  if (n > 1e12) {
+    const diffMs = n - Date.now();
+    if (diffMs > 0) return Math.min(diffMs, capMs);
+    return undefined;
+  }
+  if (n > 1e9) {
+    const diffMs = n * 1000 - Date.now();
+    if (diffMs > 0) return Math.min(diffMs, capMs);
+    return undefined;
+  }
+
+  return Math.min(Math.ceil(n * 1000), capMs);
 }
 
 export function calculateBackoffDelay(attempt: number, status: number, err?: unknown): number {

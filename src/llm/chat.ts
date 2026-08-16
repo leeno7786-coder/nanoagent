@@ -1,22 +1,24 @@
 import OpenAI from 'openai';
 import type { Config } from '../types.js';
-import { logError, logWarn } from '../log.js';
+import { logError } from '../log.js';
 import { ApiError } from './types.js';
 import type { ChatMessage, ChatResponse, ChatRequestOptions } from './types.js';
 import {
   normalizeContent,
-  getMaxOutputTokens,
-  shouldEnableThinking,
   normalizeUsage,
   calculateBackoffDelay,
   sleepWithSignal,
 } from './utils.js';
+import { buildChatCompletionsParams } from './request.js';
 import {
-  awaitEndpointRateLimit,
-  awaitRateLimitToken,
+  awaitEndpointTurn,
+  releaseEndpointTurn,
   errorMessage,
   shouldRetry,
-  markEndpointRateLimited,
+  noteEndpointRateLimited,
+  noteEndpointSuccess,
+  noteEndpointPromptTokens,
+  estimatePromptTokensForRequest,
 } from './rate-limit.js';
 
 export async function chat(
@@ -32,85 +34,70 @@ export async function chat(
 
   while (true) {
     try {
-      await awaitEndpointRateLimit(cfg.baseURL, signal);
-      await awaitRateLimitToken(cfg.baseURL, cfg.maxRequestsPerMinute ?? 0, signal);
-
-      const enableThinking = options?.enableThinking ?? shouldEnableThinking(cfg.model);
-      const reqParams: Record<string, unknown> = {
-        model: cfg.model,
-        messages: messages.flatMap((m): Array<Record<string, unknown>> => {
-          if (m.role === 'tool') {
-            if (!m.tool_call_id) {
-              logWarn('[LLM] Dropping tool message with missing tool_call_id');
-              return [];
-            }
-            return [
-              {
-                role: 'tool' as const,
-                content: m.content,
-                tool_call_id: m.tool_call_id,
-              },
-            ];
-          }
-          if (m.role === 'assistant' && m.tool_calls) {
-            return [
-              {
-                role: 'assistant' as const,
-                content: m.content,
-                tool_calls: m.tool_calls,
-              },
-            ];
-          }
-          return [{ role: m.role, content: m.content }];
-        }),
-        temperature: cfg.temperature ?? 0.2,
-        max_tokens: getMaxOutputTokens(cfg.model, cfg.maxTokens),
-        tool_choice: tools?.length ? 'auto' : undefined,
-      };
-      if (tools?.length) reqParams.tools = tools;
-      if (enableThinking) reqParams.enable_thinking = true;
-      const completion = (await client.chat.completions.create(
-        reqParams as unknown as Parameters<typeof client.chat.completions.create>[0],
-        { signal }
-      )) as unknown as {
-        choices: Array<Record<string, unknown>>;
-        usage?: { prompt_tokens: number; completion_tokens: number };
-      };
-
-      const completionObj = completion as unknown as {
-        choices: Array<Record<string, unknown>>;
-        usage?: { prompt_tokens: number; completion_tokens: number };
-      };
-      const choice = completionObj.choices[0] as Record<string, unknown> | undefined;
-      const msg = choice?.message as Record<string, unknown> | undefined;
-
-      return {
-        message: {
-          role: (msg?.role as string) || 'assistant',
-          content: normalizeContent(msg?.content),
-          reasoning_content:
-            (msg?.reasoning_content as string) ||
-            (choice?.reasoning_content as string) ||
-            undefined,
-          tool_calls: ((msg?.tool_calls as Array<Record<string, unknown>> | undefined) || [])
-            .map((tc: Record<string, unknown>) => {
-              if (!(tc.function as Record<string, unknown> | undefined)?.name) {
-                return null;
-              }
-              return {
-                id: (tc.id as string) || `call_${Math.random().toString(36).slice(2, 10)}`,
-                type: 'function' as const,
-                function: {
-                  name: (tc.function as Record<string, unknown>).name as string,
-                  arguments: ((tc.function as Record<string, unknown>).arguments as string) || '{}',
-                },
-              };
-            })
-            .filter((x): x is NonNullable<typeof x> => x !== null),
+      const tpm = cfg.maxTokensPerMinute ?? 0;
+      await awaitEndpointTurn(
+        cfg.baseURL,
+        {
+          maxRequestsPerMinute: cfg.maxRequestsPerMinute,
+          maxConcurrentLlmRequests: cfg.maxConcurrentLlmRequests,
+          maxTokensPerMinute: tpm,
+          estimatedPromptTokens:
+            tpm > 0 ? estimatePromptTokensForRequest(cfg.baseURL, messages, cfg.model) : 0,
         },
-        usage: normalizeUsage(completionObj.usage),
-        finishReason: choice?.finish_reason as string | undefined,
-      };
+        signal
+      );
+
+      const reqParams = buildChatCompletionsParams(cfg, messages, tools, options);
+      try {
+        const completion = (await client.chat.completions.create(
+          reqParams as unknown as Parameters<typeof client.chat.completions.create>[0],
+          { signal }
+        )) as unknown as {
+          choices: Array<Record<string, unknown>>;
+          usage?: { prompt_tokens: number; completion_tokens: number };
+        };
+
+        const completionObj = completion as unknown as {
+          choices: Array<Record<string, unknown>>;
+          usage?: { prompt_tokens: number; completion_tokens: number };
+        };
+        const choice = completionObj.choices[0] as Record<string, unknown> | undefined;
+        const msg = choice?.message as Record<string, unknown> | undefined;
+
+        noteEndpointSuccess(cfg.baseURL);
+        const usage = normalizeUsage(completionObj.usage);
+        if (usage) noteEndpointPromptTokens(cfg.baseURL, usage.input_tokens);
+        return {
+          message: {
+            role: (msg?.role as string) || 'assistant',
+            content: normalizeContent(msg?.content),
+            reasoning_content:
+              (msg?.reasoning_content as string) ||
+              (choice?.reasoning_content as string) ||
+              undefined,
+            tool_calls: ((msg?.tool_calls as Array<Record<string, unknown>> | undefined) || [])
+              .map((tc: Record<string, unknown>) => {
+                if (!(tc.function as Record<string, unknown> | undefined)?.name) {
+                  return null;
+                }
+                return {
+                  id: (tc.id as string) || `call_${Math.random().toString(36).slice(2, 10)}`,
+                  type: 'function' as const,
+                  function: {
+                    name: (tc.function as Record<string, unknown>).name as string,
+                    arguments:
+                      ((tc.function as Record<string, unknown>).arguments as string) || '{}',
+                  },
+                };
+              })
+              .filter((x): x is NonNullable<typeof x> => x !== null),
+          },
+          usage,
+          finishReason: choice?.finish_reason as string | undefined,
+        };
+      } finally {
+        releaseEndpointTurn(cfg.baseURL);
+      }
     } catch (err: unknown) {
       const e = err as {
         name: string;
@@ -132,7 +119,7 @@ export async function chat(
 
       const delayMs = calculateBackoffDelay(attempt, errStatus, err);
       if (isRateLimit) {
-        markEndpointRateLimited(cfg.baseURL, delayMs);
+        noteEndpointRateLimited(cfg.baseURL, delayMs, err);
       }
 
       const msgStr = errorMessage(errStatus, attempt, err, effectiveMaxRetries, delayMs);
@@ -148,7 +135,10 @@ export async function chat(
         logError(`[LLM Retry] ${msgStr}`);
       }
 
-      await sleepWithSignal(delayMs, signal);
+      // 429/503 cooldown is shared; extra sleep here stampede-retries. Non-429 still backoff.
+      if (!isRateLimit) {
+        await sleepWithSignal(delayMs, signal);
+      }
       attempt++;
     }
   }

@@ -1,8 +1,19 @@
 import type { Config, ModelInfo } from './types.js';
 import { isLocalProvider, isSmallModel } from './llm.js';
 import { logWarn } from './log.js';
+import { parseOpenRouterModelPricing } from './llm/cost.js';
 
-/** Resolved capabilities from LM Studio / OpenRouter (or future runtimes). */
+/** How context / caps were obtained. */
+export type ModelRuntimeSource = 'lmstudio' | 'openrouter' | 'openai-compat' | 'heuristic';
+
+/** Catalog-reported request extras. Undefined fields mean unknown. */
+export interface ModelCatalogCapabilities {
+  supportsTools?: boolean;
+  supportsThinking?: boolean;
+  supportsPromptCache?: boolean;
+}
+
+/** Resolved capabilities from LM Studio / OpenRouter / OpenAI-compat /models. */
 export interface ModelRuntimeInfo {
   modelId: string;
   displayName?: string;
@@ -12,7 +23,10 @@ export interface ModelRuntimeInfo {
   paramBillions?: number;
   isLoaded?: boolean;
   quantization?: string;
-  source: 'lmstudio' | 'openrouter' | 'heuristic';
+  source: ModelRuntimeSource;
+  supportsTools?: boolean;
+  supportsThinking?: boolean;
+  supportsPromptCache?: boolean;
 }
 
 function isOpenRouterURL(baseURL?: string): boolean {
@@ -22,9 +36,20 @@ function isOpenRouterURL(baseURL?: string): boolean {
 
 const FETCH_TIMEOUT_MS = 4000;
 
-/** Cached OpenRouter model → context_length (session-scoped). */
-let openRouterContextCache: { fetchedAt: number; byId: Map<string, number> } | undefined;
+export interface OpenRouterCatalogEntry extends ModelCatalogCapabilities {
+  contextLength?: number;
+  promptPricePerMillion?: number;
+  completionPricePerMillion?: number;
+}
+
+/** Cached OpenRouter catalog (context + pricing, session-scoped). */
+let openRouterCatalogCache:
+  { fetchedAt: number; byId: Map<string, OpenRouterCatalogEntry> } | undefined;
 const OPENROUTER_CACHE_TTL_MS = 30 * 60 * 1000;
+
+export function resetOpenRouterCatalogCache(): void {
+  openRouterCatalogCache = undefined;
+}
 
 export function isLMStudioURL(baseURL?: string): boolean {
   if (!baseURL) return false;
@@ -75,6 +100,151 @@ export function modelIdsMatch(a: string, b: string): boolean {
   const baseA = na.split('/').pop() || na;
   const baseB = nb.split('/').pop() || nb;
   return baseA === baseB || na.endsWith(nb) || nb.endsWith(na);
+}
+
+/** Default / docs placeholders that are not a real catalog id. */
+const PLACEHOLDER_MODEL_IDS = new Set([
+  'model-identifier',
+  'model-id',
+  'your-model',
+  'your-model-name',
+  'your-model-id',
+  '<model>',
+  'changeme',
+  'replace-me',
+]);
+
+/** True for empty ids and LM Studio's stock `model-identifier` default. */
+export function isPlaceholderModelId(modelId?: string | null): boolean {
+  if (!modelId) return true;
+  const id = modelId.trim().toLowerCase();
+  return !id || PLACEHOLDER_MODEL_IDS.has(id);
+}
+
+/** Prefer a single loaded runtime model when the configured id is a placeholder. */
+export function pickLoadedRuntimeModel(models: ModelInfo[]): ModelInfo | undefined {
+  const loaded = models.filter((m) => m.isLoaded === true || m.default === true);
+  if (loaded.length === 0) return undefined;
+  const explicit = loaded.filter((m) => m.isLoaded === true);
+  return explicit[0] ?? loaded[0];
+}
+
+function positiveInt(value: unknown): number | undefined {
+  const n =
+    typeof value === 'number' ? value : typeof value === 'string' ? Number(value.trim()) : NaN;
+  if (!Number.isFinite(n) || n <= 0 || n > 10_000_000) return undefined;
+  return Math.floor(n);
+}
+
+/**
+ * Context window from a GET /models row. `max_tokens` is used only when a
+ * sibling output cap makes it clearly the window, never as a lone field
+ * (that would over-compact a 4B local model that actually has 128k).
+ */
+export function parseCatalogContextLength(raw: Record<string, unknown>): number | undefined {
+  const direct =
+    positiveInt(raw.context_length) ??
+    positiveInt(raw.max_model_len) ??
+    positiveInt(raw.max_context_length) ??
+    positiveInt(raw.context_window);
+  if (direct !== undefined) return direct;
+
+  const hasOutputCap =
+    raw.max_output_tokens != null || raw.max_completion_tokens != null || raw.max_output != null;
+  if (hasOutputCap) return positiveInt(raw.max_tokens);
+  return undefined;
+}
+
+function stringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item === 'string' && item.trim()) out.push(item.trim().toLowerCase());
+  }
+  return out;
+}
+
+function explicitBool(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  return undefined;
+}
+
+function paramsInclude(params: string[], names: string[]): boolean {
+  const set = new Set(params);
+  return names.some((n) => set.has(n));
+}
+
+/** Optional capability flags. Missing catalog fields stay undefined (unknown). */
+export function parseCatalogCapabilities(raw: Record<string, unknown>): ModelCatalogCapabilities {
+  const params = stringList(raw.supported_parameters) ?? stringList(raw.supported_params);
+  const tools =
+    explicitBool(raw.supports_tools) ??
+    (params ? paramsInclude(params, ['tools', 'tool_choice']) : undefined);
+  const thinking =
+    explicitBool(raw.supports_thinking) ??
+    explicitBool(raw.supports_reasoning) ??
+    (params
+      ? paramsInclude(params, ['enable_thinking', 'reasoning', 'include_reasoning'])
+      : undefined);
+  const cache =
+    explicitBool(raw.supports_prompt_cache) ??
+    (params
+      ? paramsInclude(params, ['prompt_cache_key', 'cache_control', 'prompt_caching'])
+      : undefined);
+
+  const out: ModelCatalogCapabilities = {};
+  if (tools !== undefined) out.supportsTools = tools;
+  if (thinking !== undefined) out.supportsThinking = thinking;
+  if (cache !== undefined) out.supportsPromptCache = cache;
+  return out;
+}
+
+function stringField(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const t = value.trim();
+  return t || undefined;
+}
+
+/** Parse one OpenAI-compatible /models row (context + caps when present). */
+export function parseOpenAICompatModel(raw: Record<string, unknown>): ModelInfo {
+  const id = stringField(raw.id) || stringField(raw.name) || 'unknown';
+  const contextLength = parseCatalogContextLength(raw);
+  const caps = parseCatalogCapabilities(raw);
+  const prices = parseOpenRouterModelPricing(raw.pricing);
+  const params = parseParamBillionsFromModelId(id);
+  const info: ModelInfo = {
+    id,
+    name: stringField(raw.name) || id,
+    description: stringField(raw.description) || '',
+    ...caps,
+    ...prices,
+  };
+  if (contextLength !== undefined) {
+    info.contextLength = contextLength;
+    info.maxContextLength = contextLength;
+  }
+  if (params !== undefined) info.paramBillions = params;
+  return info;
+}
+
+/** Parse `{ data: [...] }` or a bare model array from GET /models. */
+export function parseOpenAICompatModelList(body: unknown): ModelInfo[] {
+  if (!body || typeof body !== 'object') return [];
+  const rows = Array.isArray((body as { data?: unknown }).data)
+    ? (body as { data: unknown[] }).data
+    : Array.isArray(body)
+      ? body
+      : [];
+  const out: ModelInfo[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    out.push(parseOpenAICompatModel(row as Record<string, unknown>));
+  }
+  return out;
+}
+
+function findCatalogModel(models: ModelInfo[], modelId: string): ModelInfo | undefined {
+  return models.find((m) => modelIdsMatch(m.id, modelId));
 }
 
 type LMStudioRaw = {
@@ -252,6 +422,55 @@ export function isSmallModelFromConfig(
   return isSmallModel(cfg.model, cfg.maxTokens, cfg.smallModelMode);
 }
 
+function lookupCatalogMap<T>(byId: Map<string, T>, modelId: string): T | undefined {
+  const exact = byId.get(modelId.toLowerCase());
+  if (exact) return exact;
+  for (const [id, entry] of byId) {
+    if (modelIdsMatch(id, modelId)) return entry;
+  }
+  return undefined;
+}
+
+async function loadOpenRouterCatalog(
+  apiKey?: string | null
+): Promise<Map<string, OpenRouterCatalogEntry>> {
+  const now = Date.now();
+  if (openRouterCatalogCache && now - openRouterCatalogCache.fetchedAt < OPENROUTER_CACHE_TTL_MS) {
+    return openRouterCatalogCache.byId;
+  }
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+  const response = await fetch('https://openrouter.ai/api/v1/models', {
+    method: 'GET',
+    headers,
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) {
+    logWarn('[runtime] OpenRouter models fetch failed:', response.status);
+    return openRouterCatalogCache?.byId ?? new Map();
+  }
+
+  const body: unknown = await response.json();
+  const models = parseOpenAICompatModelList(body);
+  const byId = new Map<string, OpenRouterCatalogEntry>();
+  for (const m of models) {
+    if (!m.id) continue;
+    const entry: OpenRouterCatalogEntry = {
+      promptPricePerMillion: m.promptPricePerMillion,
+      completionPricePerMillion: m.completionPricePerMillion,
+      supportsTools: m.supportsTools,
+      supportsThinking: m.supportsThinking,
+      supportsPromptCache: m.supportsPromptCache,
+    };
+    if (m.contextLength && m.contextLength > 0) entry.contextLength = m.contextLength;
+    byId.set(m.id.toLowerCase(), entry);
+  }
+  openRouterCatalogCache = { fetchedAt: now, byId };
+  return byId;
+}
+
 /**
  * Look up context_length for one OpenRouter model id (catalog is cached).
  */
@@ -259,86 +478,214 @@ export async function fetchOpenRouterModelContext(
   modelId: string,
   apiKey?: string | null
 ): Promise<number | undefined> {
-  const now = Date.now();
-  if (openRouterContextCache && now - openRouterContextCache.fetchedAt < OPENROUTER_CACHE_TTL_MS) {
-    return openRouterContextCache.byId.get(modelId.toLowerCase());
-  }
-
   try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-
-    const response = await fetch('https://openrouter.ai/api/v1/models', {
-      method: 'GET',
-      headers,
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      logWarn('[runtime] OpenRouter models fetch failed:', response.status);
-      return openRouterContextCache?.byId.get(modelId.toLowerCase());
-    }
-
-    const body = (await response.json()) as {
-      data?: Array<{ id?: string; context_length?: number }>;
-    };
-    const byId = new Map<string, number>();
-    for (const m of body.data ?? []) {
-      if (m.id && typeof m.context_length === 'number' && m.context_length > 0) {
-        byId.set(m.id.toLowerCase(), m.context_length);
-      }
-    }
-    openRouterContextCache = { fetchedAt: now, byId };
-    return byId.get(modelId.toLowerCase());
+    const byId = await loadOpenRouterCatalog(apiKey);
+    return lookupCatalogMap(byId, modelId)?.contextLength;
   } catch (err) {
     logWarn('[runtime] OpenRouter context lookup failed:', err);
-    return openRouterContextCache?.byId.get(modelId.toLowerCase());
+    return lookupCatalogMap(openRouterCatalogCache?.byId ?? new Map(), modelId)?.contextLength;
   }
+}
+
+export async function fetchOpenRouterCatalogEntry(
+  modelId: string,
+  apiKey?: string | null
+): Promise<OpenRouterCatalogEntry | undefined> {
+  try {
+    const byId = await loadOpenRouterCatalog(apiKey);
+    return lookupCatalogMap(byId, modelId);
+  } catch (err) {
+    logWarn('[runtime] OpenRouter catalog lookup failed:', err);
+    return lookupCatalogMap(openRouterCatalogCache?.byId ?? new Map(), modelId);
+  }
+}
+
+/** Cached GET /models for non-LM-Studio / non-OpenRouter OpenAI-compat clouds. */
+let openaiCompatCatalogCache: { fetchedAt: number; byKey: Map<string, ModelInfo[]> } | undefined;
+
+function openaiCompatCacheKey(baseURL: string, apiKey?: string | null): string {
+  return `${baseURL.replace(/\/+$/, '')}#${apiKey ? 'auth' : 'anon'}`;
+}
+
+export function resetOpenAICompatCatalogCache(): void {
+  openaiCompatCatalogCache = undefined;
+}
+
+async function fetchOpenAICompatCatalog(
+  baseURL: string,
+  apiKey?: string | null
+): Promise<ModelInfo[]> {
+  const now = Date.now();
+  const key = openaiCompatCacheKey(baseURL, apiKey);
+  if (
+    openaiCompatCatalogCache &&
+    now - openaiCompatCatalogCache.fetchedAt < OPENROUTER_CACHE_TTL_MS
+  ) {
+    const hit = openaiCompatCatalogCache.byKey.get(key);
+    if (hit) return hit;
+  }
+
+  const apiBase = baseURL.replace(/\/+$/, '');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  const timeoutMs = isLocalProvider(baseURL) ? FETCH_TIMEOUT_MS : 10_000;
+
+  try {
+    const response = await fetch(`${apiBase}/models`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) {
+      logWarn('[runtime] OpenAI-compat models fetch failed:', response.status);
+      return openaiCompatCatalogCache?.byKey.get(key) ?? [];
+    }
+    const models = parseOpenAICompatModelList(await response.json());
+    if (
+      !openaiCompatCatalogCache ||
+      now - openaiCompatCatalogCache.fetchedAt >= OPENROUTER_CACHE_TTL_MS
+    ) {
+      openaiCompatCatalogCache = { fetchedAt: now, byKey: new Map() };
+    }
+    openaiCompatCatalogCache.byKey.set(key, models);
+    return models;
+  } catch (err) {
+    logWarn('[runtime] OpenAI-compat models fetch failed:', err);
+    return openaiCompatCatalogCache?.byKey.get(key) ?? [];
+  }
+}
+
+function applyCatalogCapabilities(cfg: Config, caps: ModelCatalogCapabilities): Config {
+  return {
+    ...cfg,
+    supportsTools: caps.supportsTools ?? cfg.supportsTools,
+    supportsThinking: caps.supportsThinking ?? cfg.supportsThinking,
+    supportsPromptCache: caps.supportsPromptCache ?? cfg.supportsPromptCache,
+  };
+}
+
+function runtimeFromListedModel(info: ModelInfo): ModelRuntimeInfo {
+  return {
+    modelId: info.id,
+    displayName: info.name,
+    contextLength: info.contextLength,
+    maxContextLength: info.maxContextLength,
+    paramBillions: info.paramBillions,
+    isLoaded: info.isLoaded ?? info.default,
+    source: 'lmstudio',
+  };
+}
+
+function applyLMStudioRuntime(cfg: Config, runtime: ModelRuntimeInfo): Config {
+  const paramSmall = runtime.paramBillions !== undefined && runtime.paramBillions <= 8;
+  const smallModelMode = cfg.smallModelMode ?? (paramSmall || isSmallModel(runtime.modelId));
+  return {
+    ...cfg,
+    model: runtime.modelId,
+    modelContextLength: runtime.contextLength ?? cfg.modelContextLength,
+    modelMaxContextLength: runtime.maxContextLength ?? cfg.modelMaxContextLength,
+    modelParamBillions: runtime.paramBillions ?? cfg.modelParamBillions,
+    modelRuntimeSource: 'lmstudio',
+    smallModelMode,
+  };
+}
+
+function needsCatalogCaps(cfg: Config): boolean {
+  return (
+    cfg.supportsTools === undefined &&
+    cfg.supportsThinking === undefined &&
+    cfg.supportsPromptCache === undefined
+  );
+}
+
+function needsRuntimeContext(cfg: Config): boolean {
+  return !(cfg.modelContextLength && cfg.modelContextLength > 0);
 }
 
 /**
  * Merge runtime context/param metadata into config.
  * - LM Studio: loaded instance context_length
- * - OpenRouter: catalog context_length for the selected model
+ * - OpenRouter: catalog context_length + pricing for the selected model
+ * - Other OpenAI-compat clouds: single cached GET /models when those miss
  * Runtime-reported values overwrite cfg — they reflect what is actually
  * loaded right now, which is what compaction must track.
+ * Unknown catalog fields are left alone (never invent a smaller window).
  */
 export async function enrichConfigWithRuntime(cfg: Config): Promise<Config> {
-  if (!cfg.model) return cfg;
+  const hasModel = Boolean(cfg.model?.trim());
+  const lmStudio = isLMStudioURL(cfg.baseURL) && isLocalProvider(cfg.baseURL);
+  if (!hasModel && !lmStudio) return cfg;
 
-  if (isLMStudioURL(cfg.baseURL) && isLocalProvider(cfg.baseURL)) {
-    const runtime = await fetchLMStudioModelRuntime(cfg.baseURL, cfg.model);
-    if (!runtime) return cfg;
+  if (lmStudio) {
+    const configuredId = cfg.model?.trim() ?? '';
+    const tryConfigured =
+      configuredId && !isPlaceholderModelId(configuredId)
+        ? await fetchLMStudioModelRuntime(cfg.baseURL, configuredId)
+        : null;
+    if (tryConfigured) {
+      return applyLMStudioRuntime(cfg, tryConfigured);
+    }
 
-    const paramSmall = runtime.paramBillions !== undefined && runtime.paramBillions <= 8;
-    const smallModelMode = cfg.smallModelMode ?? (paramSmall || isSmallModel(cfg.model));
-
-    return {
-      ...cfg,
-      model: runtime.modelId,
-      modelContextLength: runtime.contextLength ?? cfg.modelContextLength,
-      modelMaxContextLength: runtime.maxContextLength ?? cfg.modelMaxContextLength,
-      modelParamBillions: runtime.paramBillions ?? cfg.modelParamBillions,
-      modelRuntimeSource: 'lmstudio',
-      smallModelMode,
-    };
-  }
-
-  if (isOpenRouterURL(cfg.baseURL)) {
-    // Connect UI may already have set context; only fetch when missing.
-    if (cfg.modelContextLength && cfg.modelContextLength > 0) {
+    const listed = await fetchLMStudioModels(cfg.baseURL);
+    const inCatalog =
+      configuredId &&
+      !isPlaceholderModelId(configuredId) &&
+      listed.some((m) => modelIdsMatch(m.id, configuredId));
+    if (!inCatalog) {
+      const loaded = pickLoadedRuntimeModel(listed);
+      if (loaded) {
+        const runtime =
+          (await fetchLMStudioModelRuntime(cfg.baseURL, loaded.id)) ??
+          runtimeFromListedModel(loaded);
+        return applyLMStudioRuntime(cfg, runtime);
+      }
+    }
+    // REST v0 miss — fall through to OpenAI-compat GET /models.
+  } else if (isOpenRouterURL(cfg.baseURL)) {
+    const needCtx = needsRuntimeContext(cfg);
+    const needPrice =
+      cfg.promptPricePerMillion === undefined && cfg.completionPricePerMillion === undefined;
+    const needCaps = needsCatalogCaps(cfg);
+    if (!needCtx && !needPrice && !needCaps) {
       return { ...cfg, modelRuntimeSource: cfg.modelRuntimeSource ?? 'openrouter' };
     }
-    const ctx = await fetchOpenRouterModelContext(cfg.model, cfg.apiKey);
-    if (!ctx) return cfg;
-    return {
-      ...cfg,
-      modelContextLength: ctx,
-      modelMaxContextLength: ctx,
-      modelRuntimeSource: 'openrouter',
-    };
+    const entry = await fetchOpenRouterCatalogEntry(cfg.model, cfg.apiKey);
+    if (entry) {
+      const withCaps = applyCatalogCapabilities(cfg, entry);
+      return {
+        ...withCaps,
+        modelContextLength: needCtx
+          ? (entry.contextLength ?? cfg.modelContextLength)
+          : cfg.modelContextLength,
+        modelMaxContextLength: needCtx
+          ? (entry.contextLength ?? cfg.modelMaxContextLength)
+          : cfg.modelMaxContextLength,
+        promptPricePerMillion: cfg.promptPricePerMillion ?? entry.promptPricePerMillion,
+        completionPricePerMillion: cfg.completionPricePerMillion ?? entry.completionPricePerMillion,
+        modelRuntimeSource: 'openrouter',
+      };
+    }
+    // Same catalog as GET /models — do not fetch the OpenRouter list twice.
+    return needCtx ? cfg : { ...cfg, modelRuntimeSource: cfg.modelRuntimeSource ?? 'openrouter' };
   }
 
-  return cfg;
+  if (!cfg.baseURL) return cfg;
+  const models = await fetchOpenAICompatCatalog(cfg.baseURL, cfg.apiKey);
+  const match = findCatalogModel(models, cfg.model);
+  if (!match) return cfg;
+
+  const withCaps = applyCatalogCapabilities(cfg, match);
+  const needCtx = needsRuntimeContext(cfg);
+  const ctx = match.contextLength;
+  if (needCtx && ctx && ctx > 0) {
+    return {
+      ...withCaps,
+      modelContextLength: ctx,
+      modelMaxContextLength: match.maxContextLength ?? ctx,
+      modelRuntimeSource: 'openai-compat',
+    };
+  }
+  return withCaps;
 }
 
 export function runtimeContextFromConfig(

@@ -5,6 +5,7 @@ import { findTool } from '../../tools/index.js';
 import type { Tool, ToolExecutionHooks } from '../../tools/index.js';
 import type { Config } from '../../types.js';
 import type { WorkerContext } from './context.js';
+import { capToolResultForLlm, resolveToolResultTokenBudget } from '../../llm/tool-result-budget.js';
 
 function parseArgs(tc: { name: string; arguments: string }): Record<string, unknown> {
   if (typeof tc.arguments !== 'string') return tc.arguments;
@@ -102,15 +103,19 @@ export async function runWorkerTool(
     }
 
     const sanitized = wctx.security.sanitizeOutput(out);
+    let outForModel = sanitized;
     if ((tc.name === 'read_file' || tc.name === 'batch_read_files') && sanitized.length > 80000) {
       const lines = sanitized.split('\n');
       if (lines.length > 2000) {
         const head = lines.slice(0, 1500).join('\n');
         const tail = lines.slice(-200).join('\n');
-        return `${head}\n\n... [${lines.length - 1700} middle lines omitted for sub-agent context budget] ...\n\n${tail}`;
+        outForModel = `${head}\n\n... [${lines.length - 1700} middle lines omitted for sub-agent context budget] ...\n\n${tail}`;
       }
     }
-    return sanitized;
+    const budget = resolveToolResultTokenBudget(wctx.cfg);
+    return budget > 0
+      ? capToolResultForLlm(outForModel, { maxTokens: budget, modelId: wctx.cfg.model })
+      : outForModel;
   } catch (e: unknown) {
     return JSON.stringify({
       ok: false,

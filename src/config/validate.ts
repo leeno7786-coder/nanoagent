@@ -65,7 +65,47 @@ export function validateConfig(cfg: Config): {
   if (cfg.maxRequestsPerMinute !== undefined) {
     if (cfg.maxRequestsPerMinute < 0 || cfg.maxRequestsPerMinute > 10000) {
       errors.push(
-        `maxRequestsPerMinute must be between 0 and 10000, got ${cfg.maxRequestsPerMinute}`
+        `maxRequestsPerMinute must be between 0 and 10000, got ${cfg.maxRequestsPerMinute}. Example: QWEN_MAX_REQUESTS_PER_MINUTE=20 or { "maxRequestsPerMinute": 20 } in ~/.nanogent.json`
+      );
+    }
+  }
+
+  if (cfg.maxConcurrentLlmRequests !== undefined) {
+    if (cfg.maxConcurrentLlmRequests < 0 || cfg.maxConcurrentLlmRequests > 100) {
+      errors.push(
+        `maxConcurrentLlmRequests must be between 0 and 100, got ${cfg.maxConcurrentLlmRequests}. Example: QWEN_MAX_CONCURRENT_LLM=2 or { "maxConcurrentLlmRequests": 2 } in ~/.nanogent.json`
+      );
+    }
+  }
+
+  if (cfg.maxTokensPerMinute !== undefined) {
+    if (cfg.maxTokensPerMinute < 0 || cfg.maxTokensPerMinute > 10_000_000) {
+      errors.push(
+        `maxTokensPerMinute must be between 0 and 10000000, got ${cfg.maxTokensPerMinute}. Example: QWEN_MAX_TOKENS_PER_MINUTE=200000 or { "maxTokensPerMinute": 200000 } in ~/.nanogent.json`
+      );
+    }
+  }
+
+  if (cfg.maxToolResultTokens !== undefined) {
+    if (cfg.maxToolResultTokens < 0 || cfg.maxToolResultTokens > 1_000_000) {
+      errors.push(
+        `maxToolResultTokens must be between 0 and 1000000, got ${cfg.maxToolResultTokens}. Example: QWEN_MAX_TOOL_RESULT_TOKENS=8000 or { "maxToolResultTokens": 8000 } in ~/.nanogent.json`
+      );
+    }
+  }
+
+  if (cfg.promptPricePerMillion !== undefined) {
+    if (cfg.promptPricePerMillion < 0 || cfg.promptPricePerMillion > 10000) {
+      errors.push(
+        `promptPricePerMillion must be between 0 and 10000 ($/1M), got ${cfg.promptPricePerMillion}. Example: QWEN_PROMPT_PRICE_PER_MILLION=0.15`
+      );
+    }
+  }
+
+  if (cfg.completionPricePerMillion !== undefined) {
+    if (cfg.completionPricePerMillion < 0 || cfg.completionPricePerMillion > 10000) {
+      errors.push(
+        `completionPricePerMillion must be between 0 and 10000 ($/1M), got ${cfg.completionPricePerMillion}. Example: QWEN_COMPLETION_PRICE_PER_MILLION=0.60`
       );
     }
   }
@@ -161,6 +201,50 @@ export function validateConfig(cfg: Config): {
         warnings.push(
           `subagent endpoint "${ep.name}" concurrency should be between 1 and 16, got ${ep.concurrency}`
         );
+      }
+    }
+  }
+
+  if (cfg.fallbacks) {
+    if (!Array.isArray(cfg.fallbacks)) {
+      errors.push(
+        'fallbacks must be an array of { model, baseURL?, provider? }. Example: { "fallbacks": [{ "model": "qwen/qwen3-8b", "baseURL": "https://openrouter.ai/api/v1" }] }'
+      );
+    } else {
+      cfg.fallbacks.forEach((fb, i) => {
+        if (!fb || typeof fb !== 'object' || !fb.model?.trim()) {
+          errors.push(`fallbacks[${i}]: "model" is required`);
+          return;
+        }
+        if (fb.baseURL) {
+          try {
+            new URL(fb.baseURL);
+          } catch {
+            errors.push(`fallbacks[${i}]: baseURL is not a valid URL: ${fb.baseURL}`);
+          }
+        }
+      });
+    }
+  }
+
+  if (cfg.profiles !== undefined) {
+    if (!cfg.profiles || typeof cfg.profiles !== 'object' || Array.isArray(cfg.profiles)) {
+      errors.push(
+        'profiles must be an object of named snapshots. Example: { "profiles": { "local": { "model": "qwen3.5-4b", "baseURL": "http://127.0.0.1:1234/v1" } } }'
+      );
+    } else {
+      for (const [name, profile] of Object.entries(cfg.profiles)) {
+        if (!profile || typeof profile !== 'object') {
+          errors.push(`profiles.${name}: must be an object`);
+          continue;
+        }
+        if (profile.baseURL) {
+          try {
+            new URL(profile.baseURL);
+          } catch {
+            errors.push(`profiles.${name}: baseURL is not a valid URL: ${profile.baseURL}`);
+          }
+        }
       }
     }
   }

@@ -6,6 +6,7 @@ import type { Config } from '../types.js';
 import type { Theme } from './theme.js';
 import {
   formatContextFill,
+  formatSessionCost,
   formatSessionUsage,
   formatTurnUsage,
   type ContextUsageSnapshot,
@@ -23,6 +24,8 @@ interface StatusBarProps {
   lastUsage?: TurnUsage;
   /** Session-cumulative billed tokens (Σ). Not context fill. */
   totalUsage?: TurnUsage;
+  /** Session $ estimate — only rendered when pricing is known and cost > 0. */
+  sessionCostUsd?: number;
   /** Context-window fill from ContextManager — source of truth for compact. */
   contextUsage?: ContextUsageSnapshot;
   elapsedMs?: number;
@@ -44,6 +47,7 @@ export function StatusBar({
   currentTool,
   lastUsage,
   totalUsage,
+  sessionCostUsd,
   contextUsage,
   elapsedMs,
   theme,
@@ -73,6 +77,7 @@ export function StatusBar({
 
   const lastTokens = formatTurnUsage(lastUsage);
   const sessionTokens = formatSessionUsage(totalUsage);
+  const sessionCost = formatSessionCost(sessionCostUsd);
   const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
 
   // Prefer ContextManager snapshot; fall back to window size from config only.
@@ -114,6 +119,7 @@ export function StatusBar({
         </text>
         {lastTokens && <text fg={theme.mutedFg}> · {lastTokens}</text>}
         {sessionTokens && <text fg={theme.mutedFg}> · {sessionTokens}</text>}
+        {sessionCost && <text fg={theme.mutedFg}> · {sessionCost}</text>}
         {mcpIndicator && <text fg={theme.mutedFg}>{mcpIndicator}</text>}
         {elapsed && <text fg={theme.mutedFg}> · {elapsed}</text>}
         <text fg={s.color}>

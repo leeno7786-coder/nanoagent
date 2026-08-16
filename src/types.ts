@@ -5,6 +5,31 @@ import type {
   PermissionLevel,
 } from './security/index.js';
 
+/** Explicit failover target. Never auto-invented — only used when configured. */
+export interface FallbackEndpoint {
+  /** Model id to send on the fallback endpoint. */
+  model: string;
+  /** Optional OpenAI-compatible base URL (defaults to the current session URL). */
+  baseURL?: string;
+  /** Optional catalog provider id (used to resolve baseURL and API key env). */
+  provider?: string;
+}
+
+/** Named model/endpoint snapshot applied with `/profile <name>`. */
+export interface ModelProfile {
+  model?: string;
+  baseURL?: string;
+  provider?: string;
+  maxTokens?: number;
+  temperature?: number;
+  timeout?: number;
+  retryCount?: number;
+  maxToolResultTokens?: number;
+  maxRequestsPerMinute?: number;
+  maxTokensPerMinute?: number;
+  maxConcurrentLlmRequests?: number;
+}
+
 /**
  * Application configuration shape.
  */
@@ -31,8 +56,16 @@ export interface Config {
   configFilePath?: string;
   /** True when configFilePath was passed explicitly to loadConfig (explicit path = trusted MCP source). */
   configPathExplicit?: boolean;
-  /** Optional model profile name (e.g. "qwen-plus"). */
+  /** Active profile name (`/profile <name>` or a QWEN_MODEL preset). */
   profile?: string;
+  /** Named model/endpoint snapshots. Applied live with `/profile <name>`. */
+  profiles?: Record<string, ModelProfile>;
+  /**
+   * Explicit failover chain after LLM retries are exhausted (429/502/503/504,
+   * timeout, connection errors). File wins over env; never auto-invented.
+   * Main agent and explore_subagent workers share this list.
+   */
+  fallbacks?: FallbackEndpoint[];
   /** Number of retries on transient failures. */
   retryCount?: number;
   /** Request timeout in milliseconds. */
@@ -52,13 +85,49 @@ export interface Config {
   /** Parameter count in billions when reported by runtime. */
   modelParamBillions?: number;
   /** How modelContextLength / modelParamBillions were obtained. */
-  modelRuntimeSource?: 'lmstudio' | 'openrouter' | 'heuristic';
+  modelRuntimeSource?: 'lmstudio' | 'openrouter' | 'openai-compat' | 'heuristic';
+  /**
+   * Catalog-reported tool calling. Undefined = unknown (keep sending tools).
+   * Explicit false still sends tools (coding agent) and logs a warning.
+   */
+  supportsTools?: boolean;
+  /**
+   * Catalog-reported thinking / reasoning extras. Undefined = unknown
+   * (keep today's qwen/bonsai enable_thinking). Explicit false omits them.
+   */
+  supportsThinking?: boolean;
+  /**
+   * Catalog-reported prompt-cache extras. Undefined = unknown (do not send).
+   * Explicit true allows Chat Completions `prompt_cache_key` on cloud endpoints.
+   */
+  supportsPromptCache?: boolean;
+  /**
+   * Opt-out for prompt-cache request extras. Default on when the catalog
+   * explicitly supports cache. `false` / `QWEN_PROMPT_CACHE=0` disables.
+   */
+  promptCache?: boolean;
   /** Provider ID (e.g. "lmstudio", "ollama", "openai", "openrouter"). */
   provider?: string;
 
   rateLimitMs?: number;
   /** Proactive per-endpoint rate limit in requests per minute (0 = unlimited). */
   maxRequestsPerMinute?: number;
+  /** Max simultaneous LLM HTTP requests per endpoint (0 = unlimited). */
+  maxConcurrentLlmRequests?: number;
+  /**
+   * Cap each tool result sent to the LLM (tokens, after secrets sanitize).
+   * 0 = off. Unset defaults to 8000 on remote/cloud and 0 on local.
+   */
+  maxToolResultTokens?: number;
+  /**
+   * Optional tokens-per-minute pace for cloud endpoints (0 / unset = off).
+   * No catalog defaults — enable only when you know the tier cap.
+   */
+  maxTokensPerMinute?: number;
+  /** Manual USD per 1M prompt tokens (file wins over env; never invented). */
+  promptPricePerMillion?: number;
+  /** Manual USD per 1M completion tokens (file wins over env; never invented). */
+  completionPricePerMillion?: number;
   /** Enable tool execution caching (default: true). */
   toolCacheEnabled?: boolean;
   /** TTL for tool cache entries in milliseconds (default: 30000). */
@@ -287,6 +356,16 @@ export interface ModelInfo {
   maxContextLength?: number;
   /** Parameter count in billions. */
   paramBillions?: number;
+  /** USD per 1M prompt tokens when known (OpenRouter catalog or override). */
+  promptPricePerMillion?: number;
+  /** USD per 1M completion tokens when known (OpenRouter catalog or override). */
+  completionPricePerMillion?: number;
+  /** Catalog-reported tool calling. Undefined = unknown. */
+  supportsTools?: boolean;
+  /** Catalog-reported thinking / reasoning extras. Undefined = unknown. */
+  supportsThinking?: boolean;
+  /** Catalog-reported prompt-cache extras. Undefined = unknown. */
+  supportsPromptCache?: boolean;
   /**
    * Whether the model is currently loaded in memory. Undefined when the
    * runtime doesn't report loaded state (older LM Studio) — treat as unknown,
@@ -321,8 +400,27 @@ export interface RuntimeProvider {
   dynamicModels?: boolean;
   /** Environment variable name for API key (e.g., OPENAI_API_KEY). */
   apiKeyEnvVar?: string;
+  /** Additional env vars that also hold this provider's key (e.g. HF_TOKEN). */
+  apiKeyEnvAliases?: string[];
   /** Optional documentation URL. */
   docsUrl?: string;
+  /** Extra HTTP headers sent with every request (OpenRouter referer, etc.). */
+  defaultHeaders?: Record<string, string>;
+  /**
+   * Hostname suffixes used to match a live baseURL to this provider when the
+   * catalog URL is a placeholder (e.g. Azure per-resource endpoints).
+   */
+  hostPatterns?: string[];
+  /** User must enter a resource-specific base URL (Azure AI Foundry). */
+  requiresCustomBaseURL?: boolean;
+  /** Placeholder shown in the custom-URL prompt. */
+  baseURLPlaceholder?: string;
+  /** Env var that stores a custom endpoint (e.g. AZURE_OPENAI_ENDPOINT). */
+  endpointEnvVar?: string;
+  /** Catalog default requests-per-minute for tight cloud providers. */
+  defaultRpm?: number;
+  /** Catalog default in-flight LLM requests (defaults to 2 when defaultRpm is set). */
+  defaultMaxInFlight?: number;
 }
 
 /**

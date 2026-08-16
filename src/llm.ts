@@ -21,6 +21,8 @@ export {
   createClient,
   markEndpointRateLimited,
   awaitEndpointRateLimit,
+  awaitEndpointTurn,
+  isEndpointRateLimited,
   errorMessage,
   chat,
   streamChat,
