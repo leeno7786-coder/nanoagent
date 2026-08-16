@@ -12,9 +12,9 @@ import {
   loadSessions,
   deleteSession,
   resumeSession,
-  copyToClipboard,
   exportToMarkdown,
 } from '../../store.js';
+import { copyToClipboard } from '../../clipboard.js';
 import { THEMES } from '../theme.js';
 import { build_memory_graph, get_graph_stats, get_analysis_report } from '../../graph/tools.js';
 export type { SlashCommandContext } from './types.js';

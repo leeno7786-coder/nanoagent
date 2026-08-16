@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { ScrollBoxRenderable } from '@opentui/core';
-import { useKeyboard } from '@opentui/react';
+import { useKeyboard, useRenderer } from '@opentui/react';
 import type { Theme } from './theme.js';
 import {
   RUNTIME_PROVIDERS,
@@ -13,8 +13,10 @@ import {
   fetchOpenRouterModels,
   checkRuntimeHealth,
 } from '../providers.js';
-import { saveApiKeyToEnv, getApiKey } from '../config.js';
+import { saveApiKeyToEnv, getApiKey, isUsableApiKey } from '../config.js';
 import type { RuntimeProvider, ModelInfo } from '../types.js';
+import { useAppStore } from './app-store.js';
+import { sanitizePastedLine } from '../clipboard.js';
 
 interface ConnectOverlayProps {
   theme: Theme;
@@ -32,42 +34,36 @@ type ConnectState =
 const VISIBLE_PROVIDERS = 12;
 const VISIBLE_MODELS = 10;
 
-const API_KEY_MASK = '\u2022';
-
-/**
- * Reconcile an edit made through the masked (all-bullets) key display with
- * the real key. The previous display is always `mask.repeat(real.length)`;
- * the longest common bullet prefix/suffix pins the edit location, and the
- * differing middle is inserted/typed text. A pure positional mapping
- * corrupts the key on mid-string inserts (chars after the edit shift).
- */
-export function reconcileMaskedEdit(real: string, display: string): string {
-  const prev = API_KEY_MASK.repeat(real.length);
-  let p = 0;
-  const maxP = Math.min(prev.length, display.length);
-  while (p < maxP && display[p] === prev[p]) p++;
-  let s = 0;
-  const maxS = Math.min(prev.length - p, display.length - p);
-  while (s < maxS && display[display.length - 1 - s] === prev[prev.length - 1 - s]) s++;
-  const inserted = display.slice(p, display.length - s);
-  return real.slice(0, p) + inserted + real.slice(real.length - s);
-}
-
 export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps) {
+  const renderer = useRenderer();
   const [selectedProviderIndex, setSelectedProviderIndex] = useState(0);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [state, setState] = useState<ConnectState>('selecting-provider');
   const [apiKeyInput, setApiKeyInput] = useState('');
-
-  const handleApiKeyInput = (display: string) => {
-    setApiKeyInput(reconcileMaskedEdit(apiKeyInput, display));
-  };
   const [runtimeModels, setRuntimeModels] = useState<ModelInfo[]>([]);
   const [isCheckingRuntime, setIsCheckingRuntime] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<string | null>(null);
   const providerScrollRef = useRef<ScrollBoxRenderable>(null);
   const modelScrollRef = useRef<ScrollBoxRenderable>(null);
+
+  // Mouse capture swallows right-click / middle-click, and this host often has
+  // no wl-clipboard/xsel. Release the mouse while the key field is focused so
+  // the terminal can paste natively.
+  useEffect(() => {
+    if (state !== 'entering-api-key') return;
+    const prev = renderer.useMouse;
+    renderer.useMouse = false;
+    useAppStore.getState().setMouseEnabled(false);
+    return () => {
+      renderer.useMouse = prev;
+      useAppStore.getState().setMouseEnabled(prev);
+    };
+  }, [state, renderer]);
+
+  const handleApiKeyInput = (display: string) => {
+    setApiKeyInput(sanitizePastedLine(display));
+  };
 
   const sortedProviders = useMemo(
     () => [...RUNTIME_PROVIDERS].sort((a, b) => a.name.localeCompare(b.name)),
@@ -150,13 +146,13 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
 
     if (requiresAuth) {
       setState('entering-api-key');
-      setApiKeyInput(hasApiKey ? existingApiKey : '');
+      setApiKeyInput('');
       setRuntimeError(null);
     } else {
       setState('selecting-model');
       setSelectedModelIndex(0);
     }
-  }, [selectedProvider, isLocal, requiresAuth, hasApiKey]);
+  }, [selectedProvider, isLocal, requiresAuth]);
 
   const handleApiKeySubmit = useCallback(async () => {
     if (!selectedProvider) {
@@ -173,8 +169,12 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     const key = apiKeyInput.trim();
     // If empty but has existing key, use the existing key
     const effectiveKey = key || existingApiKey;
-    if (!effectiveKey) {
-      setRuntimeError('API key is required');
+    if (!isUsableApiKey(effectiveKey)) {
+      setRuntimeError(
+        effectiveKey
+          ? 'API key is invalid (masked bullets or non-ASCII). Paste the real key.'
+          : 'API key is required'
+      );
       return;
     }
 
@@ -182,7 +182,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     if (key && key !== existingApiKey) {
       const saved = saveApiKeyToEnv(envVar, key);
       if (!saved) {
-        setState('selecting-provider');
+        setRuntimeError('Could not save API key');
         return;
       }
     }
@@ -401,17 +401,23 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
             <text fg={theme.inputFg}>Key: </text>
             <input
               focused
-              flexGrow={0}
-              value={API_KEY_MASK.repeat(apiKeyInput.length)}
+              flexGrow={1}
+              value={apiKeyInput}
               onInput={handleApiKeyInput}
-              placeholder={hasExisting ? 'keep existing key' : 'paste key here'}
+              maxLength={4096}
+              placeholder={
+                hasExisting ? 'keep existing key' : 'right-click or Ctrl+Shift+V to paste'
+              }
             />
           </box>
+          {apiKeyInput ? (
+            <text fg={theme.mutedFg}>{apiKeyInput.length} characters captured</text>
+          ) : null}
           {runtimeError && <text fg={theme.errorFg}>Error: {runtimeError}</text>}
           <text fg={theme.mutedFg}>
             {hasExisting
-              ? 'Enter to keep current key · Type new key to change · Esc to cancel'
-              : 'Enter to save · Esc to cancel'}
+              ? 'Right-click / Ctrl+Shift+V paste · Enter to keep · Esc to cancel'
+              : 'Right-click or Ctrl+Shift+V to paste · Enter to save · Esc to cancel'}
           </text>
         </box>
       </box>

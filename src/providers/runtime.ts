@@ -6,6 +6,7 @@ import {
 } from '../model-runtime.js';
 import { isLocalProvider } from '../llm.js';
 import { logError, logInfo } from '../log.js';
+import { isUsableApiKey } from '../config/api-keys.js';
 
 export async function fetchLocalModels(baseURL: string): Promise<ModelInfo[]> {
   if (!isLocalProvider(baseURL)) {
@@ -158,53 +159,48 @@ export async function checkRuntimeHealth(baseURL: string): Promise<boolean> {
 }
 
 export async function fetchOpenRouterModels(apiKey?: string): Promise<ModelInfo[]> {
-  try {
-    const url = 'https://openrouter.ai/api/v1/models?sort=pricing-low-to-high';
+  if (apiKey && !isUsableApiKey(apiKey)) {
+    throw new Error('API key is not usable (looks like a masked value). Paste the real key.');
+  }
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
+  const url = 'https://openrouter.ai/api/v1/models?sort=pricing-low-to-high';
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
 
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
+  const response = await fetch(url, {
+    method: 'GET',
+    headers,
+    signal: AbortSignal.timeout(10000),
+  });
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: headers,
-      signal: AbortSignal.timeout(10000),
-    });
+  if (!response.ok) {
+    logError('Failed to fetch OpenRouter models:', response.status, response.statusText);
+    throw new Error(`OpenRouter models request failed: ${response.status} ${response.statusText}`);
+  }
 
-    if (!response.ok) {
-      logError('Failed to fetch OpenRouter models:', response.status, response.statusText);
-      return [];
-    }
-
-    const body: unknown = await response.json();
-
-    const modelResponse = body as { data?: Array<Record<string, unknown>> } | null;
-
-    if (modelResponse?.data && Array.isArray(modelResponse.data)) {
-      return modelResponse.data.map((model: Record<string, unknown>) => ({
-        id: model.id as string,
-        name: (model.name as string) || (model.id as string),
-        description: (model.description as string) || '',
-        contextLength: model.context_length as number | undefined,
-        maxContextLength: model.context_length as number | undefined,
-        ...(model.pricing
-          ? {
-              pricing: {
-                prompt: (model.pricing as Record<string, unknown>).prompt as number,
-                completion: (model.pricing as Record<string, unknown>).completion as number,
-              },
-            }
-          : {}),
-      }));
-    }
-
-    return [];
-  } catch (error) {
-    logError('Error fetching OpenRouter models:', error);
+  const body: unknown = await response.json();
+  const modelResponse = body as { data?: Array<Record<string, unknown>> } | null;
+  if (!modelResponse?.data || !Array.isArray(modelResponse.data)) {
     return [];
   }
+
+  return modelResponse.data.map((model: Record<string, unknown>) => ({
+    id: model.id as string,
+    name: (model.name as string) || (model.id as string),
+    description: (model.description as string) || '',
+    contextLength: model.context_length as number | undefined,
+    maxContextLength: model.context_length as number | undefined,
+    ...(model.pricing
+      ? {
+          pricing: {
+            prompt: (model.pricing as Record<string, unknown>).prompt as number,
+            completion: (model.pricing as Record<string, unknown>).completion as number,
+          },
+        }
+      : {}),
+  }));
 }

@@ -11,7 +11,6 @@ import {
   loadSessions,
   deleteSession,
   renameSession,
-  copyToClipboard,
   autoSaveSession,
   buildConfigSnapshot,
 } from '../store.js';
@@ -28,6 +27,8 @@ import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
 import { getProviderBaseURL } from '../providers.js';
 import { handleSlashCommand, checkAndAutoCompact } from './slash-commands.js';
 import { useAppStore } from './app-store.js';
+import { useClipboardPaste } from './use-clipboard-paste.js';
+import { copyToClipboard } from '../clipboard.js';
 
 /**
  * Messages the user can select/copy — shares ChatScreen's visibility filter
@@ -40,6 +41,7 @@ function selectableMessages(agent: AgentCore) {
 export function App({ renderer }: { renderer: CliRenderer }) {
   const store = useAppStore;
   const overlay = useAppStore((s) => s.overlay);
+  useClipboardPaste(overlay === 'connect' ? 'replace' : 'insert');
   const showTodos = useAppStore((s) => s.showTodos);
   const mouseEnabled = useAppStore((s) => s.mouseEnabled);
   const theme = useAppStore((s) => s.theme);
@@ -238,12 +240,17 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const copySelectionText = useCallback(
     (text: string): boolean => {
       if (!text) return false;
+      // Write the system clipboard first. OSC 52 reports success when the
+      // sequence is *sent*, not when the terminal actually stored it — so it
+      // must not short-circuit the native write (Linux often needs xclip /
+      // wl-clipboard).
+      const native = copyToClipboard(text);
       try {
-        if (renderer.copyToClipboardOSC52?.(text)) return true;
+        renderer.copyToClipboardOSC52?.(text);
       } catch {
-        /* fall back */
+        /* remote terminals may still accept OSC 52 */
       }
-      return copyToClipboard(text);
+      return native;
     },
     [renderer]
   );
