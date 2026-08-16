@@ -17,6 +17,40 @@ export function isNoticeMessage(m: Message): boolean {
 /** System ids that are merged into the single leading system prompt. */
 const KEPT_SYSTEM_IDS = new Set(['system-base', 'system-todos', 'system-compaction']);
 
+/** Refresh the cached system prompt from the in-memory system-base message. */
+export function refreshSystemPrompt(agent: AgentCore) {
+  const base = agent.messages.find((m) => m.id === 'system-base');
+  if (base) {
+    agent._systemPromptContent = base.content;
+  }
+}
+
+/**
+ * Ensure system-base is present and at index 0.
+ * Context compaction / session edits can drop it; Qwen Jinja requires a
+ * system message in the first slot.
+ */
+export function ensureSystemBase(agent: AgentCore) {
+  const sysBaseIdx = agent.messages.findIndex((m) => m.role === 'system' && m.id === 'system-base');
+  if (sysBaseIdx < 0) {
+    if (!agent._systemPromptContent) return;
+    const msg: Message = {
+      id: 'system-base',
+      role: 'system',
+      content: agent._systemPromptContent,
+      timestamp: Date.now(),
+    };
+    agent.messages.unshift(msg);
+    const ctx = agent.contextManager.getMessages();
+    if (!ctx.some((m) => m.id === 'system-base')) {
+      agent.contextManager.setMessages([msg, ...ctx]);
+    }
+  } else if (sysBaseIdx > 0) {
+    const [msg] = agent.messages.splice(sysBaseIdx, 1);
+    if (msg) agent.messages.unshift(msg);
+  }
+}
+
 /** Map one internal message to the LLM chat payload shape (non-system). */
 function toChatMessage(m: Message): ChatMessage {
   if (m.role === 'tool') {
@@ -48,6 +82,9 @@ function toChatMessage(m: Message): ChatMessage {
 
 /** Convert internal messages to the format expected by the LLM layer. */
 export function toChatMessages(agent: AgentCore): ChatMessage[] {
+  // Restore system-base before todo sync so todos land after the main prompt.
+  ensureSystemBase(agent);
+  refreshSystemPrompt(agent);
   // Ensure todo message is fresh before sending to LLM
   syncTodoMessage(agent);
 
@@ -151,6 +188,22 @@ export function addUserMessage(agent: AgentCore, content: string): void {
 }
 
 /**
+ * Inject a hidden continue-nudge for the model (id prefix `nudge-`).
+ * Shown to the LLM as a user turn; filtered out of the TUI chat panel.
+ */
+export function addNudgeMessage(agent: AgentCore, content: string): void {
+  const msg: Message = {
+    id: `nudge-${rnd()}`,
+    role: 'user',
+    content,
+    timestamp: now(),
+  };
+  agent.messages.push(msg);
+  agent.contextManager.addMessage(msg);
+  agent.onUpdate?.();
+}
+
+/**
  * Add a tool message to the conversation.
  */
 export function addToolMessage(agent: AgentCore, content: string, toolCallId?: string): void {
@@ -206,6 +259,8 @@ export function checkAndCompactContext(agent: AgentCore, force = false): boolean
     const insertAt = firstNonSystem === -1 ? synced.length : firstNonSystem;
     synced.splice(insertAt, 0, ...extraSystem);
     agent.messages = synced;
+    ensureSystemBase(agent);
+    refreshSystemPrompt(agent);
     syncTodoMessage(agent);
 
     // Compaction summary must NOT be an assistant turn: Bonsai/Qwen Jinja

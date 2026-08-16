@@ -9,24 +9,43 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-An ultra-lightweight, scalable CLI/TUI coding agent built from the ground up to empower **tiny local models** (2B–8B parameter models like Qwen 2.5/3.5, Phi-3, Llama 3) while scaling seamlessly to cloud APIs (OpenAI, Anthropic, OpenRouter). Run locally, think globally.
+Current release: **2.1.6** (`@omega3_0/nanoagent`)
+
+An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
 ---
 
-## 🌟 Key Features
+## ⚠️ Work in progress
 
-- **⚡ Instant Execution**: Launch directly by typing `nanoagent` (or `nanogent`, `npx nanoagent`, `nano-agent`).
-- **🎯 Tiny-Model First Optimization**: Specialized prompt formatting, compact token management, and small-model tool calling resilience.
-- **🖥️ Rich OpenTUI Terminal Interface**: Full-screen interactive dashboard featuring real-time response streaming, tool diff views, task sidebars, and keyboard overlays.
-- **⚙️ Dynamic Dual-Level Configuration**: Global defaults in `~/.nanogent.json` merge with per-project overrides in `.nanogent.json` (project keys win; MCP servers merge with per-server trust). Editable directly in the TUI using `/config` and `/set` slash commands.
-- **🤖 Autonomous Sub-Agent Swarm**: Dispatches multi-agent codebase exploration and search tasks concurrently to worker models.
-- **🛡️ Enterprise Security Hardening**: Built-in command validation, workspace path sandboxing, and automatic secret/API-key redaction.
-- **🔌 Model Context Protocol (MCP)**: Native MCP integration to connect filesystem servers, web search engines, and remote API tools.
-- **🧠 Codebase Memory Graph**: Build, query, and generate deep analysis reports on codebase architecture (`/graph`).
+NanoAgent is **actively developed and still a WIP**. The core loop, TUI, and install paths work, but this is not a finished product.
+
+If you clone this repo or install the npm / GitHub release packages, expect:
+
+- Some features to be **experimental, incomplete, or buggy** (sub-agents, memory graph, MCP, skills, native packages, and small-model edge cases in particular)
+- Config, slash commands, and behavior to **change between versions**
+- Occasional rough edges on Windows and with local runtimes (LM Studio / Ollama)
+
+Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://github.com/leeno7786-coder/nanoagent/issues). Do not treat this as production-ready without testing it on your own workload.
 
 ---
 
-## 🚀 Quick Start & Installation
+## Key features
+
+- **Launch from anywhere** — `nanoagent`, `nanogent`, `nano-agent`, or `npx @omega3_0/nanoagent`
+- **Tiny-model first** — compact prompts, context auto-compact (default 80% of the live window), and small-model tool-call resilience
+- **OpenTUI dashboard** — streaming chat, tool diffs, todos, skills overlay, connect overlay, and keyboard shortcuts
+- **Dual-level config** — `~/.nanogent.json` (or `~/.nanoagent.json`) merged with a project `.nanogent.json` (project keys win; MCP servers merge with per-server trust)
+- **Permissions** — `read_only` / `ask` / `allow_edits` / `always_allow`, plus Shift+Tab to cycle in the TUI
+- **Remote sub-agents** — `explore_subagent` workers against a configured pool or `REMOTE_LMSTUDIO_URL`
+- **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`)
+- **Skills** — bundled + custom skills, auto-load on triggers, `/skills` overlay (F8)
+- **Memory graph** — `/graph build|stats|report` for codebase structure
+- **Security defaults** — command checks, workspace path sandboxing, secret redaction (see [SECURITY.md](SECURITY.md))
+- **Headless CLI** — `run`, `doctor`, `models`, `todo` for scripts and CI
+
+---
+
+## Install
 
 ### Option 1: Native packages (recommended)
 
@@ -45,6 +64,8 @@ Download nanoagent_*_win_x64.zip from GitHub Releases
 Extract → run nanogent.cmd  (or nanoagent.cmd)
 ```
 
+Latest assets: [github.com/leeno7786-coder/nanoagent/releases](https://github.com/leeno7786-coder/nanoagent/releases)
+
 Build both locally from this repo:
 
 ```bash
@@ -56,18 +77,22 @@ bun run package:win             # → dist-packages/nanoagent_<version>_win_x64.
 
 Remove Linux package: `sudo apt remove nanoagent`
 
-### Option 2: Install Globally via NPM
+### Option 2: Global npm
+
 ```bash
 npm install -g @omega3_0/nanoagent
 ```
-Requires **Node ≥ 20**. On Linux/Windows, prefer the native packages if global npm installs miss `dist/` or native deps.
 
-### Option 3: Zero-Install via `npx`
+Requires **Node ≥ 18**. On Linux/Windows, prefer the native packages if a global npm install misses `dist/` or native deps.
+
+### Option 3: `npx` (no install)
+
 ```bash
 npx @omega3_0/nanoagent
 ```
 
-### Option 4: Build & Link from Source
+### Option 4: Build from source
+
 ```bash
 git clone https://github.com/leeno7786-coder/nanoagent.git
 cd nanoagent
@@ -80,43 +105,50 @@ The launcher runs `src/main.ts` via bun (same as `bun run start`) in a git check
 
 ---
 
-## ⚡ Launch Command (`nanoagent`)
-
-Once installed, launch NanoAgent from **any directory or terminal window** on your machine using the single command word:
+## Launch
 
 ```bash
-nanoagent
+nanoagent          # interactive TUI in the current directory
+nanogent           # same binary
+nanoagent tui      # force TUI
 ```
 
-### CLI Command Options
-- **`nanoagent`** — Launch interactive TUI coding session in your current directory
-- **`nanoagent tui`** — Force interactive TUI mode
-- **`nanoagent run --prompt "your task"`** — Run headless non-interactive task
-- **`nanoagent models`** — List available local & remote LLM models
-- **`nanoagent doctor`** — Run environment & runtime health check
+### CLI commands
+
+| Command | What it does |
+|---|---|
+| `nanoagent` / `nanoagent tui` | Full-screen OpenTUI session |
+| `nanoagent run --prompt "…"` | One headless task |
+| `nanoagent models` | List models from the configured runtime |
+| `nanoagent doctor` | Config + runtime health check |
+| `nanoagent todo` | CLI todo list (`add`, `list`, `done`, `delete`, `clear`) |
+
+`run` flags: `--prompt` / `--stdin`, `--workspace`, `--model`, `--base-url`, `--max-rounds`, `--max-iterations`, `--json`, `--quiet`, `--verbose`, `--yes` (auto-approve permissions), `--permission-mode <read_only\|ask\|allow_edits\|always_allow>`.
 
 ---
 
-## 💻 Recommended Local Model Setup
+## Recommended local setup
 
-NanoAgent is designed to deliver maximum coding performance with small local LLM runtimes:
+- **Model**: `Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF` (or another Qwen 3.5 2B–8B)
+- **Runtime**: [LM Studio](https://lmstudio.ai/) at `http://127.0.0.1:1234/v1`, or Ollama at `http://127.0.0.1:11434/v1`
 
-- **Recommended Local Model**: `Jackrong\Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF`
-- **Recommended Local Runtime**: LM Studio (`http://127.0.0.1:1234/v1`) or Ollama (`http://127.0.0.1:11434/v1`)
+When LM Studio has extra small models loaded (`qwen3.5-2b`, etc.), NanoAgent can use them as an exploration sub-agent pool. You can also point at a remote pool with `REMOTE_LMSTUDIO_URL` or a `subagents` block in config.
 
-> **Multi-Agent Local Pooling**: When running LM Studio, NanoAgent auto-detects additional small loaded models (`qwen3.5-2b`, etc.) to automatically populate an exploration sub-agent pool.
+First-run: type `/connect` in the TUI to pick a provider, enter an API key if needed, and choose a model.
 
 ---
 
-## ⚙️ Configuration (`.nanogent.json`)
+## Configuration
 
-Configuration is stored in `.nanogent.json` (workspace) or `~/.nanogent.json` (global user defaults):
+Global defaults live in `~/.nanogent.json` or `~/.nanoagent.json`. Project overrides live in `.nanogent.json` (or `.nanoagent.json`) in the workspace. Project keys win; MCP server maps merge (project-local MCP does **not** auto-connect unless the source is trusted — see [SECURITY.md](SECURITY.md)).
 
 ```json
 {
   "model": "Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
   "baseURL": "http://127.0.0.1:1234/v1",
   "workspace": "./",
+  "permissionMode": "ask",
+  "contextCompactThreshold": 0.8,
   "subAgentEnabled": true,
   "maxBackgroundSubAgents": 4,
   "securityEnabled": true,
@@ -125,100 +157,120 @@ Configuration is stored in `.nanogent.json` (workspace) or `~/.nanogent.json` (g
 }
 ```
 
-### Interactive Config Slash Commands
-Modify settings directly inside the TUI without leaving your workspace:
+In the TUI:
 
-- `/config` or `/config show` — View active configuration & loaded files
-- `/config set model <model-name>` — Update model for current project
-- `/config set baseURL http://127.0.0.1:1234/v1 --global` — Set machine-wide base URL
-- `/config reload` — Reload configuration from disk
+- `/config` or `/config show` — active config and loaded files
+- `/config set model <name>` — project-local
+- `/config set baseURL http://127.0.0.1:1234/v1 --global` — machine-wide
+- `/config reload` or `/reload` — reload from disk
+- `/set <key> <val>` — same as `/config set`
 
 ---
 
-## ⌨️ TUI Slash Commands
+## TUI slash commands
 
 | Command | Description |
 |---|---|
-| `/help` | Open interactive help & shortcut reference overlay (F1) |
-| `/config` | View or modify `.nanogent.json` configuration |
-| `/set <key> <val>` | Quick-set configuration options (`model`, `baseURL`, etc.) |
-| `/connect` | Connect provider — select runtimes, enter API keys, pick models |
-| `/doctor` | Run system health check (verify LM Studio / OpenAI endpoints) |
-| `/models` | List loaded models, context limits, and availability |
-| `/todo` | Toggle task todo sidebar panel (F4) |
-| `/skills` | Manage skills (F8) — enable, disable, create custom skills |
-| `/graph` | Build or query memory graph (`/graph build`, `/graph stats`, `/graph report`) |
-| `/mcp` | List connected Model Context Protocol servers |
-| `/mcp-add` | Add local or remote MCP server (`/mcp-add fs local npx ...`) |
-| `/mcp-remove` | Remove connected MCP server |
-| `/compact` | Compact conversation history to free context tokens |
-| `/clear` | Clear chat history (F2) |
-| `/new` | Start new session |
-| `/export` | Export chat transcript to markdown file |
-| `/exit` | Gracefully quit and save session (F10) |
+| `/help` | Help overlay (F1) |
+| `/new` | Start a new session |
+| `/clear` | Clear chat (F2); keeps system messages |
+| `/compact` | Force context compaction |
+| `/auto <task>` | Autonomous run (F3 prefills `/auto`) |
+| `/config` `/set` | View or edit `.nanogent.json` |
+| `/connect` | Pick runtime, API key, and model |
+| `/doctor` | Health check |
+| `/models` | Local/remote models and context |
+| `/todo` `/todos` | Todo sidebar (F4) / list |
+| `/skills` | Skills overlay (F8) |
+| `/skill` `/skill-load` `/unload` | List, load, or unload a skill |
+| `/graph build\|stats\|report` | Memory graph |
+| `/mcp` `/mcp-add` `/mcp-remove` | MCP servers |
+| `/permissions` | `read_only` / `ask` / `allow_edits` / `always_allow` |
+| `/cd [path]` | Change tool workspace |
+| `/allow [path]` | Extra tool path outside the workspace |
+| `/theme [name]` | Switch theme (F9 cycles) |
+| `/save` `/load` `/sessions` `/resume` `/rename` | Session persistence |
+| `/export` | Export chat to markdown |
+| `/copy` | Copy selected message |
+| `/reload` | Reload config, skills, and runtime metadata |
+| `/exit` | Quit and auto-save (F10) |
+
+### Shortcuts
+
+| Key | Action |
+|---|---|
+| F1 | Help |
+| F2 | Clear chat |
+| F3 | Prefill `/auto` |
+| F4 | Todo sidebar |
+| F5 | Save session |
+| F6 | Load session |
+| F7 | Toggle mouse capture |
+| F8 | Skills overlay |
+| F9 | Cycle theme |
+| F10 | Exit |
+| Shift+Tab | Cycle permission mode |
+| Shift+Enter | Multi-line input |
+| Ctrl+↑/↓ | Select message |
+| Ctrl+C | Copy selected message |
+| Ctrl+D | Abort current run |
+| Shift+drag | Select and copy (or turn mouse capture off with F7) |
 
 ---
 
-## 🤖 Headless CLI Mode
-
-NanoAgent can also run headlessly for scripts, CI pipelines, and agent automations:
+## Headless examples
 
 ```bash
-# Run a single task non-interactively
 nanoagent run --prompt "Refactor index.ts to use async/await" --workspace .
-
-# Pipe prompt via stdin
 cat task.txt | nanoagent run --stdin --workspace . --quiet
-
-# Machine-readable JSON output
 nanoagent run --prompt "check test coverage" --json
-
-# Run health check or query models
+nanoagent run -p "run tests and fix failures" -y --permission-mode allow_edits
 nanoagent doctor --json
-nanoagent models
+nanoagent models --base-url http://127.0.0.1:1234/v1
+nanoagent todo add "Write the README"
+nanoagent todo list
 ```
 
 ---
 
-## 🛡️ Enterprise Security Hardening
+## Security
 
-NanoAgent includes security hardening enabled by default:
+Enabled by default:
 
-- 🛡️ **Command Validation**: Whitelists safe shell commands and blocks dangerous execution patterns (`rm -rf`, `sudo`, `dd`).
-- 📁 **Workspace Path Sandboxing**: Restricts tool file access to the active workspace and blocks sensitive paths (`.env`, `.git`).
-- 🔒 **Output Sanitization**: Automatically redacts API keys, JWT tokens, AWS credentials, and secrets from tool outputs.
+- **Command validation** — blocks dangerous shell patterns
+- **Workspace sandboxing** — tools stay in the workspace unless you `/allow` a path
+- **Output sanitization** — redacts keys and tokens from tool output
+- **Untrusted project configs** — a cloned repo cannot auto-connect its own MCP servers or override trust via a workspace `.env`
 
-*Read [SECURITY.md](SECURITY.md) for full security documentation.*
+Full details: [SECURITY.md](SECURITY.md). These guards are still evolving with the rest of the project.
 
 ---
 
-## 🏗️ Project Architecture
+## Project layout
 
 ```text
 src/
-├── main.ts              # CLI entry point & command router (nanoagent)
-├── config.ts            # Configuration loader & .nanogent.json manager
-├── agent.ts             # Core Agent state machine & loop
-├── types.ts             # TypeScript definitions
-├── store.ts             # Session and todo persistence
-├── skills.ts            # Skill definitions & manager
-├── context.ts           # Git workspace & repository context detection
-├── llm.ts               # LLM client & token compaction logic
-├── security/            # Security manager & output sanitizer
-├── graph/               # Codebase Memory Graph engine
-├── mcp/                 # Model Context Protocol client manager
-├── tools/               # Built-in tool definitions & execution engine
-├── cli/                 # Headless CLI commands (run, doctor, models, help)
-└── opentui/             # Full-screen OpenTUI terminal interface
-    ├── index.tsx        # TUI root launcher
-    ├── app.tsx          # OpenTUI App & command handler
-    ├── chat-screen.tsx  # Interactive chat screen & streaming display
-    ├── status-bar.tsx   # Top status bar & context indicator
-    └── overlays.tsx     # Help, history, and configuration overlays
+├── main.ts              # CLI entry (nanoagent / nanogent)
+├── agent.ts             # AgentCore re-export
+├── agent/               # Run loop, early-stop, core state
+├── agent-messages.ts    # LLM payload, compaction, system-base cache
+├── agent-lifecycle.ts   # Init, reconfigure, shutdown
+├── config/              # .nanogent.json load / validate / merge
+├── llm/                 # Chat, stream, rate limit, context sizing
+├── context/             # ContextManager (fill, auto-compact)
+├── tools/               # Files, shell, git, search, graph, MCP
+├── subagents/           # Remote explore-subagent pool + workers
+├── providers/           # Runtime catalog (LM Studio, OpenRouter, …)
+├── security/            # Permissions, command/path checks, redaction
+├── graph/               # Memory graph
+├── mcp/                 # MCP client
+├── skills.ts            # Skill loader
+├── cli/                 # run, doctor, models, todo, help
+└── opentui/             # TUI, slash commands, overlays
 ```
 
 ---
 
-## 📄 License
+## License
 
 [MIT License](LICENSE)

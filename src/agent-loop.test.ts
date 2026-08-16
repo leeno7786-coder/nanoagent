@@ -214,6 +214,54 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(agent.totalUsage.input_tokens).toBe(20);
   });
 
+  it('auto-continues when a small model check-ins after one shallow tool round', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    // Round 1: git_status. Round 2: premature "let me know what to focus on".
+    // Round 3 (after nudge): real completion.
+    scripted.push([
+      {
+        toolCalls: [{ id: 'call-1', name: 'git_status', arguments: '{}' }],
+      },
+    ]);
+    scripted.push([
+      {
+        content:
+          "The repo looks clean. Let me know if you have specific files or sections you'd like me to focus on.",
+      },
+    ]);
+    scripted.push([
+      {
+        toolCalls: [
+          {
+            id: 'call-2',
+            name: 'list_dir',
+            arguments: JSON.stringify({ path: '.' }),
+          },
+        ],
+      },
+    ]);
+    scripted.push([{ content: 'Reviewed top-level layout: src/, docs/, tests/ present.' }]);
+
+    await agent.run('lets review the codebase');
+
+    expect(sentMessages.length).toBe(4);
+    // Nudge was injected for the model
+    const nudge = agent.messages.find((m) => m.id.startsWith('nudge-'));
+    expect(nudge).toBeDefined();
+    expect(nudge!.role).toBe('user');
+    // Notice visible to the user
+    expect(
+      agent.messages.some(
+        (m) => m.id.startsWith('notice-') && /continuing the task/i.test(m.content)
+      )
+    ).toBe(true);
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.content).toContain('Reviewed top-level layout');
+    expect(agent.state).toBe('idle');
+  });
+
   it('sends the todo system message (with ids) to the LLM', async () => {
     const agent = newAgent();
     await agent.init();
@@ -392,6 +440,57 @@ describe('AgentCore run loop (behavioral)', () => {
           m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('compacted')
       )
     ).toBe(false);
+  });
+
+  it('restores cached system-base at index 0 when it is missing before send', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    const original = agent.messages.find((m) => m.id === 'system-base');
+    expect(original).toBeDefined();
+    const prompt = original!.content;
+    expect(prompt.length).toBeGreaterThan(0);
+
+    // Compaction / session edits can drop system-base from AgentCore.messages.
+    // Qwen Jinja crashes unless a system message is first.
+    agent.messages = agent.messages.filter((m) => m.id !== 'system-base');
+    agent.messages.push({
+      id: 'u-after-drop',
+      role: 'user',
+      content: 'continue',
+      timestamp: Date.now(),
+    });
+
+    const payload = agent.toChatMessages();
+    expect(payload[0]?.role).toBe('system');
+    expect(payload[0]?.content).toContain(prompt.slice(0, 40));
+    expect(agent.messages[0]?.id).toBe('system-base');
+  });
+
+  it('cached system prompt includes skill content after load', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    const loaded = agent.skillManager.load(
+      {
+        name: 'prompt-cache-test',
+        description: 'test skill',
+        tools: [],
+        prompt: 'SKILL-PROMPT-UNIQUE-MARKER',
+      },
+      agent.messages,
+      false
+    );
+    expect(loaded).toBe(true);
+    expect(agent.messages.find((m) => m.id === 'system-base')?.content).toContain(
+      'SKILL-PROMPT-UNIQUE-MARKER'
+    );
+
+    agent.messages = agent.messages.filter((m) => m.id !== 'system-base');
+
+    const payload = agent.toChatMessages();
+    expect(payload[0]?.role).toBe('system');
+    expect(payload[0]?.content).toContain('SKILL-PROMPT-UNIQUE-MARKER');
   });
 
   it('does not feed overflow-retry notices back to the model as assistant turns', async () => {

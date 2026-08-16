@@ -33,6 +33,7 @@ import {
   toChatMessages,
   addAssistantMessage,
   addNoticeMessage,
+  addNudgeMessage,
   addUserMessage,
   checkAndCompactContext,
   forceCompactContext,
@@ -134,6 +135,9 @@ export class AgentCore {
   /** Whether the current model is a small/quantized model (stored from init). */
   /** @internal Written by agent-lifecycle; read publicly via isSmallModel. */
   _smallModel: boolean = false;
+  /** Persisted system-base content (survives compaction / dropped system-base). */
+  /** @internal Written by agent-messages and skill sync. */
+  _systemPromptContent: string = '';
   /** Public accessor for small model flag (used by TUI skill operations). */
   get isSmallModel(): boolean {
     return this._smallModel;
@@ -195,6 +199,9 @@ export class AgentCore {
       cfg.workspace
     );
     this.mcpManager = createMcpManager(cfg.mcp, cfg.workspace);
+    this.skillManager.onPromptSync = (content) => {
+      this._systemPromptContent = content;
+    };
   }
 
   async reconfigure(newCfg: Partial<Config>) {
@@ -261,6 +268,11 @@ export class AgentCore {
   /** @internal UI-only notice; excluded from the LLM payload. */
   public addNoticeMessage(content: string) {
     addNoticeMessage(this, content);
+  }
+
+  /** @internal Hidden continue-nudge for the model (TUI-filtered). */
+  public addNudgeMessage(content: string) {
+    addNudgeMessage(this, content);
   }
 
   /** @internal Accessed by agent/run.ts. */

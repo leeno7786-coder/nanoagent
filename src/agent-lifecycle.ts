@@ -18,6 +18,7 @@ import { autoSaveSession } from './store.js';
 import type { AgentCore } from './agent.js';
 import { now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
+import { refreshSystemPrompt } from './agent-messages.js';
 import { logError, logWarn } from './log.js';
 import { homedir } from 'os';
 
@@ -238,6 +239,9 @@ export async function initAgent(agent: AgentCore) {
   const ctx = detectContext(agent.cfg.workspace);
   const allSkills = loadSkills();
   agent.skillManager = new SkillManager();
+  agent.skillManager.onPromptSync = (content) => {
+    agent._systemPromptContent = content;
+  };
 
   // Populate activeSkills with enabled skills (always-active from config)
   for (const [name, skill] of allSkills) {
@@ -298,6 +302,7 @@ export async function initAgent(agent: AgentCore) {
   if (baseMsg) {
     agent.contextManager.setMessages([baseMsg]);
   }
+  refreshSystemPrompt(agent);
 
   // Debug: log model detection info
   if (process.env.QWEN_DEBUG_LLM) {
