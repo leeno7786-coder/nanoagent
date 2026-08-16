@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.1.5** (`@omega3_0/nanoagent`)
+Current release: **2.1.6** (`@omega3_0/nanoagent`)
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -96,17 +96,12 @@ npx @omega3_0/nanoagent
 ```bash
 git clone https://github.com/leeno7786-coder/nanoagent.git
 cd nanoagent
-npm install
-npm run build
-npm link --force
+bun install --frozen-lockfile   # or: npm install
+sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanogent
+sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanoagent
 ```
 
-On Linux you can also symlink the built CLI:
-
-```bash
-sudo ln -sfn "$(pwd)/dist/main.js" /usr/local/bin/nanogent
-sudo ln -sfn "$(pwd)/dist/main.js" /usr/local/bin/nanoagent
-```
+The launcher runs `src/main.ts` via bun (same as `bun run start`) in a git checkout. Packaged `.deb` / Windows zip / npm installs have no `src/` and use compiled `dist/`.
 
 ---
 

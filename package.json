@@ -1,20 +1,21 @@
 {
   "name": "@omega3_0/nanoagent",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "Ultra-lightweight, scalable CLI/TUI coding agent optimized for tiny local models & remote runtimes",
   "module": "dist/opentui/index.js",
   "type": "module",
   "main": "dist/main.js",
   "bin": {
-    "nanoagent": "dist/main.js",
-    "nanogent": "dist/main.js",
-    "nanogent-tui": "dist/main.js",
-    "nano-agent": "dist/main.js"
+    "nanoagent": "scripts/run-nanoagent.mjs",
+    "nanogent": "scripts/run-nanoagent.mjs",
+    "nanogent-tui": "scripts/run-nanoagent.mjs",
+    "nano-agent": "scripts/run-nanoagent.mjs"
   },
   "files": [
     "dist/",
     "skills/",
     "scripts/install-bun.mjs",
+    "scripts/run-nanoagent.mjs",
     "AGENTS.md",
     "README.md",
     "SECURITY.md",

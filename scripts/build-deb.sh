@@ -100,6 +100,8 @@ mkdir -p \
 echo "==> Staging application files"
 cp -a dist "${STAGE}/usr/lib/nanoagent/"
 cp -a skills "${STAGE}/usr/lib/nanoagent/"
+mkdir -p "${STAGE}/usr/lib/nanoagent/scripts"
+cp scripts/run-nanoagent.mjs "${STAGE}/usr/lib/nanoagent/scripts/"
 cp package.json README.md LICENSE SECURITY.md AGENTS.md "${STAGE}/usr/lib/nanoagent/"
 cp -a "${PROD_DIR}/node_modules" "${STAGE}/usr/lib/nanoagent/"
 
@@ -123,11 +125,12 @@ rm -f \
 
 cat >"${STAGE}/usr/bin/nanogent" <<'EOF'
 #!/bin/sh
-exec /usr/lib/nanoagent/node/bin/node /usr/lib/nanoagent/dist/main.js "$@"
+exec /usr/lib/nanoagent/node/bin/node /usr/lib/nanoagent/scripts/run-nanoagent.mjs "$@"
 EOF
 cp "${STAGE}/usr/bin/nanogent" "${STAGE}/usr/bin/nanoagent"
 chmod 0755 "${STAGE}/usr/bin/nanogent" "${STAGE}/usr/bin/nanoagent"
 chmod 0755 "${STAGE}/usr/lib/nanoagent/node/bin/node"
+chmod 0755 "${STAGE}/usr/lib/nanoagent/scripts/run-nanoagent.mjs"
 chmod 0755 "${STAGE}/usr/lib/nanoagent/dist/main.js" 2>/dev/null || true
 
 INSTALLED_SIZE="$(du -sk "${STAGE}/usr" | awk '{print $1}')"

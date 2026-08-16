@@ -14,17 +14,20 @@ const MASK = '\u2022';
 const POISONED = MASK.repeat(73);
 const REAL = 'sk-or-v1-' + 'a'.repeat(64);
 
-const touchedEnv = new Set<string>();
+const savedEnv = new Map<string, string | undefined>();
 
 function setEnv(name: string, value: string | undefined): void {
-  touchedEnv.add(name);
+  if (!savedEnv.has(name)) savedEnv.set(name, process.env[name]);
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
 }
 
 afterEach(() => {
-  for (const name of touchedEnv) delete process.env[name];
-  touchedEnv.clear();
+  for (const [name, value] of savedEnv) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  savedEnv.clear();
 });
 
 describe('isUsableApiKey', () => {
@@ -46,8 +49,10 @@ describe('isUsableApiKey', () => {
 
 describe('getApiKey', () => {
   it('ignores a process env value that is only mask bullets', () => {
-    setEnv('OPENROUTER_API_KEY', POISONED);
-    expect(getApiKey('OPENROUTER_API_KEY')).toBeUndefined();
+    // Unique name so a real OPENROUTER_API_KEY in ~/.qwen-agent-tui/.env
+    // cannot leak into the assertion.
+    setEnv('NANOAGENT_TEST_MASK_KEY', POISONED);
+    expect(getApiKey('NANOAGENT_TEST_MASK_KEY')).toBeUndefined();
   });
 
   it('returns a usable process env key', () => {
