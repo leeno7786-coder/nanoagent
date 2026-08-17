@@ -97,6 +97,7 @@ export interface Config {
    * (keep today's qwen/bonsai enable_thinking). Explicit false omits them.
    */
   supportsThinking?: boolean;
+  supportsReasoningEffort?: boolean;
   effort?: 'none' | 'low' | 'medium' | 'high' | 'extra-high';
   /**
    * Catalog-reported prompt-cache extras. Undefined = unknown (do not send).
@@ -366,6 +367,7 @@ export interface ModelInfo {
   supportsTools?: boolean;
   /** Catalog-reported thinking / reasoning extras. Undefined = unknown. */
   supportsThinking?: boolean;
+  supportsReasoningEffort?: boolean;
   /** Catalog-reported prompt-cache extras. Undefined = unknown. */
   supportsPromptCache?: boolean;
   /**

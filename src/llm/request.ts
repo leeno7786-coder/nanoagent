@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { DEFAULT_EFFORT, reasoningEffortParam } from '../config/effort.js';
+import type { EffortLevel } from '../config/effort.js';
 import type { Config } from '../types.js';
 import { logWarn } from '../log.js';
 import type { ChatMessage, ChatRequestOptions } from './types.js';
@@ -40,12 +42,25 @@ export function flattenChatMessages(messages: ChatMessage[]): Array<Record<strin
  * Explicit catalog false omits the extra.
  */
 export function shouldSendThinkingExtra(
-  cfg: Pick<Config, 'model' | 'supportsThinking'>,
+  cfg: Pick<Config, 'model' | 'supportsThinking' | 'effort'>,
   options?: ChatRequestOptions
 ): boolean {
   if (options?.enableThinking !== undefined) return options.enableThinking;
   if (cfg.supportsThinking === false) return false;
-  return shouldEnableThinking(cfg.model);
+  if (resolveEffort(cfg) === 'none') return false;
+  return shouldEnableThinking(cfg.model) || cfg.supportsThinking === true;
+}
+
+export function resolveEffort(cfg: Pick<Config, 'effort'>): EffortLevel {
+  return cfg.effort ?? DEFAULT_EFFORT;
+}
+
+export function shouldSendReasoningEffort(
+  cfg: Pick<Config, 'baseURL' | 'supportsThinking' | 'supportsReasoningEffort' | 'effort'>
+): boolean {
+  if (cfg.supportsThinking === false) return false;
+  if (isLocalProvider(cfg.baseURL)) return false;
+  return cfg.supportsReasoningEffort === true;
 }
 
 /**
@@ -72,6 +87,7 @@ export function buildChatCompletionsParams(
   options?: ChatRequestOptions & { stream?: boolean }
 ): Record<string, unknown> {
   const enableThinking = shouldSendThinkingExtra(cfg, options);
+  const effort = resolveEffort(cfg);
   const params: Record<string, unknown> = {
     model: cfg.model,
     messages: flattenChatMessages(messages),
@@ -99,6 +115,9 @@ export function buildChatCompletionsParams(
     }
   }
   if (enableThinking) params.enable_thinking = true;
+  if (shouldSendReasoningEffort(cfg)) {
+    params.reasoning_effort = reasoningEffortParam(effort);
+  }
   if (shouldSendPromptCacheKey(cfg)) {
     params.prompt_cache_key = promptCacheKeyFor(cfg);
   }

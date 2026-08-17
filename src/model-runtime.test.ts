@@ -406,6 +406,7 @@ describe('parseCatalogCapabilities', () => {
     ).toEqual({
       supportsTools: true,
       supportsThinking: true,
+      supportsReasoningEffort: false,
       supportsPromptCache: true,
     });
   });
@@ -414,6 +415,7 @@ describe('parseCatalogCapabilities', () => {
     expect(parseCatalogCapabilities({ supported_parameters: ['temperature'] })).toEqual({
       supportsTools: false,
       supportsThinking: false,
+      supportsReasoningEffort: false,
       supportsPromptCache: false,
     });
   });
@@ -430,6 +432,17 @@ describe('parseCatalogCapabilities', () => {
       supportsThinking: false,
       supportsPromptCache: true,
     });
+  });
+
+  it('sets supportsReasoningEffort from supported_parameters', () => {
+    expect(
+      parseCatalogCapabilities({
+        supported_parameters: ['reasoning_effort', 'tools'],
+      }).supportsReasoningEffort
+    ).toBe(true);
+    expect(
+      parseCatalogCapabilities({ supported_parameters: ['tools'] }).supportsReasoningEffort
+    ).toBe(false);
   });
 });
 
