@@ -31,7 +31,7 @@ export function SettingsOverlay({ theme, agent, onClose }: SettingsOverlayProps)
       const result = await persistGlobalSetting(agent, patch);
       if (result.ok) {
         const value = patch[key];
-        setNotice(`Saved ${key}=${String(value)} to ~/.nanogent.json`);
+        setNotice(`Saved ${key}=${String(value)} to ${result.path}`);
         setRevision((revision) => revision + 1);
       } else {
         setNotice(`Error saving ${key}: ${result.error}`);

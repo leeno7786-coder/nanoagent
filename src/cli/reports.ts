@@ -8,6 +8,7 @@ import {
 } from '../model-runtime.js';
 import { isLocalProvider } from '../llm.js';
 import { resolveToolResultTokenBudget } from '../llm/tool-result-budget.js';
+import { DEFAULT_EFFORT } from '../config/effort.js';
 
 export interface DoctorReport {
   ok: boolean;
@@ -58,7 +59,7 @@ export async function getDoctorReport(cfg?: Config): Promise<DoctorReport> {
     workspace: c.workspace,
     baseURL: c.baseURL,
     model: resolvedModel || c.model,
-    effort: enriched.effort ?? 'low',
+    effort: enriched.effort ?? DEFAULT_EFFORT,
     ...(configuredDiffers ? { configured_model: c.model } : {}),
     ...(c.profile ? { profile: c.profile } : {}),
     ...(c.fallbacks && c.fallbacks.length > 0

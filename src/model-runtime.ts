@@ -103,6 +103,24 @@ export function modelIdsMatch(a: string, b: string): boolean {
   return baseA === baseB || na.endsWith(nb) || nb.endsWith(na);
 }
 
+type CatalogCapabilityConfig = Pick<
+  Config,
+  'model' | 'supportsTools' | 'supportsThinking' | 'supportsReasoningEffort' | 'supportsPromptCache'
+>;
+
+export function resetCatalogCapabilitiesForModelChange<T extends CatalogCapabilityConfig>(
+  cfg: T,
+  previousModelId: string
+): T {
+  if (modelIdsMatch(previousModelId, cfg.model)) return cfg;
+  const next = { ...cfg };
+  delete next.supportsTools;
+  delete next.supportsThinking;
+  delete next.supportsReasoningEffort;
+  delete next.supportsPromptCache;
+  return next;
+}
+
 /** Default / docs placeholders that are not a real catalog id. */
 const PLACEHOLDER_MODEL_IDS = new Set([
   'model-identifier',
@@ -584,15 +602,18 @@ function runtimeFromListedModel(info: ModelInfo): ModelRuntimeInfo {
 function applyLMStudioRuntime(cfg: Config, runtime: ModelRuntimeInfo): Config {
   const paramSmall = runtime.paramBillions !== undefined && runtime.paramBillions <= 8;
   const smallModelMode = cfg.smallModelMode ?? (paramSmall || isSmallModel(runtime.modelId));
-  return {
-    ...cfg,
-    model: runtime.modelId,
-    modelContextLength: runtime.contextLength ?? cfg.modelContextLength,
-    modelMaxContextLength: runtime.maxContextLength ?? cfg.modelMaxContextLength,
-    modelParamBillions: runtime.paramBillions ?? cfg.modelParamBillions,
-    modelRuntimeSource: 'lmstudio',
-    smallModelMode,
-  };
+  return resetCatalogCapabilitiesForModelChange(
+    {
+      ...cfg,
+      model: runtime.modelId,
+      modelContextLength: runtime.contextLength ?? cfg.modelContextLength,
+      modelMaxContextLength: runtime.maxContextLength ?? cfg.modelMaxContextLength,
+      modelParamBillions: runtime.paramBillions ?? cfg.modelParamBillions,
+      modelRuntimeSource: 'lmstudio',
+      smallModelMode,
+    },
+    cfg.model
+  );
 }
 
 function needsCatalogCaps(cfg: Config): boolean {

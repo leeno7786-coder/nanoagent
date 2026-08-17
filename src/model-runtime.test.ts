@@ -14,6 +14,7 @@ import {
   parseOpenAICompatModelList,
   resetOpenRouterCatalogCache,
   resetOpenAICompatCatalogCache,
+  resetCatalogCapabilitiesForModelChange,
 } from './model-runtime.js';
 
 describe('parseParamBillions', () => {
@@ -114,6 +115,26 @@ describe('modelIdsMatch', () => {
   it('handles org prefixes', () => {
     expect(modelIdsMatch('org/model', 'model')).toBe(true);
     expect(modelIdsMatch('org/suborg/model', 'model')).toBe(true);
+  });
+});
+
+describe('resetCatalogCapabilitiesForModelChange', () => {
+  it('clears catalog flags when the model id changes', () => {
+    const cfg = resetCatalogCapabilitiesForModelChange(
+      {
+        model: 'new-model',
+        supportsTools: true,
+        supportsThinking: true,
+        supportsReasoningEffort: true,
+        supportsPromptCache: true,
+      },
+      'old-model'
+    );
+
+    expect(cfg.supportsTools).toBeUndefined();
+    expect(cfg.supportsThinking).toBeUndefined();
+    expect(cfg.supportsReasoningEffort).toBeUndefined();
+    expect(cfg.supportsPromptCache).toBeUndefined();
   });
 });
 
@@ -308,11 +329,19 @@ describe('enrichConfigWithRuntime LM Studio loaded fallback', () => {
       workspace: '/tmp',
       maxIterations: 10,
       apiKey: null,
+      supportsTools: true,
+      supportsThinking: true,
+      supportsReasoningEffort: true,
+      supportsPromptCache: true,
     });
     expect(enriched.model).toBe('nvidia/nemotron-3-nano-4b');
     expect(enriched.modelContextLength).toBe(1048576);
     expect(enriched.modelRuntimeSource).toBe('lmstudio');
     expect(enriched.modelParamBillions).toBe(4);
+    expect(enriched.supportsTools).toBeUndefined();
+    expect(enriched.supportsThinking).toBeUndefined();
+    expect(enriched.supportsReasoningEffort).toBeUndefined();
+    expect(enriched.supportsPromptCache).toBeUndefined();
   });
 
   it('does not steal a different loaded model when the configured id exists', async () => {

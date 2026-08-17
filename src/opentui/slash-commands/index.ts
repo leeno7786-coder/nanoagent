@@ -489,7 +489,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           `- **API Key**: ${currentCfg.apiKey ? '`••••••••` (set)' : '*(not set)*'}`,
           `- **Temperature**: \`${currentCfg.temperature ?? 0.7}\``,
           `- **Max Tokens**: \`${currentCfg.maxTokens ?? 4096}\``,
-          `- **Effort**: \`${currentCfg.effort ?? 'low'}\``,
+          `- **Effort**: \`${currentCfg.effort ?? DEFAULT_EFFORT}\``,
           `- **Max Requests/min**: \`${currentCfg.maxRequestsPerMinute ?? 0}\` (0 = unlimited)`,
           `- **Max Concurrent LLM**: \`${currentCfg.maxConcurrentLlmRequests ?? 0}\` (0 = unlimited)`,
           `- **Max Tokens/min**: \`${currentCfg.maxTokensPerMinute ?? 0}\` (0 = off; no catalog default)`,

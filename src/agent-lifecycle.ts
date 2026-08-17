@@ -10,7 +10,11 @@ import { detectContext } from './context.js';
 import { SkillManager } from './skill-manager.js';
 import { loadSkills } from './skills.js';
 import { buildSystemPrompt } from './prompt.js';
-import { enrichConfigWithRuntime, isSmallModelFromConfig } from './model-runtime.js';
+import {
+  enrichConfigWithRuntime,
+  isSmallModelFromConfig,
+  resetCatalogCapabilitiesForModelChange,
+} from './model-runtime.js';
 import { loadConfig, applySubAgentDefaults } from './config.js';
 import { getRealEnv } from './config/load.js';
 import type { Config } from './types.js';
@@ -57,8 +61,12 @@ export function isTrustedMcpConfigSource(
 export async function reconfigureAgent(agent: AgentCore, newCfg: Partial<Config>) {
   const modelChanged = newCfg.model !== undefined || newCfg.baseURL !== undefined;
   const workspaceChanged = newCfg.workspace !== undefined;
+  const previousModelId = agent.cfg.model;
 
   agent.cfg = { ...agent.cfg, ...newCfg };
+  if (newCfg.model !== undefined) {
+    agent.cfg = resetCatalogCapabilitiesForModelChange(agent.cfg, previousModelId);
+  }
   applySubAgentDefaults(agent.cfg);
 
   // Update cache configuration if relevant options changed

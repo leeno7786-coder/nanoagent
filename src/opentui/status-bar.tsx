@@ -2,6 +2,7 @@
 
 import type { AgentState } from '../types.js';
 import { isSmallModelFromConfig } from '../model-runtime.js';
+import { DEFAULT_EFFORT } from '../config/effort.js';
 import type { Config } from '../types.js';
 import type { Theme } from './theme.js';
 import {
@@ -70,7 +71,7 @@ export function StatusBar({
   const s = cfg[state];
   const toolLabel = currentTool ? ` ${currentTool.name}` : '';
   const displayModel = model.length > 28 ? model.slice(0, 27) + '…' : model;
-  const agentEffort = modelRuntime?.effort ?? 'low';
+  const agentEffort = modelRuntime?.effort ?? DEFAULT_EFFORT;
   const workspaceName = workspace
     ? workspace.split(/[/\\]/).filter(Boolean).pop() || workspace
     : '';

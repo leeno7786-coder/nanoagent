@@ -118,21 +118,23 @@ describe('buildChatCompletionsParams', () => {
 
 describe('buildChatCompletionsParams effort', () => {
   it('omits thinking extras when effort is none even for qwen', () => {
-    const body = buildChatCompletionsParams(
-      cfg({ model: 'qwen3.5-4b', effort: 'none' }),
-      messages
-    );
+    const body = buildChatCompletionsParams(cfg({ model: 'qwen3.5-4b', effort: 'none' }), messages);
     expect(body.enable_thinking).toBeUndefined();
     expect(body.reasoning_effort).toBeUndefined();
   });
 
   it('sends enable_thinking for qwen at low when catalog is unknown', () => {
+    const body = buildChatCompletionsParams(cfg({ model: 'qwen3.5-4b', effort: 'low' }), messages);
+    expect(body.enable_thinking).toBe(true);
+    expect(body.reasoning_effort).toBeUndefined();
+  });
+
+  it('sends enable_thinking for a non-qwen model when the catalog supports thinking', () => {
     const body = buildChatCompletionsParams(
-      cfg({ model: 'qwen3.5-4b', effort: 'low' }),
+      cfg({ model: 'openai/gpt-5', effort: 'low', supportsThinking: true }),
       messages
     );
     expect(body.enable_thinking).toBe(true);
-    expect(body.reasoning_effort).toBeUndefined();
   });
 
   it('sends reasoning_effort xhigh when catalog supports it', () => {
