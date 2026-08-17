@@ -18,7 +18,10 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 interface StatusBarProps {
   state: AgentState;
   model: string;
-  modelRuntime?: Pick<Config, 'modelContextLength' | 'modelParamBillions' | 'smallModelMode'>;
+  modelRuntime?: Pick<
+    Config,
+    'modelContextLength' | 'modelParamBillions' | 'smallModelMode' | 'effort'
+  >;
   todoCount: number;
   currentTool?: { name: string; args: string };
   lastUsage?: TurnUsage;
@@ -67,6 +70,7 @@ export function StatusBar({
   const s = cfg[state];
   const toolLabel = currentTool ? ` ${currentTool.name}` : '';
   const displayModel = model.length > 28 ? model.slice(0, 27) + '…' : model;
+  const agentEffort = modelRuntime?.effort ?? 'low';
   const workspaceName = workspace
     ? workspace.split(/[/\\]/).filter(Boolean).pop() || workspace
     : '';
@@ -114,6 +118,7 @@ export function StatusBar({
         <box flexGrow={1} />
         <text fg={theme.mutedFg}>
           {displayModel}
+          {` · ${agentEffort}`}
           {smallModelIndicator}
           {!busy && ctxIndicator ? ` · ${ctxIndicator}` : ''}
         </text>

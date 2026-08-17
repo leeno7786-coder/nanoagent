@@ -46,6 +46,11 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       </text>
       <text fg={theme.agentFg}>
         {' '}
+        /settings Live settings (effort, model, limits) — saves globally
+      </text>
+      <text fg={theme.agentFg}> /effort Thinking effort: none|low|medium|high|extra-high</text>
+      <text fg={theme.agentFg}>
+        {' '}
         /set &lt;key&gt; &lt;val&gt; [--global] Quick-set config options (model, baseURL, etc)
       </text>
       <text fg={theme.agentFg}>
