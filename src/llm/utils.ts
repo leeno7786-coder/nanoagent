@@ -331,6 +331,16 @@ function getMaxOutputTokens(modelId: string, configuredMax?: number): number {
 }
 
 /**
+ * GPT-5.x and o-series (incl. Azure Foundry gpt-5.6-luna) reject `max_tokens`
+ * and non-default `temperature`. Send `max_completion_tokens` instead.
+ */
+export function usesMaxCompletionTokens(modelId: string): boolean {
+  const id = (modelId || '').toLowerCase();
+  if (id.includes('gpt-5')) return true;
+  return /(?:^|[^a-z0-9])o[1-4](?:-|mini|preview|pro|$)/.test(id);
+}
+
+/**
  * Normalize provider usage blocks to { input_tokens, output_tokens }.
  * Accepts OpenAI-style prompt_tokens/completion_tokens and the newer
  * input_tokens/output_tokens aliases (some LM Studio / proxy builds).

@@ -13,6 +13,7 @@ export {
   extractRetryAfterDelayMs,
   calculateBackoffDelay,
   getMaxOutputTokens,
+  usesMaxCompletionTokens,
 } from './utils.js';
 
 export {

@@ -114,4 +114,44 @@ describe('buildChatCompletionsParams', () => {
     const body = buildChatCompletionsParams(cfg({ model: 'qwen3.5-4b' }), messages);
     expect(body.enable_thinking).toBe(true);
   });
+
+  it('sends max_tokens for classic chat models', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'gpt-4o',
+        maxTokens: 4096,
+        temperature: 0.2,
+        baseURL: 'https://myres.openai.azure.com/openai/v1',
+      }),
+      messages
+    );
+    expect(body.max_tokens).toBe(4096);
+    expect(body.max_completion_tokens).toBeUndefined();
+    expect(body.temperature).toBe(0.2);
+  });
+
+  it('uses max_completion_tokens for Azure Foundry gpt-5.6-luna', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'gpt-5.6-luna',
+        maxTokens: 4096,
+        temperature: 0.2,
+        baseURL: 'https://myres.openai.azure.com/openai/v1',
+      }),
+      messages
+    );
+    expect(body.max_completion_tokens).toBe(4096);
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.temperature).toBeUndefined();
+  });
+
+  it('uses max_completion_tokens for o-series reasoning models', () => {
+    const body = buildChatCompletionsParams(
+      cfg({ model: 'o3-mini', maxTokens: 8000, temperature: 0.2 }),
+      messages
+    );
+    expect(body.max_completion_tokens).toBe(8000);
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.temperature).toBeUndefined();
+  });
 });

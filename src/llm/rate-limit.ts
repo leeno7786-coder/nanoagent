@@ -566,6 +566,7 @@ const NON_RETRIABLE_ERRORS = [
   'content_moderation',
   'content policy',
   'invalid_max_tokens',
+  'unsupported parameter',
   'model_not_found',
   'invalid_model',
   'invalid_api_key',
@@ -577,12 +578,10 @@ const NON_RETRIABLE_ERRORS = [
 function isRetriable(err?: unknown): boolean {
   if (!err) return true;
   const e = err as Record<string, unknown>;
-  const msg = (
-    (e.message as string) ||
-    (e.code as string) ||
-    (e.type as string) ||
-    ''
-  ).toLowerCase();
+  const msg = [extractApiMessage(err), e.message, e.code, e.type]
+    .filter((part): part is string => typeof part === 'string' && part.length > 0)
+    .join(' ')
+    .toLowerCase();
   return !NON_RETRIABLE_ERRORS.some((kw) => msg.includes(kw));
 }
 

@@ -638,6 +638,23 @@ export const RUNTIME_PROVIDERS: RuntimeProvider[] = [
         id: 'gpt-4.1',
         name: 'GPT-4.1',
       },
+      {
+        id: 'gpt-5.6-luna',
+        name: 'GPT-5.6 Luna',
+        description: 'Fast GPT-5.6 (use your deployment name if it differs)',
+      },
+      {
+        id: 'gpt-5.6-terra',
+        name: 'GPT-5.6 Terra',
+      },
+      {
+        id: 'gpt-5.6-sol',
+        name: 'GPT-5.6 Sol',
+      },
+      {
+        id: 'gpt-5',
+        name: 'GPT-5',
+      },
     ],
   },
   {

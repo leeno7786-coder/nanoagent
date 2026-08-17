@@ -12,6 +12,7 @@ export {
   extractRetryAfterDelayMs,
   calculateBackoffDelay,
   getMaxOutputTokens,
+  usesMaxCompletionTokens,
   doesChatFitInContext,
   estimateModelContextSize,
   effectiveContextSize,
