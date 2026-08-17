@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { SETTINGS_ROWS, applySettingsPatch, cycleSettingsValue } from './settings.js';
+import type { Config } from '../types.js';
+import {
+  SETTINGS_ROWS,
+  applySettingsPatch,
+  cycleSettingsValue,
+  displaySettingsValue,
+} from './settings.js';
 
 describe('cycleSettingsValue', () => {
   it('cycles effort in both directions with wraparound', () => {
@@ -35,6 +41,19 @@ describe('SETTINGS_ROWS', () => {
   });
 });
 
+describe('displaySettingsValue', () => {
+  it('shows default effort when absent', () => {
+    const cfg = {} as Config;
+    expect(displaySettingsValue('effort', cfg)).toBe('low');
+  });
+
+  it('shows auto for absent promptCache and unset for other absent values', () => {
+    const cfg = {} as Config;
+    expect(displaySettingsValue('promptCache', cfg)).toBe('auto');
+    expect(displaySettingsValue('model', cfg)).toBe('unset');
+  });
+});
+
 describe('applySettingsPatch', () => {
   it('builds string and numeric config patches', () => {
     expect(applySettingsPatch('model', ' qwen3.5-4b ')).toEqual({
@@ -59,6 +78,36 @@ describe('applySettingsPatch', () => {
     expect(applySettingsPatch('maxRequestsPerMinute', '-1')).toEqual({
       ok: false,
       error: 'RPM must be a non-negative integer',
+    });
+  });
+
+  it('rejects out-of-range RPM, TPM, and tool-result values', () => {
+    expect(applySettingsPatch('maxRequestsPerMinute', '10001')).toEqual({
+      ok: false,
+      error: 'RPM must be between 0 and 10000, got 10001',
+    });
+    expect(applySettingsPatch('maxTokensPerMinute', '10000001')).toEqual({
+      ok: false,
+      error: 'TPM must be between 0 and 10000000, got 10000001',
+    });
+    expect(applySettingsPatch('maxToolResultTokens', '1000001')).toEqual({
+      ok: false,
+      error: 'Tool result cap must be between 0 and 1000000, got 1000001',
+    });
+  });
+
+  it('accepts in-range RPM, TPM, and tool-result values', () => {
+    expect(applySettingsPatch('maxRequestsPerMinute', '20')).toEqual({
+      ok: true,
+      patch: { maxRequestsPerMinute: 20 },
+    });
+    expect(applySettingsPatch('maxTokensPerMinute', '0')).toEqual({
+      ok: true,
+      patch: { maxTokensPerMinute: 0 },
+    });
+    expect(applySettingsPatch('maxToolResultTokens', '8000')).toEqual({
+      ok: true,
+      patch: { maxToolResultTokens: 8000 },
     });
   });
 });

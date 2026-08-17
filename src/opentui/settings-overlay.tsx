@@ -9,6 +9,7 @@ import {
   SETTINGS_ROWS,
   applySettingsPatch,
   cycleSettingsValue,
+  displaySettingsValue,
   persistGlobalSetting,
   type SettingsKey,
 } from './settings.js';
@@ -17,17 +18,6 @@ interface SettingsOverlayProps {
   theme: Theme;
   agent: AgentCore;
   onClose: () => void;
-}
-
-function displayValue(key: SettingsKey, cfg: Config): string {
-  const value = cfg[key];
-  if (value === undefined) {
-    return key === 'promptCache' ? 'auto' : 'unset';
-  }
-  if (typeof value === 'boolean') {
-    return value ? 'on' : 'off';
-  }
-  return String(value);
 }
 
 export function SettingsOverlay({ theme, agent, onClose }: SettingsOverlayProps) {
@@ -153,7 +143,7 @@ export function SettingsOverlay({ theme, agent, onClose }: SettingsOverlayProps)
         {SETTINGS_ROWS.map((row, index) => {
           const selected = index === selectedIndex;
           const value =
-            selected && editing !== null ? `${editing}▌` : displayValue(row.key, agent.cfg);
+            selected && editing !== null ? `${editing}▌` : displaySettingsValue(row.key, agent.cfg);
           return (
             <text
               key={row.key}

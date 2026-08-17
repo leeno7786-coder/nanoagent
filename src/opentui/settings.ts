@@ -33,6 +33,19 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
 
 const PERMISSION_MODES = ['read_only', 'ask', 'allow_edits', 'always_allow'] as const;
 
+export function displaySettingsValue(key: SettingsKey, cfg: Config): string {
+  const value = cfg[key];
+  if (value === undefined) {
+    if (key === 'promptCache') return 'auto';
+    if (key === 'effort') return DEFAULT_EFFORT;
+    return 'unset';
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'on' : 'off';
+  }
+  return String(value);
+}
+
 export function cycleSettingsValue(
   key: SettingsKey,
   current: Config[SettingsKey],
@@ -63,6 +76,12 @@ const INTEGER_LABELS: Partial<Record<SettingsKey, string>> = {
   maxToolResultTokens: 'Tool result cap',
 };
 
+const INTEGER_BOUNDS: Partial<Record<SettingsKey, number>> = {
+  maxRequestsPerMinute: 10_000,
+  maxTokensPerMinute: 10_000_000,
+  maxToolResultTokens: 1_000_000,
+};
+
 export function applySettingsPatch(key: SettingsKey, raw: string): SettingsPatchResult {
   const value = raw.trim();
   if (key === 'model') {
@@ -81,6 +100,10 @@ export function applySettingsPatch(key: SettingsKey, raw: string): SettingsPatch
     const number = Number(value);
     if (!value || !Number.isInteger(number) || number < 0) {
       return { ok: false, error: `${label} must be a non-negative integer` };
+    }
+    const max = INTEGER_BOUNDS[key];
+    if (max !== undefined && number > max) {
+      return { ok: false, error: `${label} must be between 0 and ${max}, got ${number}` };
     }
     return { ok: true, patch: { [key]: number } };
   }
