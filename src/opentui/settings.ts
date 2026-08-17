@@ -3,15 +3,40 @@ import { cycleEffort, DEFAULT_EFFORT, parseEffort } from '../config/effort.js';
 import type { Config } from '../types.js';
 
 export type SettingsKey =
-  | 'effort'
+  | 'provider'
+  | 'baseURL'
   | 'model'
   | 'temperature'
   | 'maxTokens'
-  | 'permissionMode'
+  | 'effort'
+  | 'promptCache'
+  | 'smallModelMode'
+  | 'timeout'
+  | 'retryCount'
+  | 'maxIterations'
+  | 'maxToolRoundsBeforeCheckin'
+  | 'maxReasoningOnlyRounds'
+  | 'rateLimitMs'
   | 'maxRequestsPerMinute'
+  | 'maxConcurrentLlmRequests'
   | 'maxTokensPerMinute'
   | 'maxToolResultTokens'
-  | 'promptCache';
+  | 'promptPricePerMillion'
+  | 'completionPricePerMillion'
+  | 'permissionMode'
+  | 'contextManagementEnabled'
+  | 'contextCompactThreshold'
+  | 'contextSummaryReservedPercent'
+  | 'contextKeepCount'
+  | 'contextMaxHistoryTokens'
+  | 'toolCacheEnabled'
+  | 'toolCacheTtlMs'
+  | 'toolCacheMaxSize'
+  | 'commandTimeoutSeconds'
+  | 'subAgentModel'
+  | 'subAgentBaseURL'
+  | 'maxBackgroundSubAgents'
+  | 'theme';
 
 export interface SettingsRow {
   key: SettingsKey;
@@ -19,17 +44,118 @@ export interface SettingsRow {
   mode: 'cycle' | 'edit';
 }
 
-export const SETTINGS_ROWS: readonly SettingsRow[] = [
-  { key: 'effort', label: 'Effort', mode: 'cycle' },
-  { key: 'model', label: 'Model', mode: 'edit' },
-  { key: 'temperature', label: 'Temp', mode: 'edit' },
-  { key: 'maxTokens', label: 'Max tokens', mode: 'edit' },
-  { key: 'permissionMode', label: 'Permissions', mode: 'cycle' },
-  { key: 'maxRequestsPerMinute', label: 'RPM', mode: 'edit' },
-  { key: 'maxTokensPerMinute', label: 'TPM', mode: 'edit' },
-  { key: 'maxToolResultTokens', label: 'Tool result cap', mode: 'edit' },
-  { key: 'promptCache', label: 'Prompt cache', mode: 'cycle' },
+export type SettingsItem =
+  | { type: 'header'; label: string }
+  | ({ type: 'row' } & SettingsRow);
+
+const SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
+  {
+    title: 'Model',
+    rows: [
+      { key: 'provider', label: 'Provider', mode: 'edit' },
+      { key: 'baseURL', label: 'Base URL', mode: 'edit' },
+      { key: 'model', label: 'Model', mode: 'edit' },
+      { key: 'temperature', label: 'Temp', mode: 'edit' },
+      { key: 'maxTokens', label: 'Max tokens', mode: 'edit' },
+      { key: 'effort', label: 'Effort', mode: 'cycle' },
+      { key: 'promptCache', label: 'Prompt cache', mode: 'cycle' },
+      { key: 'smallModelMode', label: 'Small model', mode: 'cycle' },
+      { key: 'timeout', label: 'Timeout ms', mode: 'edit' },
+      { key: 'retryCount', label: 'Retries', mode: 'edit' },
+    ],
+  },
+  {
+    title: 'Limits',
+    rows: [
+      { key: 'maxIterations', label: 'Max iters', mode: 'edit' },
+      { key: 'maxToolRoundsBeforeCheckin', label: 'Tool check-in', mode: 'edit' },
+      { key: 'maxReasoningOnlyRounds', label: 'Reasoning rounds', mode: 'edit' },
+      { key: 'rateLimitMs', label: 'Rate limit ms', mode: 'edit' },
+      { key: 'maxRequestsPerMinute', label: 'RPM', mode: 'edit' },
+      { key: 'maxConcurrentLlmRequests', label: 'Concurrent LLM', mode: 'edit' },
+      { key: 'maxTokensPerMinute', label: 'TPM', mode: 'edit' },
+      { key: 'maxToolResultTokens', label: 'Tool result cap', mode: 'edit' },
+      { key: 'promptPricePerMillion', label: 'Prompt $/1M', mode: 'edit' },
+      { key: 'completionPricePerMillion', label: 'Comp $/1M', mode: 'edit' },
+    ],
+  },
+  {
+    title: 'Permissions',
+    rows: [{ key: 'permissionMode', label: 'Permissions', mode: 'cycle' }],
+  },
+  {
+    title: 'Context',
+    rows: [
+      { key: 'contextManagementEnabled', label: 'Context mgmt', mode: 'cycle' },
+      { key: 'contextCompactThreshold', label: 'Compact at', mode: 'edit' },
+      { key: 'contextSummaryReservedPercent', label: 'Summary reserve', mode: 'edit' },
+      { key: 'contextKeepCount', label: 'Keep count', mode: 'edit' },
+      { key: 'contextMaxHistoryTokens', label: 'Max history', mode: 'edit' },
+    ],
+  },
+  {
+    title: 'Tools',
+    rows: [
+      { key: 'toolCacheEnabled', label: 'Tool cache', mode: 'cycle' },
+      { key: 'toolCacheTtlMs', label: 'Cache TTL ms', mode: 'edit' },
+      { key: 'toolCacheMaxSize', label: 'Cache size', mode: 'edit' },
+      { key: 'commandTimeoutSeconds', label: 'Cmd timeout s', mode: 'edit' },
+    ],
+  },
+  {
+    title: 'Sub-agents',
+    rows: [
+      { key: 'subAgentModel', label: 'Sub model', mode: 'edit' },
+      { key: 'subAgentBaseURL', label: 'Sub base URL', mode: 'edit' },
+      { key: 'maxBackgroundSubAgents', label: 'Max sub-agents', mode: 'edit' },
+    ],
+  },
+  {
+    title: 'UI',
+    rows: [{ key: 'theme', label: 'Theme', mode: 'cycle' }],
+  },
 ];
+
+export const SETTINGS_SECTIONS = SECTIONS;
+
+export function flattenSettingsItems(
+  sections: typeof SECTIONS = SECTIONS
+): SettingsItem[] {
+  const items: SettingsItem[] = [];
+  for (const section of sections) {
+    items.push({ type: 'header', label: section.title });
+    for (const row of section.rows) {
+      items.push({ type: 'row', ...row });
+    }
+  }
+  return items;
+}
+
+export const SETTINGS_ITEMS: readonly SettingsItem[] = flattenSettingsItems();
+
+export const SETTINGS_ROWS: readonly SettingsRow[] = SETTINGS_ITEMS.filter(
+  (item): item is { type: 'row' } & SettingsRow => item.type === 'row'
+).map(({ key, label, mode }) => ({ key, label, mode }));
+
+export function firstSelectableIndex(items: readonly SettingsItem[]): number {
+  const index = items.findIndex((item) => item.type === 'row');
+  return index >= 0 ? index : 0;
+}
+
+export function nextSelectableIndex(
+  items: readonly SettingsItem[],
+  current: number,
+  delta: 1 | -1
+): number {
+  const len = items.length;
+  if (len === 0) return 0;
+  let i = current;
+  for (let n = 0; n < len; n++) {
+    i = (i + delta + len) % len;
+    if (items[i]?.type === 'row') return i;
+  }
+  return current;
+}
 
 const PERMISSION_MODES = ['read_only', 'ask', 'allow_edits', 'always_allow'] as const;
 

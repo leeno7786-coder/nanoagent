@@ -1,11 +1,66 @@
 import { describe, expect, it } from 'bun:test';
 import type { Config } from '../types.js';
 import {
+  SETTINGS_ITEMS,
   SETTINGS_ROWS,
   applySettingsPatch,
   cycleSettingsValue,
   displaySettingsValue,
+  firstSelectableIndex,
+  flattenSettingsItems,
+  nextSelectableIndex,
+  type SettingsItem,
 } from './settings.js';
+
+const CATALOG_KEYS = [
+  'provider',
+  'baseURL',
+  'model',
+  'temperature',
+  'maxTokens',
+  'effort',
+  'promptCache',
+  'smallModelMode',
+  'timeout',
+  'retryCount',
+  'maxIterations',
+  'maxToolRoundsBeforeCheckin',
+  'maxReasoningOnlyRounds',
+  'rateLimitMs',
+  'maxRequestsPerMinute',
+  'maxConcurrentLlmRequests',
+  'maxTokensPerMinute',
+  'maxToolResultTokens',
+  'promptPricePerMillion',
+  'completionPricePerMillion',
+  'permissionMode',
+  'contextManagementEnabled',
+  'contextCompactThreshold',
+  'contextSummaryReservedPercent',
+  'contextKeepCount',
+  'contextMaxHistoryTokens',
+  'toolCacheEnabled',
+  'toolCacheTtlMs',
+  'toolCacheMaxSize',
+  'commandTimeoutSeconds',
+  'subAgentModel',
+  'subAgentBaseURL',
+  'maxBackgroundSubAgents',
+  'theme',
+] as const;
+
+const EXCLUDED_KEYS = [
+  'apiKey',
+  'subAgentApiKey',
+  'workspace',
+  'mcp',
+  'profiles',
+  'fallbacks',
+  'permissionRules',
+  'securityEnabled',
+  'systemPrompt',
+  'supportsThinking',
+] as const;
 
 describe('cycleSettingsValue', () => {
   it('cycles effort in both directions with wraparound', () => {
@@ -25,19 +80,45 @@ describe('cycleSettingsValue', () => {
   });
 });
 
-describe('SETTINGS_ROWS', () => {
-  it('contains only the settings exposed by the overlay', () => {
-    expect(SETTINGS_ROWS.map(({ key, label }) => ({ key, label }))).toEqual([
-      { key: 'effort', label: 'Effort' },
-      { key: 'model', label: 'Model' },
-      { key: 'temperature', label: 'Temp' },
-      { key: 'maxTokens', label: 'Max tokens' },
-      { key: 'permissionMode', label: 'Permissions' },
-      { key: 'maxRequestsPerMinute', label: 'RPM' },
-      { key: 'maxTokensPerMinute', label: 'TPM' },
-      { key: 'maxToolResultTokens', label: 'Tool result cap' },
-      { key: 'promptCache', label: 'Prompt cache' },
+describe('settings catalog', () => {
+  it('lists every user-facing scalar once', () => {
+    const keys = SETTINGS_ROWS.map((row) => row.key);
+    expect(keys).toEqual([...CATALOG_KEYS]);
+  });
+
+  it('omits secrets, nested maps, catalog flags, and security toggles', () => {
+    const keys = SETTINGS_ROWS.map((row) => row.key as string);
+    for (const excluded of EXCLUDED_KEYS) {
+      expect(keys).not.toContain(excluded);
+    }
+  });
+
+  it('inserts a header before each section', () => {
+    const headers = SETTINGS_ITEMS.filter((item) => item.type === 'header').map(
+      (item) => item.label
+    );
+    expect(headers).toEqual([
+      'Model',
+      'Limits',
+      'Permissions',
+      'Context',
+      'Tools',
+      'Sub-agents',
+      'UI',
     ]);
+  });
+});
+
+describe('nextSelectableIndex', () => {
+  const items: SettingsItem[] = flattenSettingsItems();
+
+  it('skips headers and wraps', () => {
+    const first = firstSelectableIndex(items);
+    expect(items[first]?.type).toBe('row');
+    expect(items[nextSelectableIndex(items, first, -1)]?.type).toBe('row');
+    expect(items[nextSelectableIndex(items, first, 1)]?.type).toBe('row');
+    const lastRow = [...items.keys()].reverse().find((i) => items[i]?.type === 'row') ?? 0;
+    expect(nextSelectableIndex(items, lastRow, 1)).toBe(first);
   });
 });
 
