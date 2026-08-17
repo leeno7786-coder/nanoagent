@@ -184,11 +184,12 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Prefers native terminal paste (right-click / Ctrl+Shift+V) for TUI inputs including `/connect` API keys; F7 mouse capture blocks paste.
 - Keep a wide OpenAI-compatible provider catalog (Azure AI Foundry cloud, Kimi Code, Alibaba Model Studio intl/CN/Coding Plan, plus other coding-agent clouds/locals). Stay on Chat Completions — no native Anthropic/Bedrock/Google SDKs. Qwen catalog models belong on DashScope, not OpenAI.
 - Keep public README and shipped docs aligned with the current system, including a WIP notice that some features may be experimental or buggy.
+- Builds the Linux `.deb` on a separate Linux PC; on this Windows machine rebuild the Windows zip (`bun run package:win`) and do not rely on WSL/NTFS for `.deb` builds.
 
 ## 10. Learned Workspace Facts
 
 - Bun + OpenTUI agent; TUI code lives in `src/opentui/`; config at `~/.nanogent.json` or `.nanogent.json` (legacy `~/.qwen-agent.json` is still read).
-- Default local backend is LM Studio at `http://127.0.0.1:1234/v1`.
+- Default local backend is LM Studio at `http://127.0.0.1:1234/v1`. Local generation on this Windows PC is slow — wait a minute or more for the first token on live smokes; do not treat 60–90s of silence as a hang.
 - Sub-agent tool: `explore_subagent` (dispatch ONE remote Qwen with a focused `prompt` + optional `focus_path`). The blind "fan to all" tool was removed because vague prompts time out on large codebases.
 - Remote sub-agents run on Qwen3.5 model(s) (≤9B, currently the 4B) in this machine's LM Studio. A single
   loaded model with N parallel prediction slots serves N workers (scheduler counts

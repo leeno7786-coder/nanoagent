@@ -52,6 +52,18 @@ export function shouldEnableThinking(modelId: string): boolean {
   return lower.includes('qwen') || lower.includes('bonsai');
 }
 
+/**
+ * Chat Completions models that reject `max_tokens` / sampling params
+ * (OpenAI o-series, GPT-5 family, Azure Foundry gpt-5.6-luna, etc.).
+ */
+export function usesMaxCompletionTokens(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  if (/(?:^|[^a-z0-9])gpt-5(?!\d)/.test(id)) return true;
+  if (/(?:^|[^a-z0-9])o[1-9](?:[-.]|[a-z]|$)/.test(id)) return true;
+  if (/(?:^|[^a-z0-9])codex-mini(?:[^a-z0-9]|$)/.test(id)) return true;
+  return false;
+}
+
 export function isSmallModel(
   modelId: string,
   _maxTokens?: number,

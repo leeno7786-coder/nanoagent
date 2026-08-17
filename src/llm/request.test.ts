@@ -114,6 +114,45 @@ describe('buildChatCompletionsParams', () => {
     const body = buildChatCompletionsParams(cfg({ model: 'qwen3.5-4b' }), messages);
     expect(body.enable_thinking).toBe(true);
   });
+
+  it('sends max_tokens and temperature for classic chat models', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'gpt-4o',
+        maxTokens: 4096,
+        temperature: 0.2,
+        baseURL: 'https://api.openai.com/v1',
+      }),
+      messages
+    );
+    expect(body.max_tokens).toBe(4096);
+    expect(body.max_completion_tokens).toBeUndefined();
+    expect(body.temperature).toBe(0.2);
+  });
+
+  it('sends max_completion_tokens and omits sampling params for Azure GPT-5.6 Luna', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'gpt-5.6-luna',
+        maxTokens: 4096,
+        temperature: 0.2,
+        baseURL: 'https://myres.openai.azure.com/openai/v1',
+      }),
+      messages
+    );
+    expect(body.max_completion_tokens).toBe(4096);
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.temperature).toBeUndefined();
+  });
+
+  it('uses the completion-token param for o-series and prefixed GPT-5 ids', () => {
+    for (const model of ['o3-mini', 'openai/gpt-5', 'gpt-5.1']) {
+      const body = buildChatCompletionsParams(cfg({ model, maxTokens: 2048 }), messages);
+      expect(body.max_completion_tokens).toBe(2048);
+      expect(body.max_tokens).toBeUndefined();
+      expect(body.temperature).toBeUndefined();
+    }
+  });
 });
 
 describe('buildChatCompletionsParams effort', () => {
