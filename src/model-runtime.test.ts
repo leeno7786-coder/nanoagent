@@ -136,6 +136,33 @@ describe('resetCatalogCapabilitiesForModelChange', () => {
     expect(cfg.supportsReasoningEffort).toBeUndefined();
     expect(cfg.supportsPromptCache).toBeUndefined();
   });
+
+  it('clears catalog flags when org prefix changes but basename matches', () => {
+    const cfg = resetCatalogCapabilitiesForModelChange(
+      {
+        model: 'org-b/foo',
+        supportsThinking: true,
+        supportsReasoningEffort: true,
+      },
+      'org-a/foo'
+    );
+
+    expect(cfg.supportsThinking).toBeUndefined();
+    expect(cfg.supportsReasoningEffort).toBeUndefined();
+  });
+
+  it('keeps catalog flags when only path separators differ', () => {
+    const original = {
+      model: 'org/foo',
+      supportsThinking: true,
+      supportsReasoningEffort: true,
+    };
+    const cfg = resetCatalogCapabilitiesForModelChange(original, 'org\\foo');
+
+    expect(cfg).toBe(original);
+    expect(cfg.supportsThinking).toBe(true);
+    expect(cfg.supportsReasoningEffort).toBe(true);
+  });
 });
 
 describe('isLMStudioURL', () => {

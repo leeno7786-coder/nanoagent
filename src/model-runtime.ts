@@ -112,7 +112,9 @@ export function resetCatalogCapabilitiesForModelChange<T extends CatalogCapabili
   cfg: T,
   previousModelId: string
 ): T {
-  if (modelIdsMatch(previousModelId, cfg.model)) return cfg;
+  const prevNorm = previousModelId.toLowerCase().replace(/\\/g, '/');
+  const nextNorm = cfg.model.toLowerCase().replace(/\\/g, '/');
+  if (prevNorm === nextNorm) return cfg;
   const next = { ...cfg };
   delete next.supportsTools;
   delete next.supportsThinking;
