@@ -1,5 +1,6 @@
 import { statSync } from 'fs';
 import type { Config } from '../types.js';
+import { parseEffort } from './effort.js';
 
 export function validateConfig(cfg: Config): {
   valid: boolean;
@@ -191,6 +192,15 @@ export function validateConfig(cfg: Config): {
     if (cfg.maxBackgroundSubAgents < 1 || cfg.maxBackgroundSubAgents > 16) {
       warnings.push(
         `maxBackgroundSubAgents should be between 1 and 16 for stability, got ${cfg.maxBackgroundSubAgents}`
+      );
+    }
+  }
+
+  if (cfg.effort !== undefined) {
+    const ok = parseEffort(cfg.effort);
+    if (!ok) {
+      warnings.push(
+        `effort must be none|low|medium|high|extra-high, got ${JSON.stringify(cfg.effort)}`
       );
     }
   }

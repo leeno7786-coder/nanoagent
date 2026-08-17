@@ -1,3 +1,6 @@
+import { logError } from '../log.js';
+import type { Config } from '../types.js';
+
 export type EffortLevel = 'none' | 'low' | 'medium' | 'high' | 'extra-high';
 
 export const EFFORT_LEVELS = ['none', 'low', 'medium', 'high', 'extra-high'] as const;
@@ -38,4 +41,33 @@ export function reasoningEffortParam(
 
 export function formatEffortAllowed(): string {
   return EFFORT_LEVELS.join('|');
+}
+
+export function applyEffortFromEnvAndDefault(cfg: Pick<Config, 'effort'>): void {
+  if (cfg.effort !== undefined) {
+    const parsed = parseEffort(cfg.effort);
+    if (parsed) {
+      cfg.effort = parsed;
+      return;
+    }
+    logError(
+      `Error: effort must be ${formatEffortAllowed()}, got ${JSON.stringify(cfg.effort)}.\n` +
+        `  Example: QWEN_EFFORT=low or { "effort": "low" } in ~/.nanogent.json`
+    );
+    delete cfg.effort;
+  }
+  const raw = process.env.QWEN_EFFORT;
+  if (raw !== undefined && raw !== '') {
+    const parsed = parseEffort(raw);
+    if (!parsed) {
+      logError(
+        `Error: QWEN_EFFORT must be ${formatEffortAllowed()}, got ${JSON.stringify(raw)}.\n` +
+          `  Example: QWEN_EFFORT=low`
+      );
+    } else {
+      cfg.effort = parsed;
+      return;
+    }
+  }
+  cfg.effort = DEFAULT_EFFORT;
 }

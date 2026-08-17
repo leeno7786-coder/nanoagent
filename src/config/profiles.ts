@@ -111,6 +111,7 @@ export function applyModelProfile(
 
   if (profile.maxTokens !== undefined) patch.maxTokens = profile.maxTokens;
   if (profile.temperature !== undefined) patch.temperature = profile.temperature;
+  if (profile.effort !== undefined) patch.effort = profile.effort;
   if (profile.timeout !== undefined) patch.timeout = profile.timeout;
   if (profile.retryCount !== undefined) patch.retryCount = profile.retryCount;
   if (profile.maxToolResultTokens !== undefined) {
@@ -130,6 +131,7 @@ export function applyModelProfile(
   if (providerId) persist.provider = providerId;
   if (profile.maxTokens !== undefined) persist.maxTokens = profile.maxTokens;
   if (profile.temperature !== undefined) persist.temperature = profile.temperature;
+  if (profile.effort !== undefined) persist.effort = profile.effort;
   if (profile.timeout !== undefined) persist.timeout = profile.timeout;
   if (profile.retryCount !== undefined) persist.retryCount = profile.retryCount;
   if (profile.maxToolResultTokens !== undefined) {

@@ -22,6 +22,7 @@ export interface ModelProfile {
   provider?: string;
   maxTokens?: number;
   temperature?: number;
+  effort?: 'none' | 'low' | 'medium' | 'high' | 'extra-high';
   timeout?: number;
   retryCount?: number;
   maxToolResultTokens?: number;
@@ -96,6 +97,7 @@ export interface Config {
    * (keep today's qwen/bonsai enable_thinking). Explicit false omits them.
    */
   supportsThinking?: boolean;
+  effort?: 'none' | 'low' | 'medium' | 'high' | 'extra-high';
   /**
    * Catalog-reported prompt-cache extras. Undefined = unknown (do not send).
    * Explicit true allows Chat Completions `prompt_cache_key` on cloud endpoints.
