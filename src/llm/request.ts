@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import type { Config } from '../types.js';
 import { logWarn } from '../log.js';
 import type { ChatMessage, ChatRequestOptions } from './types.js';
-import { getMaxOutputTokens, isLocalProvider, shouldEnableThinking } from './utils.js';
+import {
+  getMaxOutputTokens,
+  isLocalProvider,
+  shouldEnableThinking,
+  usesMaxCompletionTokens,
+} from './utils.js';
 
 const warnedNoTools = new Set<string>();
 
@@ -72,13 +77,19 @@ export function buildChatCompletionsParams(
   options?: ChatRequestOptions & { stream?: boolean }
 ): Record<string, unknown> {
   const enableThinking = shouldSendThinkingExtra(cfg, options);
+  const maxOut = getMaxOutputTokens(cfg.model, cfg.maxTokens);
+  const reasoningChat = usesMaxCompletionTokens(cfg.model);
   const params: Record<string, unknown> = {
     model: cfg.model,
     messages: flattenChatMessages(messages),
-    temperature: cfg.temperature ?? 0.2,
-    max_tokens: getMaxOutputTokens(cfg.model, cfg.maxTokens),
     tool_choice: tools?.length ? 'auto' : undefined,
   };
+  if (reasoningChat) {
+    params.max_completion_tokens = maxOut;
+  } else {
+    params.temperature = cfg.temperature ?? 0.2;
+    params.max_tokens = maxOut;
+  }
   if (options?.stream) {
     params.stream = true;
     params.stream_options = { include_usage: true };

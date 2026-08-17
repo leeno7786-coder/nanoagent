@@ -6,6 +6,7 @@ export {
   isLocalProvider,
   isSmallModel,
   shouldEnableThinking,
+  usesMaxCompletionTokens,
   countTokens,
   extractDeltaText,
   extractApiMessage,

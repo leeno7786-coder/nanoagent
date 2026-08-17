@@ -17,6 +17,7 @@ import {
   isEndpointRateLimited,
   resetEndpointLimiterState,
   getEndpointLimiterSnapshot,
+  shouldRetry,
 } from './rate-limit.js';
 
 beforeEach(() => {
@@ -212,5 +213,19 @@ describe('optional TPM pacing', () => {
     const url = 'https://tpm-est.example/v1';
     noteEndpointPromptTokens(url, 1000);
     expect(estimatePromptTokensForRequest(url, [{ role: 'user', content: 'hi' }])).toBe(1100);
+  });
+});
+
+describe('shouldRetry', () => {
+  it('does not retry 400 unsupported parameter errors', () => {
+    const err = {
+      message:
+        "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.",
+    };
+    expect(shouldRetry(400, 1, err)).toBe(false);
+  });
+
+  it('retries other 400s on early attempts', () => {
+    expect(shouldRetry(400, 1, { message: 'Bad request' })).toBe(true);
   });
 });

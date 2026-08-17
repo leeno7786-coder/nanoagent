@@ -566,6 +566,7 @@ const NON_RETRIABLE_ERRORS = [
   'content_moderation',
   'content policy',
   'invalid_max_tokens',
+  'unsupported parameter',
   'model_not_found',
   'invalid_model',
   'invalid_api_key',
