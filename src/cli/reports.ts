@@ -14,6 +14,7 @@ export interface DoctorReport {
   workspace: string;
   baseURL: string;
   model: string;
+  effort: string;
   /** Configured id when it differs from the resolved/loaded `model`. */
   configured_model?: string;
   profile?: string;
@@ -57,6 +58,7 @@ export async function getDoctorReport(cfg?: Config): Promise<DoctorReport> {
     workspace: c.workspace,
     baseURL: c.baseURL,
     model: resolvedModel || c.model,
+    effort: enriched.effort ?? 'low',
     ...(configuredDiffers ? { configured_model: c.model } : {}),
     ...(c.profile ? { profile: c.profile } : {}),
     ...(c.fallbacks && c.fallbacks.length > 0
@@ -99,6 +101,7 @@ export function formatDoctorReport(report: DoctorReport): string {
     `workspace: ${report.workspace}`,
     `base_url: ${report.baseURL}`,
     `model: ${report.model}`,
+    `effort: ${report.effort}`,
     `runtime: ${report.runtime_reachable ? 'reachable' : 'unreachable'}`,
   ];
   if (report.configured_model) {

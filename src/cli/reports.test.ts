@@ -9,6 +9,7 @@ describe('formatDoctorReport', () => {
       workspace: '/tmp',
       baseURL: 'http://127.0.0.1:1234/v1',
       model: 'qwen3.5-4b',
+      effort: 'low',
       profile: 'local',
       fallbacks: [{ model: 'openrouter/free', baseURL: 'https://openrouter.ai/api/v1' }],
       runtime_reachable: true,
@@ -22,6 +23,7 @@ describe('formatDoctorReport', () => {
     };
     const text = formatDoctorReport(report);
     expect(text).toContain('profile: local');
+    expect(text).toContain('effort: low');
     expect(text).toContain('openrouter/free');
     expect(text).toContain('QWEN_FALLBACK_MODEL');
   });
@@ -32,6 +34,7 @@ describe('formatDoctorReport', () => {
       workspace: '/tmp',
       baseURL: 'https://api.groq.com/openai/v1',
       model: 'llama-3.1-70b-versatile',
+      effort: 'low',
       runtime_reachable: true,
       small_model_mode: false,
       max_requests_per_minute: 30,
@@ -60,6 +63,7 @@ describe('formatDoctorReport', () => {
       workspace: '/tmp',
       baseURL: 'http://127.0.0.1:1234/v1',
       model: 'nvidia/nemotron-3-nano-4b',
+      effort: 'low',
       configured_model: 'model-identifier',
       runtime_reachable: true,
       small_model_mode: true,
