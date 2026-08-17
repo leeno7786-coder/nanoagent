@@ -156,6 +156,7 @@ Global defaults live in `~/.nanogent.json` or `~/.nanoagent.json`. Project overr
   "maxConcurrentLlmRequests": 2,
   "maxTokensPerMinute": 200000,
   "maxToolResultTokens": 8000,
+  "effort": "low",
   "profiles": {
     "local": {
       "model": "Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
@@ -218,6 +219,10 @@ In the TUI:
 - `/set <key> <val>` — same as `/config set`
 - `/profile` / `/profile list` — named snapshots
 - `/profile <name>` — apply live (`--global` / `--local` to persist)
+- `/settings` — settings overlay (model, effort, and related knobs)
+- `/effort [none|low|medium|high|extra-high]` — cycle or set thinking effort
+
+`/settings` and `/effort` write `~/.nanogent.json` immediately.
 
 ---
 
@@ -231,6 +236,8 @@ In the TUI:
 | `/compact` | Force context compaction |
 | `/auto <task>` | Autonomous run (F3 prefills `/auto`) |
 | `/config` `/set` | View or edit `.nanogent.json` |
+| `/settings` | Settings overlay (writes `~/.nanogent.json` immediately) |
+| `/effort` | Set or cycle thinking effort (`none`–`extra-high`; writes global config) |
 | `/profile` | List or apply a named model snapshot (`--global` to persist) |
 | `/connect` | Pick runtime, API key, and model |
 | `/usage` | Session input/output tokens and estimated USD (when prices are known) |
