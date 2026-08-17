@@ -13,6 +13,7 @@ import {
   getProvider,
 } from '../providers/lookup.js';
 import { parseFallbacksConfig } from '../llm/failover.js';
+import { applyEffortFromEnvAndDefault, parseEffort } from './effort.js';
 
 /**
  * Trust-sensitive environment variables. Workspace/project .env files are
@@ -215,6 +216,8 @@ function normalizeProfiles(cfg: Config): void {
     ) {
       profile.maxConcurrentLlmRequests = rec.maxConcurrentLlmRequests;
     }
+    const effort = parseEffort(rec.effort);
+    if (effort) profile.effort = effort;
     cleaned[name.trim()] = profile;
   }
   cfg.profiles = cleaned;
@@ -502,6 +505,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     if (raw === '0' || raw === 'false') cfg.promptCache = false;
     else if (raw === '1' || raw === 'true') cfg.promptCache = true;
   }
+  applyEffortFromEnvAndDefault(cfg);
   if (process.env.QWEN_TOOL_CACHE_TTL_MS) {
     const n = parseInt(process.env.QWEN_TOOL_CACHE_TTL_MS, 10);
     if (!Number.isNaN(n) && n >= 0) cfg.toolCacheTtlMs = n;

@@ -1,5 +1,6 @@
 import { loadSkills, getSkill, getSkillCommands } from '../../skills.js';
 import { loadConfig, saveConfigFile, applyModelProfile, formatProfileList } from '../../config.js';
+import { parseEffort, formatEffortAllowed, DEFAULT_EFFORT } from '../../config/effort.js';
 import {
   getDoctorReport,
   formatDoctorReport,
@@ -428,9 +429,49 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       }
       return;
     }
+    case 'settings':
+      setOverlay('settings');
+      return;
+    case 'effort': {
+      const raw = args.trim();
+      const current = agent.cfg.effort ?? DEFAULT_EFFORT;
+      if (!raw) {
+        pushAssistant(
+          agent,
+          `effort: ${current}\nAllowed: ${formatEffortAllowed()}\nExample: /effort high`,
+          setMessages
+        );
+        return;
+      }
+      const parsed = parseEffort(raw);
+      if (!parsed) {
+        pushAssistant(
+          agent,
+          `Unknown effort "${raw}". Allowed: ${formatEffortAllowed()}`,
+          setMessages
+        );
+        return;
+      }
+      try {
+        const { targetPath } = saveConfigFile({ effort: parsed }, 'global', agent.cfg.workspace);
+        await agent.reconfigure({ effort: parsed });
+        pushAssistant(agent, `Saved effort=${parsed} to ${targetPath}`, setMessages);
+      } catch (err) {
+        pushAssistant(
+          agent,
+          `Failed to save effort: ${err instanceof Error ? err.message : String(err)}`,
+          setMessages
+        );
+      }
+      return;
+    }
     case 'config':
     case 'set': {
       const trimmedArgs = args.trim();
+      if (command === 'config' && !trimmedArgs) {
+        setOverlay('settings');
+        return;
+      }
       const parts = trimmedArgs.split(/\s+/);
       const subCommand = command === 'set' ? 'set' : parts[0]?.toLowerCase() || 'show';
 
@@ -452,6 +493,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           `- **API Key**: ${currentCfg.apiKey ? '`••••••••` (set)' : '*(not set)*'}`,
           `- **Temperature**: \`${currentCfg.temperature ?? 0.7}\``,
           `- **Max Tokens**: \`${currentCfg.maxTokens ?? 4096}\``,
+          `- **Effort**: \`${currentCfg.effort ?? DEFAULT_EFFORT}\``,
           `- **Max Requests/min**: \`${currentCfg.maxRequestsPerMinute ?? 0}\` (0 = unlimited)`,
           `- **Max Concurrent LLM**: \`${currentCfg.maxConcurrentLlmRequests ?? 0}\` (0 = unlimited)`,
           `- **Max Tokens/min**: \`${currentCfg.maxTokensPerMinute ?? 0}\` (0 = off; no catalog default)`,
@@ -489,6 +531,9 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           '- `/config set promptCache false`',
           '- `/config reload` (reload from disk)',
           '- `/profile <name>` (apply a named snapshot; add `--global` to persist)',
+          '- `/effort <none|low|medium|high|extra-high>` (persists globally)',
+          '- `/config` (overlay; persists globally)',
+          '- `/settings` (alias for `/config` overlay)',
         ].join('\n');
 
         pushAssistant(agent, info, setMessages);

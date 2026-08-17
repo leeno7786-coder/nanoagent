@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.1.7** (`@omega3_0/nanoagent`)
+Current release: **2.1.8** (`@omega3_0/nanoagent`)
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -156,6 +156,7 @@ Global defaults live in `~/.nanogent.json` or `~/.nanoagent.json`. Project overr
   "maxConcurrentLlmRequests": 2,
   "maxTokensPerMinute": 200000,
   "maxToolResultTokens": 8000,
+  "effort": "low",
   "profiles": {
     "local": {
       "model": "Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
@@ -206,7 +207,8 @@ Context windows come from the live runtime when the catalog reports them: LM Stu
 
 In the TUI:
 
-- `/config` or `/config show` — active config and loaded files
+- `/config` — open the live config overlay (writes `~/.nanogent.json` immediately)
+- `/config show` — print the config summary in chat
 - `/config set model <name>` — project-local
 - `/config set baseURL http://127.0.0.1:1234/v1 --global` — machine-wide
 - `/config set maxRequestsPerMinute 20`
@@ -218,6 +220,10 @@ In the TUI:
 - `/set <key> <val>` — same as `/config set`
 - `/profile` / `/profile list` — named snapshots
 - `/profile <name>` — apply live (`--global` / `--local` to persist)
+- `/settings` — alias for `/config`
+- `/effort [none|low|medium|high|extra-high]` — show or set thinking effort
+
+`/config`, `/settings`, and `/effort` write `~/.nanogent.json` immediately.
 
 ---
 
@@ -230,7 +236,9 @@ In the TUI:
 | `/clear` | Clear chat (F2); keeps system messages |
 | `/compact` | Force context compaction |
 | `/auto <task>` | Autonomous run (F3 prefills `/auto`) |
-| `/config` `/set` | View or edit `.nanogent.json` |
+| `/config` | Live scalar overlay (global persist). `/config show` prints. `/config set` writes a file. |
+| `/settings` | Alias for `/config` overlay |
+| `/effort` | Show or set thinking effort (`none`–`extra-high`; writes global config when set) |
 | `/profile` | List or apply a named model snapshot (`--global` to persist) |
 | `/connect` | Pick runtime, API key, and model |
 | `/usage` | Session input/output tokens and estimated USD (when prices are known) |

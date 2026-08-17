@@ -57,7 +57,7 @@ export function shouldSendThinkingExtra(
 }
 
 export function resolveEffort(cfg: Pick<Config, 'effort'>): EffortLevel {
-  return (cfg.effort as EffortLevel) ?? DEFAULT_EFFORT;
+  return cfg.effort ?? DEFAULT_EFFORT;
 }
 
 export function shouldSendReasoningEffort(

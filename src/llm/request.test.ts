@@ -154,3 +154,81 @@ describe('buildChatCompletionsParams', () => {
     }
   });
 });
+
+describe('buildChatCompletionsParams effort', () => {
+  it('omits thinking extras when effort is none even for qwen', () => {
+    const body = buildChatCompletionsParams(cfg({ model: 'qwen3.5-4b', effort: 'none' }), messages);
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.reasoning_effort).toBeUndefined();
+  });
+
+  it('sends enable_thinking for qwen at low when catalog is unknown', () => {
+    const body = buildChatCompletionsParams(cfg({ model: 'qwen3.5-4b', effort: 'low' }), messages);
+    expect(body.enable_thinking).toBe(true);
+    expect(body.reasoning_effort).toBeUndefined();
+  });
+
+  it('sends enable_thinking for a non-qwen model when the catalog supports thinking', () => {
+    const body = buildChatCompletionsParams(
+      cfg({ model: 'openai/gpt-5', effort: 'low', supportsThinking: true }),
+      messages
+    );
+    expect(body.enable_thinking).toBe(true);
+  });
+
+  it('sends reasoning_effort xhigh when catalog supports it', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'openai/gpt-5',
+        effort: 'extra-high',
+        supportsReasoningEffort: true,
+        supportsThinking: true,
+      }),
+      messages
+    );
+    expect(body.reasoning_effort).toBe('xhigh');
+    expect(body.enable_thinking).toBe(true);
+  });
+
+  it('does not send reasoning_effort on local endpoints', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'http://127.0.0.1:1234/v1',
+        effort: 'high',
+        supportsReasoningEffort: true,
+      }),
+      messages
+    );
+    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.enable_thinking).toBe(true);
+  });
+
+  it('omits extras when supportsThinking is false', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        effort: 'high',
+        supportsThinking: false,
+        supportsReasoningEffort: true,
+      }),
+      messages
+    );
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.reasoning_effort).toBeUndefined();
+  });
+
+  it('sends reasoning_effort none when catalog lists the field and effort is none', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'openai/gpt-5',
+        effort: 'none',
+        supportsReasoningEffort: true,
+        supportsThinking: true,
+      }),
+      messages
+    );
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.reasoning_effort).toBe('none');
+  });
+});

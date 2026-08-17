@@ -40,10 +40,14 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.agentFg}> /clear Clear chat history</text>
       <text fg={theme.agentFg}> /compact Compact conversation context</text>
       <text fg={theme.agentFg}> /auto ... Autonomous subagent mode</text>
+      <text fg={theme.agentFg}> /config Live config overlay (saves ~/.nanogent.json)</text>
+      <text fg={theme.agentFg}> /config show Print config summary</text>
       <text fg={theme.agentFg}>
         {' '}
-        /config [show|set|reload] Show or edit configuration (.nanogent.json)
+        /config set &lt;key&gt; &lt;val&gt; [--global] Write a config file
       </text>
+      <text fg={theme.agentFg}> /settings Alias for /config overlay</text>
+      <text fg={theme.agentFg}> /effort Thinking effort: none|low|medium|high|extra-high</text>
       <text fg={theme.agentFg}>
         {' '}
         /set &lt;key&gt; &lt;val&gt; [--global] Quick-set config options (model, baseURL, etc)

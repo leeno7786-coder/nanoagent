@@ -92,6 +92,7 @@ Examples:
   QWEN_MAX_TOKENS_PER_MINUTE=200000 QWEN_MAX_TOOL_RESULT_TOKENS=8000 nanogent doctor --json
   QWEN_FALLBACK_MODEL=qwen/qwen3-8b nanogent doctor --json
   QWEN_PROMPT_CACHE=0 nanogent doctor --json
+  QWEN_EFFORT=low nanogent doctor --json
 `);
 }
 

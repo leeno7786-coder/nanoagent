@@ -251,11 +251,61 @@ describe('handleSlashCommand', () => {
     expect(content).not.toContain('estimated_usd');
   });
 
-  it('/config shows the current configuration', async () => {
+  it('/config opens the settings overlay', async () => {
     await handleSlashCommand('/config', h.ctx);
+    expect(h.overlays).toEqual(['settings']);
+    expect(lastAssistantContent(h)).toBe('');
+  });
+
+  it('/config show still dumps configuration text', async () => {
+    await handleSlashCommand('/config show', h.ctx);
     const content = lastAssistantContent(h);
     expect(content).toContain('test-model');
     expect(content).toContain('Configuration');
+    expect(content).toContain('Effort');
+    expect(h.overlays).toEqual([]);
+  });
+
+  it('/set with no args shows configuration text without opening the overlay', async () => {
+    await handleSlashCommand('/set', h.ctx);
+    expect(lastAssistantContent(h)).toContain('Configuration');
+    expect(h.overlays).toEqual([]);
+  });
+
+  it('/settings opens the settings overlay', async () => {
+    await handleSlashCommand('/settings', h.ctx);
+    expect(h.overlays).toEqual(['settings']);
+  });
+
+  it('/effort shows the current and allowed effort values', async () => {
+    await handleSlashCommand('/effort', h.ctx);
+    const content = lastAssistantContent(h);
+    expect(content).toContain('effort: low');
+    expect(content).toContain('none|low|medium|high|extra-high');
+  });
+
+  it('/effort extra persists and applies extra-high', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'slash-cmd-home-'));
+    const originalHome = process.env.HOME;
+    const originalUserProfile = process.env.USERPROFILE;
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    try {
+      await handleSlashCommand('/effort extra', h.ctx);
+      expect(stub.reconfigureCalls).toEqual([{ effort: 'extra-high' }]);
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = originalUserProfile;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('/effort rejects unknown values without reconfiguring', async () => {
+    await handleSlashCommand('/effort nope', h.ctx);
+    expect(stub.reconfigureCalls).toHaveLength(0);
+    expect(lastAssistantContent(h)).toContain('none|low|medium|high|extra-high');
   });
 
   it('/config set writes a local config file and confirms the update', async () => {

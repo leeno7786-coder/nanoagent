@@ -16,6 +16,7 @@ function cfg(extra: Partial<Config> = {}): Config {
         model: 'qwen3.5-4b',
         baseURL: 'http://127.0.0.1:1234/v1',
         provider: 'lmstudio',
+        effort: 'high',
         maxToolResultTokens: 0,
       },
       cloud: {
@@ -53,7 +54,9 @@ describe('applyModelProfile', () => {
       expect(result.patch.model).toBe('qwen3.5-4b');
       expect(result.patch.baseURL).toContain('127.0.0.1');
       expect(result.patch.profile).toBe('local');
+      expect(result.patch.effort).toBe('high');
       expect(result.patch.maxToolResultTokens).toBe(0);
+      expect(result.persist.effort).toBe('high');
       expect(result.persist.apiKey).toBeUndefined();
     }
   });

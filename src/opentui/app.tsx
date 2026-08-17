@@ -20,6 +20,7 @@ import { ErrorBoundary } from './error-boundary.js';
 import { HelpOverlay, HistoryOverlay } from './overlays.js';
 import { SkillsOverlay } from './skills-overlay.js';
 import { ConnectOverlay } from './connect-overlay.js';
+import { SettingsOverlay } from './settings-overlay.js';
 import { StatusBar } from './status-bar.js';
 import { TodoSidebar } from './todo-sidebar.js';
 import { THEMES, DEFAULT_THEME } from './theme.js';
@@ -801,6 +802,20 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       <ErrorBoundary theme={theme}>
         <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
           <ConnectOverlay theme={theme} onClose={closeOverlay} onSelect={handleConnectSelect} />
+        </box>
+      </ErrorBoundary>
+    );
+  }
+  if (overlay === 'settings' && agentRef.current) {
+    return (
+      <ErrorBoundary theme={theme}>
+        <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
+          <SettingsOverlay
+            theme={theme}
+            agent={agentRef.current}
+            onClose={closeOverlay}
+            onThemeChange={(next) => useAppStore.getState().setTheme(next)}
+          />
         </box>
       </ErrorBoundary>
     );

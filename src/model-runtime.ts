@@ -10,6 +10,7 @@ export type ModelRuntimeSource = 'lmstudio' | 'openrouter' | 'openai-compat' | '
 export interface ModelCatalogCapabilities {
   supportsTools?: boolean;
   supportsThinking?: boolean;
+  supportsReasoningEffort?: boolean;
   supportsPromptCache?: boolean;
 }
 
@@ -102,6 +103,26 @@ export function modelIdsMatch(a: string, b: string): boolean {
   return baseA === baseB || na.endsWith(nb) || nb.endsWith(na);
 }
 
+type CatalogCapabilityConfig = Pick<
+  Config,
+  'model' | 'supportsTools' | 'supportsThinking' | 'supportsReasoningEffort' | 'supportsPromptCache'
+>;
+
+export function resetCatalogCapabilitiesForModelChange<T extends CatalogCapabilityConfig>(
+  cfg: T,
+  previousModelId: string
+): T {
+  const prevNorm = previousModelId.toLowerCase().replace(/\\/g, '/');
+  const nextNorm = cfg.model.toLowerCase().replace(/\\/g, '/');
+  if (prevNorm === nextNorm) return cfg;
+  const next = { ...cfg };
+  delete next.supportsTools;
+  delete next.supportsThinking;
+  delete next.supportsReasoningEffort;
+  delete next.supportsPromptCache;
+  return next;
+}
+
 /** Default / docs placeholders that are not a real catalog id. */
 const PLACEHOLDER_MODEL_IDS = new Set([
   'model-identifier',
@@ -186,6 +207,7 @@ export function parseCatalogCapabilities(raw: Record<string, unknown>): ModelCat
     (params
       ? paramsInclude(params, ['enable_thinking', 'reasoning', 'include_reasoning'])
       : undefined);
+  const reasoningEffort = params ? paramsInclude(params, ['reasoning_effort']) : undefined;
   const cache =
     explicitBool(raw.supports_prompt_cache) ??
     (params
@@ -195,6 +217,7 @@ export function parseCatalogCapabilities(raw: Record<string, unknown>): ModelCat
   const out: ModelCatalogCapabilities = {};
   if (tools !== undefined) out.supportsTools = tools;
   if (thinking !== undefined) out.supportsThinking = thinking;
+  if (reasoningEffort !== undefined) out.supportsReasoningEffort = reasoningEffort;
   if (cache !== undefined) out.supportsPromptCache = cache;
   return out;
 }
@@ -462,6 +485,7 @@ async function loadOpenRouterCatalog(
       completionPricePerMillion: m.completionPricePerMillion,
       supportsTools: m.supportsTools,
       supportsThinking: m.supportsThinking,
+      supportsReasoningEffort: m.supportsReasoningEffort,
       supportsPromptCache: m.supportsPromptCache,
     };
     if (m.contextLength && m.contextLength > 0) entry.contextLength = m.contextLength;
@@ -560,6 +584,7 @@ function applyCatalogCapabilities(cfg: Config, caps: ModelCatalogCapabilities): 
     ...cfg,
     supportsTools: caps.supportsTools ?? cfg.supportsTools,
     supportsThinking: caps.supportsThinking ?? cfg.supportsThinking,
+    supportsReasoningEffort: caps.supportsReasoningEffort ?? cfg.supportsReasoningEffort,
     supportsPromptCache: caps.supportsPromptCache ?? cfg.supportsPromptCache,
   };
 }
@@ -579,21 +604,25 @@ function runtimeFromListedModel(info: ModelInfo): ModelRuntimeInfo {
 function applyLMStudioRuntime(cfg: Config, runtime: ModelRuntimeInfo): Config {
   const paramSmall = runtime.paramBillions !== undefined && runtime.paramBillions <= 8;
   const smallModelMode = cfg.smallModelMode ?? (paramSmall || isSmallModel(runtime.modelId));
-  return {
-    ...cfg,
-    model: runtime.modelId,
-    modelContextLength: runtime.contextLength ?? cfg.modelContextLength,
-    modelMaxContextLength: runtime.maxContextLength ?? cfg.modelMaxContextLength,
-    modelParamBillions: runtime.paramBillions ?? cfg.modelParamBillions,
-    modelRuntimeSource: 'lmstudio',
-    smallModelMode,
-  };
+  return resetCatalogCapabilitiesForModelChange(
+    {
+      ...cfg,
+      model: runtime.modelId,
+      modelContextLength: runtime.contextLength ?? cfg.modelContextLength,
+      modelMaxContextLength: runtime.maxContextLength ?? cfg.modelMaxContextLength,
+      modelParamBillions: runtime.paramBillions ?? cfg.modelParamBillions,
+      modelRuntimeSource: 'lmstudio',
+      smallModelMode,
+    },
+    cfg.model
+  );
 }
 
 function needsCatalogCaps(cfg: Config): boolean {
   return (
     cfg.supportsTools === undefined &&
     cfg.supportsThinking === undefined &&
+    cfg.supportsReasoningEffort === undefined &&
     cfg.supportsPromptCache === undefined
   );
 }

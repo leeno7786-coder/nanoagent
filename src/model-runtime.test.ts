@@ -14,6 +14,7 @@ import {
   parseOpenAICompatModelList,
   resetOpenRouterCatalogCache,
   resetOpenAICompatCatalogCache,
+  resetCatalogCapabilitiesForModelChange,
 } from './model-runtime.js';
 
 describe('parseParamBillions', () => {
@@ -114,6 +115,53 @@ describe('modelIdsMatch', () => {
   it('handles org prefixes', () => {
     expect(modelIdsMatch('org/model', 'model')).toBe(true);
     expect(modelIdsMatch('org/suborg/model', 'model')).toBe(true);
+  });
+});
+
+describe('resetCatalogCapabilitiesForModelChange', () => {
+  it('clears catalog flags when the model id changes', () => {
+    const cfg = resetCatalogCapabilitiesForModelChange(
+      {
+        model: 'new-model',
+        supportsTools: true,
+        supportsThinking: true,
+        supportsReasoningEffort: true,
+        supportsPromptCache: true,
+      },
+      'old-model'
+    );
+
+    expect(cfg.supportsTools).toBeUndefined();
+    expect(cfg.supportsThinking).toBeUndefined();
+    expect(cfg.supportsReasoningEffort).toBeUndefined();
+    expect(cfg.supportsPromptCache).toBeUndefined();
+  });
+
+  it('clears catalog flags when org prefix changes but basename matches', () => {
+    const cfg = resetCatalogCapabilitiesForModelChange(
+      {
+        model: 'org-b/foo',
+        supportsThinking: true,
+        supportsReasoningEffort: true,
+      },
+      'org-a/foo'
+    );
+
+    expect(cfg.supportsThinking).toBeUndefined();
+    expect(cfg.supportsReasoningEffort).toBeUndefined();
+  });
+
+  it('keeps catalog flags when only path separators differ', () => {
+    const original = {
+      model: 'org/foo',
+      supportsThinking: true,
+      supportsReasoningEffort: true,
+    };
+    const cfg = resetCatalogCapabilitiesForModelChange(original, 'org\\foo');
+
+    expect(cfg).toBe(original);
+    expect(cfg.supportsThinking).toBe(true);
+    expect(cfg.supportsReasoningEffort).toBe(true);
   });
 });
 
@@ -308,11 +356,19 @@ describe('enrichConfigWithRuntime LM Studio loaded fallback', () => {
       workspace: '/tmp',
       maxIterations: 10,
       apiKey: null,
+      supportsTools: true,
+      supportsThinking: true,
+      supportsReasoningEffort: true,
+      supportsPromptCache: true,
     });
     expect(enriched.model).toBe('nvidia/nemotron-3-nano-4b');
     expect(enriched.modelContextLength).toBe(1048576);
     expect(enriched.modelRuntimeSource).toBe('lmstudio');
     expect(enriched.modelParamBillions).toBe(4);
+    expect(enriched.supportsTools).toBeUndefined();
+    expect(enriched.supportsThinking).toBeUndefined();
+    expect(enriched.supportsReasoningEffort).toBeUndefined();
+    expect(enriched.supportsPromptCache).toBeUndefined();
   });
 
   it('does not steal a different loaded model when the configured id exists', async () => {
@@ -406,6 +462,7 @@ describe('parseCatalogCapabilities', () => {
     ).toEqual({
       supportsTools: true,
       supportsThinking: true,
+      supportsReasoningEffort: false,
       supportsPromptCache: true,
     });
   });
@@ -414,6 +471,7 @@ describe('parseCatalogCapabilities', () => {
     expect(parseCatalogCapabilities({ supported_parameters: ['temperature'] })).toEqual({
       supportsTools: false,
       supportsThinking: false,
+      supportsReasoningEffort: false,
       supportsPromptCache: false,
     });
   });
@@ -430,6 +488,17 @@ describe('parseCatalogCapabilities', () => {
       supportsThinking: false,
       supportsPromptCache: true,
     });
+  });
+
+  it('sets supportsReasoningEffort from supported_parameters', () => {
+    expect(
+      parseCatalogCapabilities({
+        supported_parameters: ['reasoning_effort', 'tools'],
+      }).supportsReasoningEffort
+    ).toBe(true);
+    expect(
+      parseCatalogCapabilities({ supported_parameters: ['tools'] }).supportsReasoningEffort
+    ).toBe(false);
   });
 });
 
