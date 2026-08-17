@@ -40,6 +40,9 @@ fix_tools.py
 test-output.txt
 skills/test-*.json
 
+# Isolated git worktrees (feature checkouts)
+.worktrees/
+
 # pack output / scratch
 /*.tgz
 
