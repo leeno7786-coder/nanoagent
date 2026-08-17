@@ -810,7 +810,12 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     return (
       <ErrorBoundary theme={theme}>
         <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
-          <SettingsOverlay theme={theme} agent={agentRef.current} onClose={closeOverlay} />
+          <SettingsOverlay
+            theme={theme}
+            agent={agentRef.current}
+            onClose={closeOverlay}
+            onThemeChange={(next) => useAppStore.getState().setTheme(next)}
+          />
         </box>
       </ErrorBoundary>
     );
