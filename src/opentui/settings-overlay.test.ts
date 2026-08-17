@@ -11,6 +11,7 @@ import {
   nextSelectableIndex,
   type SettingsItem,
 } from './settings.js';
+import { THEMES } from './theme.js';
 
 const CATALOG_KEYS = [
   'provider',
@@ -158,7 +159,7 @@ describe('applySettingsPatch', () => {
     });
     expect(applySettingsPatch('maxRequestsPerMinute', '-1')).toEqual({
       ok: false,
-      error: 'RPM must be a non-negative integer',
+      error: 'RPM must be between 0 and 10000, got -1',
     });
   });
 
@@ -190,5 +191,55 @@ describe('applySettingsPatch', () => {
       ok: true,
       patch: { maxToolResultTokens: 8000 },
     });
+  });
+});
+
+describe('cycleSettingsValue extra keys', () => {
+  it('toggles boolean flags', () => {
+    expect(cycleSettingsValue('smallModelMode', false, 1)).toBe(true);
+    expect(cycleSettingsValue('contextManagementEnabled', true, 1)).toBe(false);
+    expect(cycleSettingsValue('toolCacheEnabled', undefined, 1)).toBe(true);
+  });
+
+  it('cycles theme names', () => {
+    const names = Object.keys(THEMES);
+    expect(cycleSettingsValue('theme', names[0], 1)).toBe(names[1]);
+    expect(cycleSettingsValue('theme', names[names.length - 1], 1)).toBe(names[0]);
+  });
+});
+
+describe('applySettingsPatch extra keys', () => {
+  it('accepts provider, URLs, and in-range numbers', () => {
+    expect(applySettingsPatch('provider', 'openrouter')).toEqual({
+      ok: true,
+      patch: { provider: 'openrouter' },
+    });
+    expect(applySettingsPatch('baseURL', 'http://127.0.0.1:1234/v1')).toEqual({
+      ok: true,
+      patch: { baseURL: 'http://127.0.0.1:1234/v1' },
+    });
+    expect(applySettingsPatch('timeout', '120000')).toEqual({
+      ok: true,
+      patch: { timeout: 120000 },
+    });
+    expect(applySettingsPatch('contextCompactThreshold', '0.8')).toEqual({
+      ok: true,
+      patch: { contextCompactThreshold: 0.8 },
+    });
+    expect(applySettingsPatch('maxBackgroundSubAgents', '4')).toEqual({
+      ok: true,
+      patch: { maxBackgroundSubAgents: 4 },
+    });
+  });
+
+  it('rejects invalid URLs and out-of-range numbers', () => {
+    expect(applySettingsPatch('baseURL', 'not-a-url').ok).toBe(false);
+    expect(applySettingsPatch('subAgentBaseURL', 'ftp://x').ok).toBe(false);
+    expect(applySettingsPatch('timeout', '500').ok).toBe(false);
+    expect(applySettingsPatch('retryCount', '11').ok).toBe(false);
+    expect(applySettingsPatch('maxReasoningOnlyRounds', '0').ok).toBe(false);
+    expect(applySettingsPatch('maxBackgroundSubAgents', '17').ok).toBe(false);
+    expect(applySettingsPatch('contextKeepCount', '0').ok).toBe(false);
+    expect(applySettingsPatch('toolCacheMaxSize', '0').ok).toBe(false);
   });
 });
