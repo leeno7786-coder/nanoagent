@@ -45,9 +45,7 @@ export interface SettingsRow {
   mode: 'cycle' | 'edit';
 }
 
-export type SettingsItem =
-  | { type: 'header'; label: string }
-  | ({ type: 'row' } & SettingsRow);
+export type SettingsItem = { type: 'header'; label: string } | ({ type: 'row' } & SettingsRow);
 
 const SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
   {
@@ -119,9 +117,7 @@ const SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
 
 export const SETTINGS_SECTIONS = SECTIONS;
 
-export function flattenSettingsItems(
-  sections: typeof SECTIONS = SECTIONS
-): SettingsItem[] {
+export function flattenSettingsItems(sections: typeof SECTIONS = SECTIONS): SettingsItem[] {
   const items: SettingsItem[] = [];
   for (const section of sections) {
     items.push({ type: 'header', label: section.title });
@@ -312,8 +308,8 @@ export async function persistGlobalSetting(
   patch: Partial<Config>
 ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   try {
-    const { targetPath } = saveConfigFile(patch, 'global', agent.cfg.workspace);
-    await agent.reconfigure(patch);
+    const { targetPath, config } = saveConfigFile(patch, 'global', agent.cfg.workspace);
+    await agent.reconfigure(config);
     return { ok: true, path: targetPath };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };

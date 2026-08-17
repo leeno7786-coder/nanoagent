@@ -266,6 +266,12 @@ describe('handleSlashCommand', () => {
     expect(h.overlays).toEqual([]);
   });
 
+  it('/set with no args shows configuration text without opening the overlay', async () => {
+    await handleSlashCommand('/set', h.ctx);
+    expect(lastAssistantContent(h)).toContain('Configuration');
+    expect(h.overlays).toEqual([]);
+  });
+
   it('/settings opens the settings overlay', async () => {
     await handleSlashCommand('/settings', h.ctx);
     expect(h.overlays).toEqual(['settings']);

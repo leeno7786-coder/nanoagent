@@ -163,6 +163,10 @@ describe('applySettingsPatch', () => {
     });
   });
 
+  it('rejects cycle-only keys', () => {
+    expect(applySettingsPatch('effort', 'high').ok).toBe(false);
+  });
+
   it('rejects out-of-range RPM, TPM, and tool-result values', () => {
     expect(applySettingsPatch('maxRequestsPerMinute', '10001')).toEqual({
       ok: false,
