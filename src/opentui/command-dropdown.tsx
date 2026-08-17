@@ -29,8 +29,11 @@ const BUILTIN_COMMANDS: Command[] = [
   { name: '/export', description: 'Export chat to markdown' },
   { name: '/skills', description: 'Manage skills (F8)' },
   { name: '/reload', description: 'Reload configuration' },
-  { name: '/config', description: 'Show or edit config (/config set key val [--global])' },
-  { name: '/settings', description: 'Live settings (effort, model, limits) — saves globally' },
+  {
+    name: '/config',
+    description: 'Live config overlay — saves globally (/config show, /config set)',
+  },
+  { name: '/settings', description: 'Alias for /config overlay' },
   { name: '/effort', description: 'Thinking effort: none|low|medium|high|extra-high' },
   { name: '/set', description: 'Quick-set config option (/set model <name>)' },
   { name: '/profile', description: 'List or apply a named model profile (/profile <name>)' },

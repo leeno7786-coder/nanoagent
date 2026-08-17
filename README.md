@@ -207,7 +207,8 @@ Context windows come from the live runtime when the catalog reports them: LM Stu
 
 In the TUI:
 
-- `/config` or `/config show` — active config and loaded files
+- `/config` — open the live config overlay (writes `~/.nanogent.json` immediately)
+- `/config show` — print the config summary in chat
 - `/config set model <name>` — project-local
 - `/config set baseURL http://127.0.0.1:1234/v1 --global` — machine-wide
 - `/config set maxRequestsPerMinute 20`
@@ -219,10 +220,10 @@ In the TUI:
 - `/set <key> <val>` — same as `/config set`
 - `/profile` / `/profile list` — named snapshots
 - `/profile <name>` — apply live (`--global` / `--local` to persist)
-- `/settings` — settings overlay (model, effort, and related knobs)
+- `/settings` — alias for `/config`
 - `/effort [none|low|medium|high|extra-high]` — show or set thinking effort
 
-`/settings` and `/effort` write `~/.nanogent.json` immediately.
+`/config`, `/settings`, and `/effort` write `~/.nanogent.json` immediately.
 
 ---
 
@@ -235,8 +236,8 @@ In the TUI:
 | `/clear` | Clear chat (F2); keeps system messages |
 | `/compact` | Force context compaction |
 | `/auto <task>` | Autonomous run (F3 prefills `/auto`) |
-| `/config` `/set` | View or edit `.nanogent.json` |
-| `/settings` | Settings overlay (writes `~/.nanogent.json` immediately) |
+| `/config` | Live scalar overlay (global persist). `/config show` prints. `/config set` writes a file. |
+| `/settings` | Alias for `/config` overlay |
 | `/effort` | Show or set thinking effort (`none`–`extra-high`; writes global config when set) |
 | `/profile` | List or apply a named model snapshot (`--global` to persist) |
 | `/connect` | Pick runtime, API key, and model |

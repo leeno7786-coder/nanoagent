@@ -468,6 +468,10 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
     case 'config':
     case 'set': {
       const trimmedArgs = args.trim();
+      if (command === 'config' && !trimmedArgs) {
+        setOverlay('settings');
+        return;
+      }
       const parts = trimmedArgs.split(/\s+/);
       const subCommand = command === 'set' ? 'set' : parts[0]?.toLowerCase() || 'show';
 
@@ -528,7 +532,8 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           '- `/config reload` (reload from disk)',
           '- `/profile <name>` (apply a named snapshot; add `--global` to persist)',
           '- `/effort <none|low|medium|high|extra-high>` (persists globally)',
-          '- `/settings` (overlay; persists globally)',
+          '- `/config` (overlay; persists globally)',
+          '- `/settings` (alias for `/config` overlay)',
         ].join('\n');
 
         pushAssistant(agent, info, setMessages);

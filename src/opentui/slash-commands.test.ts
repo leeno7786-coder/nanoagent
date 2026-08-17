@@ -251,17 +251,19 @@ describe('handleSlashCommand', () => {
     expect(content).not.toContain('estimated_usd');
   });
 
-  it('/config shows the current configuration', async () => {
+  it('/config opens the settings overlay', async () => {
     await handleSlashCommand('/config', h.ctx);
+    expect(h.overlays).toEqual(['settings']);
+    expect(lastAssistantContent(h)).toBe('');
+  });
+
+  it('/config show still dumps configuration text', async () => {
+    await handleSlashCommand('/config show', h.ctx);
     const content = lastAssistantContent(h);
     expect(content).toContain('test-model');
     expect(content).toContain('Configuration');
     expect(content).toContain('Effort');
-  });
-
-  it('/config show includes effort', async () => {
-    await handleSlashCommand('/config show', h.ctx);
-    expect(lastAssistantContent(h)).toContain('Effort');
+    expect(h.overlays).toEqual([]);
   });
 
   it('/settings opens the settings overlay', async () => {
