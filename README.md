@@ -47,7 +47,16 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 
 ## Install
 
-### Option 1: Native packages (recommended)
+### Option 1: Global npm (quick start)
+
+```bash
+npm install -g @omega3_0/nanoagent
+npm install -g @omega3_0/nanoagent@latest   # update
+```
+
+Requires **Node ≥ 18**. Works on Linux, macOS, and Windows. Ships compiled `dist/` only — no source tree needed at runtime. On locked-down networks the optional Bun postinstall is skipped gracefully; plain Node runs everything.
+
+### Option 2: Native packages (bundled runtime, no Node required)
 
 **Linux (Ubuntu/Debian amd64)** — self-contained `.deb` with bundled Node 20:
 
@@ -77,15 +86,6 @@ bun run package:win             # → dist-packages/nanoagent_<version>_win_x64.
 
 Remove Linux package: `sudo apt remove nanoagent`
 
-### Option 2: Global npm
-
-```bash
-npm install -g @omega3_0/nanoagent
-npm install -g @omega3_0/nanoagent@latest   # update
-```
-
-Requires **Node ≥ 18**. On Linux/Windows, prefer the native packages if a global npm install misses `dist/` or native deps.
-
 ### Option 3: `npx` (no install)
 
 ```bash
@@ -93,6 +93,8 @@ npx @omega3_0/nanoagent
 ```
 
 ### Option 4: Build from source
+
+NanoAgent is MIT-licensed open source — cloning and building locally gives you the same thing the packages ship:
 
 ```bash
 git clone https://github.com/leeno7786-coder/nanoagent.git
