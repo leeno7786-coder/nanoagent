@@ -59,9 +59,8 @@ PROD_DIR="${STAGE_ROOT}/prod-modules"
 rm -rf "$PROD_DIR"
 mkdir -p "$PROD_DIR"
 cp package.json bun.lock "$PROD_DIR/"
-# Keep optional platform packages (OpenTUI natives, bun linux bins if any).
-# Ignore lifecycle scripts: postinstall tries to fetch bun and is not needed
-# inside the .deb (we ship a bundled Node runtime instead).
+# Keep optional platform packages (@oven bun binaries, OpenTUI natives).
+# Ignore lifecycle scripts: nothing needs to run at package-build time.
 if command -v bun >/dev/null 2>&1; then
   (
     cd "$PROD_DIR"

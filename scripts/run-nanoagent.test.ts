@@ -5,7 +5,10 @@
 
 import { describe, it, expect } from 'bun:test';
 import { join } from 'path';
-import { resolveNanoagentLaunch } from './run-nanoagent.mjs';
+import { spawnSync } from 'child_process';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { resolveNanoagentLaunch, findBundledBun } from './run-nanoagent.mjs';
 
 const root = '/pkg/nanoagent';
 const repoRoot = join(import.meta.dir, '..');
@@ -70,6 +73,33 @@ describe('resolveNanoagentLaunch', () => {
       bunPath: null,
     });
     expect(launch.kind).toBe('missing');
+  });
+});
+
+describe('findBundledBun', () => {
+  it('finds an executable @oven runtime inside node_modules when one is installed', () => {
+    const bundled = findBundledBun(repoRoot);
+    if (!bundled) return; // platform without a matching optional dep in this checkout
+    const probe = spawnSync(bundled, ['--version'], { encoding: 'utf8', timeout: 10_000 });
+    expect(probe.status).toBe(0);
+    expect(probe.stdout.trim()).toMatch(/^\d+\.\d+/);
+  });
+
+  it('returns null for a package root with no @oven runtime', () => {
+    const empty = mkdtempSync(join(tmpdir(), 'nanoagent-bun-'));
+    expect(findBundledBun(empty)).toBeNull();
+  });
+
+  it('prefers the bundled runtime over PATH bun for packaged installs', () => {
+    const bundled = findBundledBun(repoRoot);
+    const launch = resolveNanoagentLaunch({
+      packageRoot: repoRoot,
+      srcExists: false,
+      distExists: true,
+      bunPath: bundled,
+    });
+    expect(launch.kind).toBe('bun-dist');
+    if (bundled) expect(launch.bunPath).toBe(bundled);
   });
 });
 

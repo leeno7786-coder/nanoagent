@@ -6,13 +6,42 @@
  * Packaged install (.deb, Windows zip, npm): bun + dist/main.js when bun
  * is on PATH (TUI), otherwise Node + dist/main.js (headless).
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const BUN_EXE = process.platform === 'win32' ? 'bun.exe' : 'bun';
+
+function isExecutable(p) {
+  try {
+    // X_OK alone lies on some filesystems; actually running it is the real test.
+    return spawnSync(p, ['--version'], { timeout: 10_000, stdio: 'ignore' }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Bun runtime shipped inside this package via the @oven/* optionalDependencies.
+ * Tried before any system bun so packaged installs work with zero external
+ * setup. Candidates that fail to execute (wrong libc, stale/empty package)
+ * fall through to the next variant.
+ */
+export function findBundledBun(packageRoot) {
+  const plat = process.platform === 'win32' ? 'windows' : process.platform;
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const variants =
+    process.platform === 'linux' ? ['', '-baseline', '-musl', '-musl-baseline'] : ['', '-baseline'];
+  for (const variant of variants) {
+    const pkgDir = join(packageRoot, 'node_modules', '@oven', `bun-${plat}-${arch}${variant}`);
+    for (const candidate of [join(pkgDir, 'bin', BUN_EXE), join(pkgDir, BUN_EXE)]) {
+      if (existsSync(candidate) && isExecutable(candidate)) return candidate;
+    }
+  }
+  return null;
+}
 
 /**
  * @param {{ packageRoot: string, srcExists: boolean, distExists: boolean, bunPath: string | null }} opts
@@ -78,7 +107,7 @@ async function main() {
     packageRoot,
     srcExists: existsSync(srcMain),
     distExists: existsSync(distMain),
-    bunPath: findBun(),
+    bunPath: findBundledBun(packageRoot) || findBun(),
   });
 
   if (launch.kind === 'bun-src' || launch.kind === 'bun-dist') {

@@ -54,7 +54,7 @@ npm install -g @omega3_0/nanoagent
 npm install -g @omega3_0/nanoagent@latest   # update
 ```
 
-Requires **Node ≥ 18**. Works on Linux, macOS, and Windows. Ships compiled `dist/` only — no source tree needed at runtime. On locked-down networks the optional Bun postinstall is skipped gracefully; plain Node runs everything.
+Requires **Node ≥ 18** (for `npm` itself). The Bun runtime ships **inside** the package — npm pulls the matching `@oven/*` platform binary automatically, so there is no separate Bun install and no network fetch beyond the registry. If the bundled binary can't run, plain Node ≥ 18 executes everything headless.
 
 ### Option 2: Native packages (bundled runtime, no Node required)
 

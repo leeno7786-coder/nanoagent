@@ -51,10 +51,7 @@ function searchOvenPackage(): string | null {
   return walkUpNodeModules((nm) => {
     const platformPkg = `@oven/bun-${platform().replace('win32', 'windows')}-${archDir()}`;
     return (
-      tryPath(join(nm, platformPkg, BUN_EXE)) ??
-      tryPath(
-        join(nm, '@oven', `bun-${platform().replace('win32', 'windows')}-${archDir()}`, BUN_EXE)
-      )
+      tryPath(join(nm, platformPkg, 'bin', BUN_EXE)) ?? tryPath(join(nm, platformPkg, BUN_EXE))
     );
   });
 }
