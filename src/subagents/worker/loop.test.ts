@@ -32,7 +32,6 @@ mock.module('../../llm.js', () => ({
     _tools: unknown,
     signal?: AbortSignal
   ) =>
-    // eslint-disable-next-line require-yield -- some mock paths never yield
     (async function* () {
       streamCfgs.push({ model: cfg.model, baseURL: cfg.baseURL, apiKey: cfg.apiKey });
       const step = streamQueue?.shift();

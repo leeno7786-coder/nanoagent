@@ -52,11 +52,5 @@ export async function switchWorkerToFallback(
   signal?: AbortSignal,
   readKey?: ApiKeyLookup
 ): Promise<{ model: string; reason: string } | null> {
-  return switchSessionToFallback(
-    workerFailoverSession(wctx, notices),
-    err,
-    tried,
-    signal,
-    readKey
-  );
+  return switchSessionToFallback(workerFailoverSession(wctx, notices), err, tried, signal, readKey);
 }

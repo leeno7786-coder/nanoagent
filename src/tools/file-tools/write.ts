@@ -6,6 +6,15 @@ import { fileChangeDiff } from '../../lib/file-diff.js';
 import type { Tool } from '../shared.js';
 import { rel, safe } from '../shared.js';
 
+/**
+ * Match an inserted block's line endings to the host file. A CRLF file that
+ * receives raw \n inside new_text ends up with mixed EOLs (git/diff noise),
+ * so rewrite the replacement's internal newlines to the file's dominant style.
+ */
+function matchEol(hostText: string, value: string): string {
+  return hostText.includes('\r\n') ? value.replace(/\r?\n/g, '\r\n') : value;
+}
+
 export const writeFileTool: Tool = {
   name: 'write_file',
   description: 'Write content to a file',
@@ -142,7 +151,7 @@ export const editFileTool: Tool = {
         }
 
         if (matchStarts.length > 0) {
-          const newTextValue = String(args.new_text ?? '');
+          const newTextValue = matchEol(text, String(args.new_text ?? ''));
           const nextLines = [...fileLines];
           // Splice from the bottom up so earlier indexes stay valid.
           for (let m = matchStarts.length - 1; m >= 0; m--) {
@@ -174,9 +183,10 @@ export const editFileTool: Tool = {
         });
       }
 
+      const replacementText = matchEol(text, String(args.new_text ?? ''));
       const next = args.replace_all
-        ? text.split(oldText).join(String(args.new_text ?? ''))
-        : text.replace(oldText, String(args.new_text ?? ''));
+        ? text.split(oldText).join(replacementText)
+        : text.replace(oldText, replacementText);
       writeFileSync(p, next, 'utf-8');
       const relPath = rel(p, ws);
       const { added, removed, diff } = fileChangeDiff(relPath, text, next);
@@ -273,7 +283,7 @@ export const editFileLinesTool: Tool = {
           error: `start_line ${startLine} exceeds file length (${lines.length} lines)`,
         });
       }
-      const newText = String(args.new_text ?? '');
+      const newText = matchEol(text, String(args.new_text ?? ''));
       const before = lines.slice(0, startLine - 1);
       const after = lines.slice(Math.min(endLine, lines.length));
       // Preserve the file's line endings — splitting on /\r?\n/ strips CR,

@@ -415,7 +415,9 @@ function execCmdAsync(
 
     if (signal) {
       if (signal.aborted) {
+        clearTimeoutFn();
         child.kill();
+        resolved = true;
         resolvePromise(formatExecResult(false, '', 'Command cancelled', null));
         return;
       }
@@ -424,6 +426,7 @@ function execCmdAsync(
         () => {
           if (!resolved) {
             resolved = true;
+            clearTimeoutFn();
             child.kill();
             resolvePromise(formatExecResult(false, '', 'Command cancelled', null));
           }

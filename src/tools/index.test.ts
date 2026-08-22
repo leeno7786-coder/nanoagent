@@ -376,7 +376,31 @@ describe('tools', () => {
     );
     expect(out.ok).toBe(true);
     expect(out.fuzzy_match).toBe(true);
-    expect(readFileSync(join(ws, 'crlf-fuzzy.txt'), 'utf-8')).toBe('L1\nL2\r\nline3\r\n');
+    // Multi-line replacement adopts the file's CRLF style — no bare \n left.
+    expect(readFileSync(join(ws, 'crlf-fuzzy.txt'), 'utf-8')).toBe('L1\r\nL2\r\nline3\r\n');
+  });
+
+  it('edit_file exact match converts LF replacement lines to CRLF', () => {
+    writeFileSync(join(ws, 'crlf-exact.txt'), 'a\r\nb\r\nc\r\n', 'utf-8');
+    const edit = tools.find((t) => t.name === 'edit_file')!;
+    const out = JSON.parse(
+      edit.execute({ path: 'crlf-exact.txt', old_text: 'b', new_text: 'x\ny' }, ws)
+    );
+    expect(out.ok).toBe(true);
+    expect(readFileSync(join(ws, 'crlf-exact.txt'), 'utf-8')).toBe('a\r\nx\r\ny\r\nc\r\n');
+  });
+
+  it('edit_file_lines converts LF replacement lines to CRLF', () => {
+    writeFileSync(join(ws, 'crlf-lines.txt'), 'l1\r\nl2\r\nl3\r\n', 'utf-8');
+    const editLines = tools.find((t) => t.name === 'edit_file_lines')!;
+    const out = JSON.parse(
+      editLines.execute(
+        { path: 'crlf-lines.txt', start_line: 2, end_line: 2, new_text: 'p\nq' },
+        ws
+      )
+    );
+    expect(out.ok).toBe(true);
+    expect(readFileSync(join(ws, 'crlf-lines.txt'), 'utf-8')).toBe('l1\r\np\r\nq\r\nl3\r\n');
   });
 
   it('edit_file_lines returns helpful error for missing file', () => {
