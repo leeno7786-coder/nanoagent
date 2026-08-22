@@ -110,7 +110,7 @@ export function appendPromptExtras(base: string, ctx: PromptContext, _smallModel
 
   system +=
     '\n\n## Remote sub-agents\n' +
-    "You have 4 remote sub-agents backed by small Qwen models on another device, reached via this machine's LM Studio. " +
+    "You have 4 remote sub-agents (Qwen3.5 2B) reached via this machine's LM Studio. " +
     'They have READ-ONLY tools (read_file, batch_read_files, list_dir, grep_search, map_project_tree, search_and_view, find_files) against this workspace.\n' +
     '- `explore_subagent` — dispatch ONE sub-agent with a SPECIFIC task and file paths. This is the ONLY sub-agent tool.\n' +
     'Rules:\n' +

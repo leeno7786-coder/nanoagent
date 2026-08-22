@@ -132,14 +132,14 @@ These exist because breaking them has caused real incidents. Do not violate them
   context-rich `prompt` + optional `focus_path`. The old blind "fan to all" tool was
   removed (vague prompts time out on big codebases). Don't reintroduce it.
 - Concurrency defaults to **4** (`maxBackgroundSubAgents`, up to 16). Pool capacity is
-  endpoints × per-endpoint `concurrency` (parallel prediction slots). The main agent
+  endpoints × per-endpoint `concurrency` (default 1 worker per loaded 2B). The main agent
   synthesizes results itself.
 - Sub-agents get the **full local tool set** (read/write/search/shell/git) against the
   shared workspace.
 - Pool auto-discovery order (`resolveSubAgentPool`, `src/subagents.ts`): explicit
-  `cfg.subagents` → `REMOTE_LMSTUDIO_URL` → local LM Studio Qwen3.5 ≤9B models
+  `cfg.subagents` → `REMOTE_LMSTUDIO_URL` → local LM Studio Qwen3.5 **2B** models
   (`isSubAgentModelId`). Discovered models each get `NANOGENT_SUBAGENT_SLOTS`
-  workers (default 4, matching LM Studio's "max concurrent predictions").
+  workers (default **1** — load 4 separate 2B instances for 4-wide parallel).
   Preserve this order.
 - OpenRouter sub-agents reuse `OPENROUTER_API_KEY` when the main agent uses OpenRouter.
 - Default local backend: LM Studio at `http://127.0.0.1:1234/v1`. Handle unreachable/
@@ -176,7 +176,7 @@ These exist because breaking them has caused real incidents. Do not violate them
 
 - Primary interface is the TUI (`bun run start`), not the headless CLI.
 - Main agent orchestrates sub-agents: calls `explore_subagent` one at a time (or a few in parallel, capped at 4) with a focused, context-rich prompt for each.
-- Sub-agents default to OpenRouter `openrouter/free` (free router with tool calling); override with e.g. `qwen/qwen3-next-80b-a3b-instruct:free` in `~/.nanogent.json` if you want a fixed model.
+- Sub-agents default to loaded local LM Studio `qwen3.5-2b*` models (one worker each, up to 4 in parallel). Override with an explicit `subagents` block in `~/.nanogent.json` if you want a fixed cloud model.
 - When improving local-model workflows, optimize for 8B-and-smaller models with 128k–400k context via LM Studio.
 - **Recommended Local Model**: `Jackrong\Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF` for optimal performance.
 - Prefers structured diff-style chat output for tool/file edits (● Update headers with line deltas).
@@ -191,13 +191,11 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Bun + OpenTUI agent; TUI code lives in `src/opentui/`; config at `~/.nanogent.json` or `.nanogent.json` (legacy `~/.qwen-agent.json` is still read).
 - Default local backend is LM Studio at `http://127.0.0.1:1234/v1`. Local generation on this Windows PC is slow — wait a minute or more for the first token on live smokes; do not treat 60–90s of silence as a hang.
 - Sub-agent tool: `explore_subagent` (dispatch ONE remote Qwen with a focused `prompt` + optional `focus_path`). The blind "fan to all" tool was removed because vague prompts time out on large codebases.
-- Remote sub-agents run on Qwen3.5 model(s) (≤9B, currently the 4B) in this machine's LM Studio. A single
-  loaded model with N parallel prediction slots serves N workers (scheduler counts
-  per-endpoint slots); LM Studio auto-links to the other device that hosts the models.
-  Sub-agents hit `http://127.0.0.1:1234/v1`.
+- Remote sub-agents run on loaded Qwen3.5 **2B** models in this machine's LM Studio.
+  Load 4 separate 2B instances (one worker each). Sub-agents hit `http://127.0.0.1:1234/v1`.
 - Sub-agents get the FULL local tool set (read/write/search/shell/git) against the shared workspace, so they can actually investigate and act — not just answer prompts.
 - Pool is auto-discovered: `resolveSubAgentPool` (src/subagents.ts) prefers explicit `cfg.subagents`, then `REMOTE_LMSTUDIO_URL`, then local LM Studio's `qwen3.5-2b*` models. No manual config needed.
-- Main agent calls `explore_subagent` 1–3× in parallel with narrow, file-specific prompts;
+- Main agent calls `explore_subagent` up to 4× in parallel with narrow, file-specific prompts;
   default concurrency 4 (configurable to 16 via `maxBackgroundSubAgents`). It synthesizes results itself.
 - Parallel `code_review` sub-agent mode was removed; main agent crafts per-agent prompts.
 - Detects loaded model size and context from LM Studio dynamically.

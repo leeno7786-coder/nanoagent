@@ -153,8 +153,8 @@ export const PARALLEL_SAFE_TOOLS = new Set([
   'batch_read_files',
   // NOTE: memory-graph query tools are deliberately NOT parallel-safe — they
   // can trigger full graph rebuilds, so they must run sequentially.
-  // Remote sub-agent dispatch — each call hits a different model; running
-  // multiple in one message fans them out to up to 3 concurrent workers.
+  // Remote sub-agent dispatch — each call hits a free 2B worker; running
+  // multiple in one message fans them out to up to 4 concurrent workers.
   'explore_subagent',
 ]);
 

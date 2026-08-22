@@ -133,7 +133,7 @@ nanoagent tui      # force TUI
 - **Model**: `Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF` (or another Qwen 3.5 2B–8B)
 - **Runtime**: [LM Studio](https://lmstudio.ai/) at `http://127.0.0.1:1234/v1`, or Ollama at `http://127.0.0.1:11434/v1`
 
-When LM Studio has extra small models loaded (`qwen3.5-2b`, etc.), NanoAgent can use them as an exploration sub-agent pool. You can also point at a remote pool with `REMOTE_LMSTUDIO_URL` or a `subagents` block in config.
+When LM Studio has extra Qwen3.5 2B models loaded (up to 4 instances), NanoAgent uses them as an exploration sub-agent pool — one worker per loaded 2B, dispatched with `explore_subagent` (max 4 in parallel). You can also point at a remote pool with `REMOTE_LMSTUDIO_URL` or a `subagents` block in config.
 
 First-run: type `/connect` in the TUI to pick a provider (Local first, then Cloud), enter an API key if needed, and choose a model.
 

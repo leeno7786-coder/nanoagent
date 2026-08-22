@@ -12,7 +12,12 @@ import {
   resolveSubAgentPool,
   type SubAgentResult,
 } from './subagents.js';
-import { isSubAgentModelId, filterLoadedModels } from './subagents/pool.js';
+import {
+  isSubAgentModelId,
+  filterLoadedModels,
+  discoveredSlotsPerModel,
+  subAgentEndpointsFromModels,
+} from './subagents/pool.js';
 import type { Config } from './types.js';
 
 const mockConfig: Config = {
@@ -173,18 +178,65 @@ describe('subagents.ts - Sub-agent Management', () => {
   });
 
   describe('isSubAgentModelId', () => {
-    it('matches small Qwen3.5 models, bare or publisher-prefixed', () => {
+    it('matches Qwen3.5 2B models, bare or publisher-prefixed', () => {
       expect(isSubAgentModelId('qwen3.5-2b')).toBe(true);
-      expect(isSubAgentModelId('qwen3.5-4b')).toBe(true);
-      expect(isSubAgentModelId('qwen/qwen3.5-9b')).toBe(true);
+      expect(isSubAgentModelId('qwen/qwen3.5-2b')).toBe(true);
       expect(isSubAgentModelId('Qwen3.5-2B-Instruct')).toBe(true);
     });
 
-    it('rejects oversized, older-generation, and non-Qwen models', () => {
+    it('rejects 4B+ Qwen3.5, older-generation, and non-Qwen models', () => {
+      expect(isSubAgentModelId('qwen3.5-4b')).toBe(false);
+      expect(isSubAgentModelId('qwen/qwen3.5-9b')).toBe(false);
       expect(isSubAgentModelId('qwen/qwen3.5-27b')).toBe(false);
       expect(isSubAgentModelId('qwen2.5-3b')).toBe(false);
       expect(isSubAgentModelId('gemma-4-12b-coder')).toBe(false);
       expect(isSubAgentModelId('text-embedding-nomic-embed-text-v1.5')).toBe(false);
+    });
+  });
+
+  describe('discoveredSlotsPerModel', () => {
+    it('defaults to one worker per loaded model', () => {
+      const prev = process.env.NANOGENT_SUBAGENT_SLOTS;
+      delete process.env.NANOGENT_SUBAGENT_SLOTS;
+      try {
+        expect(discoveredSlotsPerModel()).toBe(1);
+      } finally {
+        if (prev === undefined) delete process.env.NANOGENT_SUBAGENT_SLOTS;
+        else process.env.NANOGENT_SUBAGENT_SLOTS = prev;
+      }
+    });
+  });
+
+  describe('subAgentEndpointsFromModels', () => {
+    it('recruits each loaded 2B as its own worker and ignores a loaded 4B', () => {
+      const prev = process.env.NANOGENT_SUBAGENT_SLOTS;
+      delete process.env.NANOGENT_SUBAGENT_SLOTS;
+      try {
+        const endpoints = subAgentEndpointsFromModels(
+          [
+            { id: 'qwen3.5-4b', isLoaded: true },
+            { id: 'qwen3.5-2b', isLoaded: true },
+            { id: 'qwen3.5-2b-instruct', isLoaded: true },
+            { id: 'Qwen3.5-2B-Instruct-q4', isLoaded: true },
+            { id: 'qwen3.5-2b-claude', isLoaded: false },
+          ],
+          'http://127.0.0.1:1234/v1'
+        );
+        expect(endpoints.map((e) => e.model)).toEqual([
+          'qwen3.5-2b',
+          'qwen3.5-2b-instruct',
+          'Qwen3.5-2B-Instruct-q4',
+        ]);
+        expect(endpoints.map((e) => e.name)).toEqual([
+          'qwen-remote-1',
+          'qwen-remote-2',
+          'qwen-remote-3',
+        ]);
+        expect(endpoints.every((e) => e.concurrency === 1)).toBe(true);
+      } finally {
+        if (prev === undefined) delete process.env.NANOGENT_SUBAGENT_SLOTS;
+        else process.env.NANOGENT_SUBAGENT_SLOTS = prev;
+      }
     });
   });
 

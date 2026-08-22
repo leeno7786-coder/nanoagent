@@ -45,7 +45,7 @@ export const manageTodosTool: Tool = {
 export const exploreSubagentTool: Tool = {
   name: 'explore_subagent',
   description:
-    'Dispatch ONE remote sub-agent with a focused, context-rich prompt. It has read-only exploration tools against this workspace. Sub-agents run SYNCHRONOUSLY — when this tool returns, execution is 100% finished. Do NOT wait for sub-agents or reason that they are still running. Synthesize their findings immediately. Call this 1–3 times IN PARALLEL in one message.',
+    'Dispatch ONE remote sub-agent with a focused, context-rich prompt. It has read-only exploration tools against this workspace. Sub-agents run SYNCHRONOUSLY — when this tool returns, execution is 100% finished. Do NOT wait for sub-agents or reason that they are still running. Synthesize their findings immediately. Call this up to 4 times IN PARALLEL in one message.',
   parameters: {
     type: 'object',
     properties: {

@@ -183,7 +183,7 @@ export interface Config {
   subAgentBaseURL?: string;
   /** API key for the remote sub-agent provider. */
   subAgentApiKey?: string;
-  /** Maximum number of concurrent background sub-agents (default: 3). */
+  /** Maximum number of concurrent background sub-agents (default: 4). */
   maxBackgroundSubAgents?: number;
   /** MCP server configurations (local stdio or remote HTTP). */
   mcp?: Record<string, McpServerConfig>;

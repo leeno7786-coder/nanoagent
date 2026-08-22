@@ -8,7 +8,7 @@ import { resolveSubAgentPool, exploreWithSubAgent } from '../../src/subagents.js
 import type { SubAgentPoolConfig } from '../../src/types.js';
 
 const modelId = process.argv[2];
-const slots = Number(process.argv[3]) || 4;
+const slots = Number(process.argv[3]) || 1;
 
 const base = loadConfig({ workspace: process.cwd() });
 const pool: SubAgentPoolConfig | undefined = modelId

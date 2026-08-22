@@ -100,7 +100,7 @@ Use these prefixes on every review comment:
 - [ ] Server lifecycle cleaned up (no leaked child processes on shutdown)
 
 ### 🧠 LLM / providers / subagents (`src/llm*.ts`, `src/providers*.ts`, `src/subagents*.ts`)
-- [ ] Sub-agent dispatch stays focused (narrow, file-specific prompts; concurrency capped at 3)
+- [ ] Sub-agent dispatch stays focused (narrow, file-specific prompts; concurrency capped at 4)
 - [ ] Pool resolution order preserved: explicit `cfg.subagents` → `REMOTE_LMSTUDIO_URL` → local LM Studio `qwen3.5-2b*`
 - [ ] Timeouts and retries handle slow local models (LM Studio at `http://127.0.0.1:1234/v1`)
 - [ ] Token counting (tiktoken) failures degrade gracefully, not crash
