@@ -39,8 +39,19 @@ jobs:
       - name: Pack
         run: npm pack
 
-      - name: Publish
-        run: npm publish --access public
+      - name: Publish (skip if already published)
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view "@omega3_0/nanoagent@${VERSION}" version 2>/dev/null || true)
+          if [ "$PUBLISHED" = "$VERSION" ]; then
+            echo "@omega3_0/nanoagent@${VERSION} is already published; continuing to GitHub Release."
+          elif [ -n "$PUBLISHED" ]; then
+            echo "Registry returned an unexpected version: $PUBLISHED" >&2
+            exit 1
+          else
+            npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
