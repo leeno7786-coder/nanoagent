@@ -7,22 +7,44 @@ import { VersionedStore } from './storage.js';
 const SESSION_VERSION = 1;
 
 export function buildConfigSnapshot(cfg: Config): Partial<Config> {
-  // apiKey is deliberately excluded: session files are persisted to disk and
-  // must not contain secrets.
+  // apiKey and MCP configuration are deliberately excluded: session files are
+  // persisted to disk and must not contain credentials or server secrets.
+  // Keep the model/profile settings here in sync with the options that can
+  // affect how a resumed conversation is sent to its provider.
   return {
     model: cfg.model,
     baseURL: cfg.baseURL,
-    permissionMode: cfg.permissionMode,
-    permissionRules: cfg.permissionRules,
+    provider: cfg.provider,
+    profile: cfg.profile,
+    profiles: cfg.profiles,
+    fallbacks: cfg.fallbacks,
+    maxTokens: cfg.maxTokens,
+    temperature: cfg.temperature,
+    effort: cfg.effort,
+    timeout: cfg.timeout,
+    retryCount: cfg.retryCount,
     maxIterations: cfg.maxIterations,
     maxToolRoundsBeforeCheckin: cfg.maxToolRoundsBeforeCheckin,
-    temperature: cfg.temperature,
+    maxReasoningOnlyRounds: cfg.maxReasoningOnlyRounds,
     smallModelMode: cfg.smallModelMode,
     modelParamBillions: cfg.modelParamBillions,
     modelContextLength: cfg.modelContextLength,
     modelMaxContextLength: cfg.modelMaxContextLength,
+    modelRuntimeSource: cfg.modelRuntimeSource,
+    supportsTools: cfg.supportsTools,
+    supportsThinking: cfg.supportsThinking,
+    supportsReasoningEffort: cfg.supportsReasoningEffort,
+    supportsPromptCache: cfg.supportsPromptCache,
+    promptCache: cfg.promptCache,
+    rateLimitMs: cfg.rateLimitMs,
+    maxRequestsPerMinute: cfg.maxRequestsPerMinute,
+    maxConcurrentLlmRequests: cfg.maxConcurrentLlmRequests,
+    maxTokensPerMinute: cfg.maxTokensPerMinute,
+    maxToolResultTokens: cfg.maxToolResultTokens,
     workspace: cfg.workspace,
-    provider: cfg.provider,
+    permissionMode: cfg.permissionMode,
+    permissionRules: cfg.permissionRules,
+    systemPrompt: cfg.systemPrompt,
   };
 }
 

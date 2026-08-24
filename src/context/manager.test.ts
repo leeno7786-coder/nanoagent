@@ -426,6 +426,43 @@ describe('ContextManager long-context compaction', () => {
     expect(mgr.needsCompaction()).toBe(true);
   });
 
+  it('resets a 256k context to roughly 20% after normal compaction', () => {
+    const contextSize = 262144;
+    const mgr = createContextManager({
+      model: 'test-model',
+      baseURL: 'http://127.0.0.1:1234/v1',
+      workspace: '/test',
+      maxIterations: 10,
+      apiKey: 'test',
+      modelContextLength: contextSize,
+      contextCompactThreshold: 0.5,
+      contextKeepCount: 4,
+    });
+
+    mgr.addMessage({ id: 'system', role: 'system', content: 'SYS', timestamp: Date.now() });
+    mgr.addMessage({
+      id: 'original-task',
+      role: 'user',
+      content: 'Keep this original task pinned during compaction.',
+      timestamp: Date.now(),
+    });
+    for (let i = 0; i < 1200; i++) {
+      mgr.addMessage({
+        id: `history-${i}`,
+        role: i % 2 === 0 ? 'assistant' : 'user',
+        content: Array.from({ length: 120 }, (_, j) => `history-${i}-${j}-token-${(i * 997 + j * 31).toString(36)}`).join(' '),
+        timestamp: Date.now(),
+      });
+    }
+
+    expect(mgr.needsCompaction()).toBe(true);
+    const result = mgr.compact();
+
+    expect(result.removedCount).toBeGreaterThan(0);
+    expect(mgr.getStats().currentTokens).toBeLessThanOrEqual(contextSize * 0.2 + 2000);
+    expect(mgr.getMessages().some((message) => message.id === 'original-task')).toBe(true);
+  });
+
   it('keeps tool-schema overhead in the fill after compaction clears the API baseline', () => {
     const mgr = createContextManager({
       model: 'test-model',

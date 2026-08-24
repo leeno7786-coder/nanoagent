@@ -825,6 +825,7 @@ export async function agentRun(
           continue;
         }
         agent.setState('idle');
+        agent.onUpdate?.();
         return;
       }
     }

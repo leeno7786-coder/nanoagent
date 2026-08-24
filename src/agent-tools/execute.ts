@@ -130,7 +130,7 @@ export async function executeToolSequential(
       const duration = cached.duration;
 
       addToolMessage(agent, output, tc.id);
-      handleSpecialToolResults(agent, tc.name, output, tc.id);
+      await handleSpecialToolResults(agent, tc.name, output, tc.id);
 
       const finalOutput = output;
       agent.onToolResult?.({
@@ -490,7 +490,7 @@ export async function executeToolsParallel(
 
     const tc = parallelTools.find((t) => t.id === result.id);
     if (tc) {
-      handleSpecialToolResults(agent, tc.name, result.output, tc.id);
+      await handleSpecialToolResults(agent, tc.name, result.output, tc.id);
     }
 
     agent.onToolResult?.({

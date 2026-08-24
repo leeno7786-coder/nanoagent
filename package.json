@@ -1,6 +1,6 @@
 {
   "name": "@omega3_0/nanoagent",
-  "version": "2.1.12",
+  "version": "2.1.13",
   "description": "Ultra-lightweight, scalable CLI/TUI coding agent optimized for tiny local models & remote runtimes",
   "module": "dist/opentui/index.js",
   "type": "module",
@@ -74,7 +74,7 @@
     "package:native": "bun run package:deb && bun run package:win"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "^1.3.14",
     "@types/diff": "^7.0.0",
     "@types/node": "^20.14.0",
     "@types/react": "^19",

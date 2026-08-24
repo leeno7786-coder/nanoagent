@@ -36,22 +36,25 @@ export function parseToolArgs(tc: { name: string; arguments: string }): Record<s
   return args as Record<string, unknown>;
 }
 
-export function handleSpecialToolResults(
+export async function handleSpecialToolResults(
   agent: AgentCore,
   toolName: string,
   output: string,
   toolCallId: string
-): void {
+): Promise<void> {
   if (toolName === 'change_workspace') {
     try {
       const result = JSON.parse(output);
       if (result.ok && result.workspace) {
-        // Attach .catch so a failed reconfigure is logged, not an unhandled rejection.
-        agent.reconfigure({ workspace: result.workspace }).catch((e: unknown) => {
+        try {
+          // Workspace changes must complete before the next model/tool round;
+          // otherwise the next tool can run against the stale workspace.
+          await agent.reconfigure({ workspace: result.workspace });
+        } catch (e: unknown) {
           console.error(
             `[agent] reconfigure failed after change_workspace: ${(e as { message?: string }).message ?? String(e)}`
           );
-        });
+        }
         agent.todos = [];
         syncTodoMessage(agent);
         agent.onUpdate?.();

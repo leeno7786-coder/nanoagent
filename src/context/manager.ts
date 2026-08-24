@@ -29,9 +29,10 @@ export interface ContextConfig {
   enabled: boolean;
 }
 
-/**
- * Default context configuration.
- */
+/** Target live-prompt fill after compaction. Keep this well below the trigger so
+ * the next tool call has room for schemas, template overhead, and output. */
+export const DEFAULT_COMPACTION_TARGET_RATIO = 0.2;
+
 export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
   compactThreshold: DEFAULT_COMPACT_THRESHOLD,
   summaryReservedPercent: DEFAULT_SUMMARY_RESERVED_PERCENT,
@@ -417,7 +418,7 @@ export class ContextManager {
    *
    * @param opts.force — compact even when under the normal threshold (overflow recovery)
    * @param opts.keepCount — override how many trailing messages to keep (force uses a lower default)
-   * @param opts.targetRatio — fraction of context to land under (default: compactThreshold ratio or 0.5 when forced)
+   * @param opts.targetRatio — fraction of context to land under (default: 20%)
    */
   compact(opts?: { force?: boolean; keepCount?: number; targetRatio?: number }): {
     removedCount: number;
@@ -436,21 +437,17 @@ export class ContextManager {
     // Calculate how many tokens we need to free
     const contextSize = this.getContextWindowSize();
 
-    // Determine target tokens based on whether compactThreshold is a ratio or absolute
-    const threshold = this.config.compactThreshold;
+    // Determine the post-compaction target. An explicit targetRatio is useful
+    // for callers with a model-specific policy; otherwise use the safe default.
     let targetTokens: number;
     if (opts?.targetRatio !== undefined) {
       targetTokens = Math.floor(contextSize * opts.targetRatio);
-    } else if (force) {
-      // Overflow recovery: aim for half the window so the next turn has headroom
-      // for tool schemas (MCP tools are not counted in message tokens).
-      targetTokens = Math.floor(contextSize * 0.5);
-    } else if (threshold <= 1) {
-      // Land under the trigger so the next turn has headroom (80% → ~65%).
-      targetTokens = Math.floor(contextSize * Math.max(0.5, threshold - 0.15));
     } else {
-      // Absolute threshold — land under ~70% of the live window.
-      targetTokens = Math.min(threshold, Math.floor(contextSize * 0.7));
+      // Reset aggressively after either an automatic compaction or an overflow
+      // recovery. A 20% target is intentional: the next turn may add tool
+      // schemas, template overhead, and a large completion before we can
+      // observe usage again.
+      targetTokens = Math.floor(contextSize * DEFAULT_COMPACTION_TARGET_RATIO);
     }
 
     const tokensToRemove = Math.max(0, stats.currentTokens - targetTokens);

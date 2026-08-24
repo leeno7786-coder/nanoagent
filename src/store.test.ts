@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { sanitizeSessionId, loadSession, deleteSession } from './store.js';
+import { sanitizeSessionId, loadSession, deleteSession, buildConfigSnapshot } from './store.js';
+import type { Config } from './types.js';
 
 describe('sanitizeSessionId', () => {
   it('strips path separators so ids cannot escape the sessions dir', () => {
@@ -23,6 +24,43 @@ describe('sanitizeSessionId', () => {
 
   it('keeps normal ids intact', () => {
     expect(sanitizeSessionId('autosave-1a2b3c4d')).toBe('autosave-1a2b3c4d');
+  });
+});
+
+describe('buildConfigSnapshot', () => {
+  it('persists the active model and provider configuration without secrets', () => {
+    const cfg = {
+      model: 'qwen-2.5-coder',
+      baseURL: 'http://127.0.0.1:1234/v1',
+      apiKey: 'do-not-persist',
+      provider: 'lmstudio',
+      profile: 'coding',
+      profiles: { coding: { model: 'qwen-2.5-coder', temperature: 0.2 } },
+      maxTokens: 4096,
+      temperature: 0.2,
+      effort: 'high',
+      timeout: 30000,
+      retryCount: 2,
+      modelContextLength: 32768,
+      modelMaxContextLength: 131072,
+      permissionMode: 'ask',
+      workspace: 'C:/workspace',
+    } as Config;
+
+    const snapshot = buildConfigSnapshot(cfg);
+
+    expect(snapshot).toMatchObject({
+      model: cfg.model,
+      baseURL: cfg.baseURL,
+      provider: cfg.provider,
+      profile: cfg.profile,
+      profiles: cfg.profiles,
+      maxTokens: cfg.maxTokens,
+      temperature: cfg.temperature,
+      effort: cfg.effort,
+      modelContextLength: cfg.modelContextLength,
+    });
+    expect(snapshot).not.toHaveProperty('apiKey');
   });
 });
 
