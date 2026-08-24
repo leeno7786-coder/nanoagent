@@ -1,10 +1,50 @@
 export class ApiError extends Error {
   status?: number;
-  constructor(message: string, status?: number) {
+  code?: string;
+  type?: string;
+  providerMessage?: string;
+  cause?: unknown;
+
+  constructor(
+    message: string,
+    status?: number,
+    details?: {
+      code?: string;
+      type?: string;
+      providerMessage?: string;
+      cause?: unknown;
+    }
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = details?.code;
+    this.type = details?.type;
+    this.providerMessage = details?.providerMessage;
+    this.cause = details?.cause;
   }
+}
+
+export function providerErrorDetails(err: unknown): {
+  code?: string;
+  type?: string;
+  providerMessage?: string;
+} {
+  if (!err || typeof err !== 'object') return {};
+  const value = err as Record<string, unknown>;
+  const nested = value.error as Record<string, unknown> | undefined;
+  const response = value.response as Record<string, unknown> | undefined;
+  const responseData = response?.data as Record<string, unknown> | undefined;
+  const body = responseData?.error as Record<string, unknown> | undefined;
+  const source = nested || body || responseData;
+  const message = source?.message ?? value.message;
+  const code = source?.code ?? value.code;
+  const type = source?.type ?? value.type;
+  return {
+    code: code == null ? undefined : String(code),
+    type: type == null ? undefined : String(type),
+    providerMessage: message == null ? undefined : String(message),
+  };
 }
 
 export interface ChatMessage {

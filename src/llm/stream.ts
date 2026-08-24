@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import type { Config } from '../types.js';
 import { logError } from '../log.js';
-import { ApiError } from './types.js';
+import { ApiError, providerErrorDetails } from './types.js';
 import type { ChatMessage, ChatRequestOptions, StreamChunk } from './types.js';
 import {
   normalizeContent,
@@ -67,12 +67,9 @@ export async function* streamChat(
           }>;
         }>;
 
-        noteEndpointSuccess(cfg.baseURL);
-
         const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
         let finishReason: string | undefined;
         let usage: { input_tokens: number; output_tokens: number } | undefined;
-
         let yieldedMeaningfulContent = false;
 
         for await (const chunk of stream) {
@@ -135,9 +132,7 @@ export async function* streamChat(
                 });
               }
               const buf = toolCallBuffers.get(idx)!;
-              if (tcId && !buf.id) {
-                buf.id = tcId;
-              }
+              if (tcId && !buf.id) buf.id = tcId;
               if (tcFn?.name) buf.name = tcFn.name as string;
               if (tcFn?.arguments) buf.args += tcFn.arguments as string;
             }
@@ -185,34 +180,36 @@ export async function* streamChat(
           }
         }
 
+        // Only count a request as successful after the SSE stream was fully consumed.
+        noteEndpointSuccess(cfg.baseURL);
         return { usage };
       } finally {
         releaseEndpointTurn(cfg.baseURL);
       }
     } catch (err: unknown) {
       const e = err as {
-        name: string;
+        name?: string;
         status?: number;
         status_code?: number;
         response?: { status?: number };
       };
-      if (e.name === 'AbortError' || signal?.aborted) {
-        throw err;
-      }
+      if (e.name === 'AbortError' || signal?.aborted) throw err;
+
       const errStatus = e.status || e.status_code || e.response?.status || 0;
       lastError = err as Error;
-
       const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
+      const details = providerErrorDetails(err);
 
       if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
-        throw new ApiError(errorMessage(errStatus, attempt, err, effectiveMaxRetries), errStatus);
+        throw new ApiError(errorMessage(errStatus, attempt, err, effectiveMaxRetries), errStatus, {
+          ...details,
+          cause: err,
+        });
       }
 
       const delayMs = calculateBackoffDelay(attempt, errStatus, err);
-      if (isRateLimit) {
-        noteEndpointRateLimited(cfg.baseURL, delayMs, err);
-      }
+      if (isRateLimit) noteEndpointRateLimited(cfg.baseURL, delayMs, err);
 
       const msgStr = errorMessage(errStatus, attempt, err, effectiveMaxRetries, delayMs);
       options?.onRetry?.({
@@ -222,14 +219,8 @@ export async function* streamChat(
         status: errStatus,
         message: msgStr,
       });
-
-      if (process.env.QWEN_DEBUG_LLM || isRateLimit) {
-        logError(`[LLM Retry] ${msgStr}`);
-      }
-
-      if (!isRateLimit) {
-        await sleepWithSignal(delayMs, signal);
-      }
+      if (process.env.QWEN_DEBUG_LLM || isRateLimit) logError(`[LLM Retry] ${msgStr}`);
+      if (!isRateLimit) await sleepWithSignal(delayMs, signal);
       attempt++;
     }
   }

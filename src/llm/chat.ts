@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import type { Config } from '../types.js';
 import { logError } from '../log.js';
-import { ApiError } from './types.js';
+import { ApiError, providerErrorDetails } from './types.js';
 import type { ChatMessage, ChatResponse, ChatRequestOptions } from './types.js';
 import {
   normalizeContent,
@@ -114,7 +114,10 @@ export async function chat(
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
 
       if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
-        throw new ApiError(errorMessage(errStatus, attempt, err, effectiveMaxRetries), errStatus);
+        throw new ApiError(errorMessage(errStatus, attempt, err, effectiveMaxRetries), errStatus, {
+          ...providerErrorDetails(err),
+          cause: err,
+        });
       }
 
       const delayMs = calculateBackoffDelay(attempt, errStatus, err);

@@ -315,7 +315,19 @@ export async function agentRun(
           agent.cfg,
           agent.toChatMessages(),
           agent.buildToolSchemas(activeSkills),
-          signal
+          signal,
+          {
+            onRetry: () => {
+              assistantMsg.content = '';
+              assistantMsg.reasoningContent = undefined;
+              delete assistantMsg.toolCalls;
+              hasToolCalls = false;
+              toolCallBuffers = [];
+              finishReason = undefined;
+              inThinkTag = false;
+              thinkCarry = '';
+            },
+          }
         );
 
         let hasToolCalls = false;
@@ -559,6 +571,9 @@ export async function agentRun(
           status_code?: number;
           message?: string;
           name?: string;
+          providerMessage?: string;
+          code?: string;
+          type?: string;
         };
         const isAborted =
           signal?.aborted ||
@@ -586,10 +601,9 @@ export async function agentRun(
         }
 
         const status = e.status || e.status_code;
-        const msg = e.message || String(err);
+        const msg = [e.message, e.providerMessage, e.code, e.type, String(err)].filter(Boolean).join(' ');
         const overflowHint =
-          /context.?length|maximum context|too many tokens|prompt is too long/i.test(msg);
-
+          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded/i.test(msg);
         if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
           if (isEndpointRateLimited(agent.cfg.baseURL)) {
             agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
@@ -651,6 +665,9 @@ export async function agentRun(
           status_code?: number;
           message?: string;
           name?: string;
+          providerMessage?: string;
+          code?: string;
+          type?: string;
         };
         const isAborted =
           signal?.aborted ||
@@ -674,10 +691,9 @@ export async function agentRun(
         }
 
         const status = e.status || e.status_code;
-        const msg = e.message || String(err);
+        const msg = [e.message, e.providerMessage, e.code, e.type, String(err)].filter(Boolean).join(' ');
         const overflowHint =
-          /context.?length|maximum context|too many tokens|prompt is too long/i.test(msg);
-
+          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded/i.test(msg);
         if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
           if (isEndpointRateLimited(agent.cfg.baseURL)) {
             agent.addNoticeMessage(
