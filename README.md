@@ -139,7 +139,7 @@ When LM Studio has extra Qwen3.5 2B models loaded (up to 4 instances), NanoAgent
 
 First-run: type `/connect` in the TUI to pick a provider (Local first, then Cloud), enter an API key if needed, and choose a model.
 
-Cloud providers include OpenAI, OpenRouter, Azure AI Foundry (per-resource URL), Alibaba Cloud Model Studio / DashScope (intl, China, and Coding Plan), Kimi Code, Moonshot, DeepSeek, Groq, xAI, Together, Fireworks, Cerebras, MiniMax, NVIDIA NIM, Hugging Face, Gemini (OpenAI-compat), and others. Local extras include Foundry Local, SGLang, MLX, KoboldCpp, and Docker Model Runner. All of these speak OpenAI Chat Completions — no extra SDKs.
+Cloud providers include OpenAI, OpenRouter, Azure AI Foundry (per-resource URL), Alibaba Cloud Model Studio / DashScope (intl, China, and Coding Plan), Kimi Code, Moonshot, DeepSeek, Groq, xAI, Together, Fireworks, Cerebras, MiniMax, NVIDIA NIM, GMI Cloud, Hugging Face, Gemini (OpenAI-compat), and others. Local extras include Foundry Local, SGLang, MLX, KoboldCpp, and Docker Model Runner. All of these speak OpenAI Chat Completions — no extra SDKs.
 
 ---
 

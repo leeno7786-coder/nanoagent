@@ -979,6 +979,30 @@ export const RUNTIME_PROVIDERS: RuntimeProvider[] = [
     ],
   },
   {
+    id: 'gmi-cloud',
+    name: 'GMI Cloud',
+    baseURL: 'https://api.gmi-serving.com/v1',
+    requiresAuth: true,
+    apiKeyEnvVar: 'GMI_API_KEY',
+    dynamicModels: true,
+    icon: '🌩️',
+    description: 'GMI Cloud GPU inference (OpenAI-compatible)',
+    docsUrl: 'https://docs.gmicloud.ai',
+    models: [
+      {
+        id: 'meta-llama/Llama-3.3-70B-Instruct',
+        name: 'Llama 3.3 70B Instruct',
+        description: "Meta's open instruct model on GMI",
+        default: true,
+      },
+      {
+        id: 'deepseek-ai/DeepSeek-V4-Pro',
+        name: 'DeepSeek V4 Pro',
+        description: 'DeepSeek flagship on GMI',
+      },
+    ],
+  },
+  {
     id: 'huggingface',
     name: 'Hugging Face',
     baseURL: 'https://router.huggingface.co/v1',

@@ -85,6 +85,8 @@ interface TpmBucket {
   effectiveTpm: number;
   successStreak: number;
   successAt: number[];
+  /** Consecutive TPM 429s. Resets on a successful request. */
+  consecutiveThrottles: number;
 }
 
 const endpointTpmBuckets = new Map<string, TpmBucket>();
@@ -248,6 +250,7 @@ function getOrCreateTpmBucket(key: string, tpm: number): TpmBucket {
       effectiveTpm: tpm,
       successStreak: 0,
       successAt: [],
+      consecutiveThrottles: 0,
     };
     endpointTpmBuckets.set(key, bucket);
     return bucket;
@@ -337,6 +340,10 @@ function drainAndAdaptTpm(baseURL: string): void {
   bucket.lastRefill = now;
   bucket.successStreak = 0;
   bucket.successAt = bucket.successAt.filter((t) => now - t < 60_000);
+  // Hysteresis: a single transient 429 must not permanently halve TPM.
+  // Require 2 consecutive TPM throttles before shrinking the bucket.
+  bucket.consecutiveThrottles++;
+  if (bucket.consecutiveThrottles < 2) return;
   const current = bucket.effectiveTpm > 0 ? bucket.effectiveTpm : bucket.configuredTpm;
   const next = Math.min(bucket.configuredTpm, Math.max(1, Math.floor(current * 0.5)));
   applyTpmToBucket(bucket, bucket.configuredTpm, next);
@@ -452,6 +459,10 @@ export function noteEndpointSuccess(baseURL?: string): void {
   }
   const tpm = endpointTpmBuckets.get(key);
   if (tpm) {
+    // Reset the consecutive-throttle counter on every success so the
+    // hysteresis guard in drainAndAdaptTpm doesn't penalize the bucket for
+    // a single old 429 followed by a long run of successful calls.
+    tpm.consecutiveThrottles = 0;
     tpm.successAt.push(now);
     tpm.successAt = tpm.successAt.filter((t) => now - t < 60_000);
     tpm.successStreak++;

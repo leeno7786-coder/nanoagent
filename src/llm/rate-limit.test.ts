@@ -179,9 +179,15 @@ describe('optional TPM pacing', () => {
       estimatedPromptTokens: 10,
     });
     releaseEndpointTurn(url);
+    // Hysteresis: a single transient 429 must not permanently halve TPM.
+    // First 429 only increments the counter; effectiveTpm stays at the cap.
+    noteEndpointRateLimited(url, 1, { message: 'Rate limit exceeded: tokens per minute' });
+    expect(getEndpointLimiterSnapshot(url)?.effectiveTpm).toBe(40_000);
+    expect(getEndpointLimiterSnapshot(url)?.tpmTokens).toBe(0);
+    // Second consecutive 429 actually halves the bucket.
     noteEndpointRateLimited(url, 1, { message: 'Rate limit exceeded: tokens per minute' });
     expect(getEndpointLimiterSnapshot(url)?.effectiveTpm).toBe(20_000);
-    expect(getEndpointLimiterSnapshot(url)?.tpmTokens).toBe(0);
+    // A success resets the counter, and the recovery path doubles it back.
     noteEndpointSuccess(url);
     noteEndpointSuccess(url);
     expect(getEndpointLimiterSnapshot(url)?.effectiveTpm).toBe(40_000);

@@ -4,6 +4,7 @@ import { resolve, join } from 'path';
 
 import type { Tool } from './shared.js';
 import { NULL_BYTE_RE, REPLACEMENT_CHAR_RE, getSanitizedEnv } from './shared.js';
+import { DANGEROUS_COMMAND_PATTERNS } from '../security/patterns.js';
 
 interface ShellInfo {
   executable: string;
@@ -438,15 +439,7 @@ function execCmdAsync(
 }
 
 function isDangerous(cmd: string): boolean {
-  return [
-    /rm\s+-rf/i,
-    /rm\s+--no-preserve-root/i,
-    /dd\s+if=/i,
-    /mkfs/i,
-    /:\(\)\{\s*:\s*\|\s*:\s*&\s*\};\s*:/i,
-    /wget.*-O\s+\/dev\/null/i,
-    /curl.*-o\s+\/dev\/null/i,
-  ].some((p) => p.test(cmd));
+  return DANGEROUS_COMMAND_PATTERNS.some((p) => p.test(cmd));
 }
 
 // Command Execution and Build Tools

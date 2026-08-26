@@ -21,6 +21,10 @@ export async function agentRun(
 ): Promise<void> {
   agent.setState('thinking');
 
+  // Per-turn state. Declared up front so the user-message reset path can
+  // clear them safely before the first loop iteration.
+  let earlyStopContinues = 0;
+
   const maxReasoningOnly =
     agent.cfg.maxReasoningOnlyRounds && agent.cfg.maxReasoningOnlyRounds > 0
       ? agent.cfg.maxReasoningOnlyRounds
@@ -232,6 +236,7 @@ export async function agentRun(
 
   if (!skipUserMessage) {
     agent.consecutiveToolRounds = 0;
+    earlyStopContinues = 0;
     agent.addUserMessage(userText);
   }
 
@@ -240,8 +245,6 @@ export async function agentRun(
   /** Retries after silent context overflow (finish_reason=length, 0 output). */
   let overflowRetries = 0;
   const MAX_OVERFLOW_RETRIES = 2;
-  /** Auto-continues after shallow tool work + clarifying-question exit. */
-  let earlyStopContinues = 0;
   /** Stuck-loop guard: consecutive rounds issuing identical tool-call signatures. */
   let lastToolSignature: string | undefined;
   let sameSignatureStreak = 0;
@@ -394,7 +397,18 @@ export async function agentRun(
                 const parts = textToProcess.split('</think>');
                 assistantMsg.reasoningContent = (assistantMsg.reasoningContent || '') + parts[0];
                 inThinkTag = false;
-                assistantMsg.content += parts.slice(1).join('</think>');
+                // The text after </think> in this chunk may itself open a new
+                // think block — re-enter the loop instead of treating it as
+                // plain content.
+                textToProcess = parts.slice(1).join('</think>');
+                if (textToProcess.includes('<think>')) {
+                  const inner = textToProcess.split('<think>');
+                  assistantMsg.content += inner[0];
+                  inThinkTag = true;
+                  textToProcess = inner.slice(1).join('<think>');
+                } else {
+                  assistantMsg.content += textToProcess;
+                }
               } else {
                 assistantMsg.reasoningContent =
                   (assistantMsg.reasoningContent || '') + textToProcess;

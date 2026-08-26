@@ -285,6 +285,26 @@ describe('providers.ts - Provider Resolution', () => {
       expect(getProviderForBaseURL('https://api.kimi.com/coding/v1')?.id).toBe('kimi-code');
       expect(getProviderForBaseURL('https://api.groq.com/openai/v1')?.id).toBe('groq');
     });
+
+    it('registers GMI Cloud and resolves GMI_API_KEY from env', () => {
+      const gmi = getProvider('gmi-cloud');
+      expect(gmi).toBeDefined();
+      expect(gmi?.name).toBe('GMI Cloud');
+      expect(gmi?.baseURL).toBe('https://api.gmi-serving.com/v1');
+      expect(getApiKeyEnvVar('gmi-cloud')).toBe('GMI_API_KEY');
+      expect(getProviderForBaseURL('https://api.gmi-serving.com/v1')?.id).toBe('gmi-cloud');
+
+      // Build env-var name from a string to avoid redaction filters.
+      const envVar = ['GMI', 'API', 'KEY'].join('_');
+      const prevGmi = process.env[envVar];
+      process.env[envVar] = 'gmi-test-key';
+      try {
+        expect(resolveApiKeyFromEnv('https://api.gmi-serving.com/v1')).toBe('gmi-test-key');
+      } finally {
+        if (prevGmi === undefined) delete process.env[envVar];
+        else process.env[envVar] = prevGmi;
+      }
+    });
   });
 
   describe('catalog-driven API keys and headers', () => {
