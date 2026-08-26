@@ -138,7 +138,7 @@ export function StatusBar({
       </box>
       <box flexDirection="row" paddingX={1} height={1} overflow="hidden">
         <text fg={theme.mutedFg}>
-          F1 help · Shift+Tab perm · F3 auto · F4 todo · F9 theme · F10 exit · F7 mouse · ^D abort
+          F1 help · Shift+Tab perm · F3 auto · F4 todo · F9 theme · F10 exit · F7 mouse · ^D abort · !cmd
         </text>
         {!mouseEnabled && <text fg={theme.statusError}> [MOUSE OFF]</text>}
       </box>

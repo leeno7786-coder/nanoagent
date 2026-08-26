@@ -27,9 +27,11 @@ import { THEMES, DEFAULT_THEME } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
 import { getProviderBaseURL } from '../providers.js';
 import { handleSlashCommand, checkAndAutoCompact } from './slash-commands.js';
+import { parseBangCommand, runBangCommand, formatBangResult } from './bang-command.js';
 import { useAppStore } from './app-store.js';
 import { useClipboardPaste } from './use-clipboard-paste.js';
 import { copyToClipboard } from '../clipboard.js';
+import { rnd } from '../agent-utils.js';
 
 /**
  * Messages the user can select/copy — shares ChatScreen's visibility filter
@@ -408,6 +410,40 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     async (text: string) => {
       const agent = agentRef.current;
       if (!agent) return;
+
+      // `!` shell-command shortcut (Vim/Claude-Code/aider convention). Runs
+      // the command through the same execute_command path the LLM uses, so
+      // SecurityManager + DANGEROUS_COMMAND_PATTERNS + workspace sandbox
+      // all apply. Renders inline as a user/tool pair; no LLM call.
+      const bang = parseBangCommand(text);
+      if (bang.isBang) {
+        // Workspace is required to scope the command to the project.
+        const workspace = agent.cfg.workspace;
+        if (!workspace) return;
+        // Run on a worker so the TUI stays responsive on long commands.
+        const result = await Promise.resolve(
+          runBangCommand(bang.command, {
+            workspace,
+            securityManager: agent.securityManager,
+            cfg: agent.cfg,
+          })
+        );
+        agent.messages.push({
+          id: rnd(),
+          role: 'user',
+          content: `!${bang.command}`,
+          timestamp: Date.now(),
+        });
+        agent.messages.push({
+          id: rnd(),
+          role: 'assistant',
+          content: formatBangResult(bang.command, result),
+          timestamp: Date.now(),
+        });
+        agent.setState('idle');
+        store.getState().syncFromAgent(agent);
+        return;
+      }
 
       const isSlash = text.startsWith('/');
       // Slash commands must work even after errors / while waiting for permission.
