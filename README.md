@@ -34,7 +34,7 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 - **Launch from anywhere** — `nanoagent`, `nanogent`, `nano-agent`, or `npx @omega3_0/nanoagent`
 - **Tiny-model first** — compact prompts, context auto-compact (default 80% of the live window), and small-model tool-call resilience
 - **OpenTUI dashboard** — streaming chat, tool diffs, todos, skills overlay, connect overlay, and keyboard shortcuts
-- **Dual-level config** — `~/.nanogent.json` (or `~/.nanoagent.json`) merged with a project `.nanogent.json` (project keys win; MCP servers merge with per-server trust)
+- **Dual-level config** — `~/.nanogent.json` (or `~/.nanoagent.json`, `~/.nanogent/config.json`, legacy `~/.qwen-agent.json`) merged with a project `.nanogent.json` (or `.nanoagent.json`, `nanogent.json`, `qwen-agent.json`; project keys win; MCP servers merge with per-server trust)
 - **Permissions** — `read_only` / `ask` / `allow_edits` / `always_allow`, plus Shift+Tab to cycle in the TUI
 - **Remote sub-agents** — `explore_subagent` workers against a configured pool or `REMOTE_LMSTUDIO_URL`
 - **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`)
@@ -145,7 +145,7 @@ Cloud providers include OpenAI, OpenRouter, Azure AI Foundry (per-resource URL),
 
 ## Configuration
 
-Global defaults live in `~/.nanogent.json` or `~/.nanoagent.json`. Project overrides live in `.nanogent.json` (or `.nanoagent.json`) in the workspace. Project keys win; MCP server maps merge (project-local MCP does **not** auto-connect unless the source is trusted — see [SECURITY.md](SECURITY.md)).
+Global defaults live in `~/.nanogent.json` (also `~/.nanoagent.json`, `~/.nanogent/config.json`, or legacy `~/.qwen-agent.json`). Project overrides live in `.nanogent.json` (also `.nanoagent.json`, `nanogent.json`, or `qwen-agent.json`) in the workspace. Project keys win; MCP server maps merge (project-local MCP does **not** auto-connect unless the source is trusted — see [SECURITY.md](SECURITY.md)).
 
 ```json
 {
@@ -247,6 +247,7 @@ In the TUI:
 | `/doctor` | Health check |
 | `/models` | Local/remote models and context |
 | `/todo` `/todos` | Todo sidebar (F4) / list |
+| `/clear-todos` | Remove all todos |
 | `/skills` | Skills overlay (F8) |
 | `/skill` `/skill-load` `/unload` | List, load, or unload a skill |
 | `/graph build\|stats\|report` | Memory graph |
@@ -256,8 +257,10 @@ In the TUI:
 | `/allow [path]` | Extra tool path outside the workspace |
 | `/theme [name]` | Switch theme (F9 cycles) |
 | `/save` `/load` `/sessions` `/resume` `/rename` | Session persistence |
+| `/delete-session` | Delete a saved session |
 | `/export` | Export chat to markdown |
 | `/copy` | Copy selected message |
+| `/set <key> <val>` | Shorthand for `/config set` |
 | `/reload` | Reload config, skills, and runtime metadata |
 | `/exit` | Quit and auto-save (F10) |
 
@@ -317,23 +320,35 @@ Full details: [SECURITY.md](SECURITY.md). These guards are still evolving with t
 
 ```text
 src/
-├── main.ts              # CLI entry (nanoagent / nanogent)
+├── main.ts              # CLI entry (nanoagent / nanogent), bun detection
 ├── agent.ts             # AgentCore re-export
-├── agent/               # Run loop, early-stop, core state
+├── agent/               # Core state machine: core.ts, run.ts, early-stop.ts
 ├── agent-messages.ts    # LLM payload, compaction, system-base cache
 ├── agent-lifecycle.ts   # Init, reconfigure, shutdown
-├── config/              # .nanogent.json load / validate / merge
-├── llm/                 # Chat, stream, rate limit, context sizing
+├── agent-subagents.ts   # Sub-agent dispatch wiring
+├── agent-todos.ts       # Todo tracking
+├── agent-tools.ts       # Agent-facing tool wiring
+├── agent-utils.ts       # Shared agent helpers
+├── agent-tools/         # Built-in tools exposed to the agent (execute.ts, utils.ts)
+├── config/              # defaults.ts, load.ts, validate.ts, profiles.ts, effort.ts, api-keys.ts
+├── llm/                 # client.ts, chat.ts, stream.ts, request.ts, rate-limit.ts, failover.ts, cost.ts, tool-result-budget.ts, context.ts
 ├── context/             # ContextManager (fill, auto-compact)
-├── tools/               # Files, shell, git, search, graph, MCP
-├── subagents/           # Remote explore-subagent pool + workers
-├── providers/           # Runtime catalog (LM Studio, OpenRouter, …)
-├── security/            # Permissions, command/path checks, redaction
-├── graph/               # Memory graph
-├── mcp/                 # MCP client
+├── tools/               # file-tools, exec-tools, git-tools, search-tools, graph-tools, mcp-manage, misc, registry
+├── tools/file-tools/    # read.ts, write.ts, navigate.ts
+├── subagents/           # Pool resolution, dispatch, and worker/ subfolder (loop, scheduler, failover, tool-runner, context)
+├── providers/           # catalog.ts, lookup.ts, runtime.ts, qwen-models.ts
+├── security/            # permissions.ts, patterns.ts, index.ts
+├── graph/               # MemoryGraph.ts + tools.ts (build/stats/report)
+├── mcp/                 # MCP client (index.ts)
 ├── skills.ts            # Skill loader
-├── cli/                 # run, doctor, models, todo, help
-└── opentui/             # TUI, slash commands, overlays
+├── skill-manager.ts     # Skill lifecycle
+├── store.ts             # Session/todo persistence (zustand)
+├── storage.ts           # Disk I/O for sessions
+├── lib/                 # Shared utilities (file-diff.ts, etc.)
+├── cli/                 # run.ts, doctor.ts, models.ts, todo.ts, help.ts, reports.ts
+├── opentui/             # app.tsx, chat-screen.tsx, overlays, slash-commands/, status-bar, connect-overlay
+├── types.ts             # Shared TypeScript interfaces
+└── *.test.ts            # Colocated bun:test files
 ```
 
 ---
