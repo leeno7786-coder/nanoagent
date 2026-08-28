@@ -615,9 +615,13 @@ export async function agentRun(
         }
 
         const status = e.status || e.status_code;
-        const msg = [e.message, e.providerMessage, e.code, e.type, String(err)].filter(Boolean).join(' ');
+        const msg = [e.message, e.providerMessage, e.code, e.type, String(err)]
+          .filter(Boolean)
+          .join(' ');
         const overflowHint =
-          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded/i.test(msg);
+          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded/i.test(
+            msg
+          );
         if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
           if (isEndpointRateLimited(agent.cfg.baseURL)) {
             agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
@@ -705,9 +709,13 @@ export async function agentRun(
         }
 
         const status = e.status || e.status_code;
-        const msg = [e.message, e.providerMessage, e.code, e.type, String(err)].filter(Boolean).join(' ');
+        const msg = [e.message, e.providerMessage, e.code, e.type, String(err)]
+          .filter(Boolean)
+          .join(' ');
         const overflowHint =
-          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded/i.test(msg);
+          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded/i.test(
+            msg
+          );
         if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
           if (isEndpointRateLimited(agent.cfg.baseURL)) {
             agent.addNoticeMessage(

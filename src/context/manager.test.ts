@@ -450,7 +450,10 @@ describe('ContextManager long-context compaction', () => {
       mgr.addMessage({
         id: `history-${i}`,
         role: i % 2 === 0 ? 'assistant' : 'user',
-        content: Array.from({ length: 120 }, (_, j) => `history-${i}-${j}-token-${(i * 997 + j * 31).toString(36)}`).join(' '),
+        content: Array.from(
+          { length: 120 },
+          (_, j) => `history-${i}-${j}-token-${(i * 997 + j * 31).toString(36)}`
+        ).join(' '),
         timestamp: Date.now(),
       });
     }
