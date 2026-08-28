@@ -440,6 +440,19 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
       cfg.maxToolResultTokens = n;
     }
   }
+  const toolCallArgTokEnv = process.env.QWEN_MAX_TOOL_CALL_ARG_TOKENS;
+  if (toolCallArgTokEnv !== undefined && toolCallArgTokEnv !== '') {
+    const n = parseInt(toolCallArgTokEnv, 10);
+    if (Number.isNaN(n) || n < 0 || n > 1_000_000) {
+      logError(
+        `Error: QWEN_MAX_TOOL_CALL_ARG_TOKENS must be an integer 0-1000000, got ${JSON.stringify(toolCallArgTokEnv)}.\n` +
+          `  Example: QWEN_MAX_TOOL_CALL_ARG_TOKENS=4000\n` +
+          `  Or in ~/.nanogent.json: { "maxToolCallArgumentTokens": 4000 }`
+      );
+    } else if (cfg.maxToolCallArgumentTokens === undefined) {
+      cfg.maxToolCallArgumentTokens = n;
+    }
+  }
   const promptPriceEnv = process.env.QWEN_PROMPT_PRICE_PER_MILLION;
   if (promptPriceEnv !== undefined && promptPriceEnv !== '') {
     const n = parseFloat(promptPriceEnv);

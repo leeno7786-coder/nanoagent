@@ -7,6 +7,10 @@ import type { Message } from '../types.js';
 import { rnd, now } from '../agent-utils.js';
 import { logError } from '../log.js';
 import { EARLY_STOP_CONTINUE_NUDGE, looksLikePrematureCheckin } from './early-stop.js';
+import {
+  capToolResultForLlm,
+  resolveToolCallArgumentTokenBudget,
+} from '../llm/tool-result-budget.js';
 
 const DEFAULT_MAX_REASONING_ONLY = 5;
 /** Only recover when the model barely started (≤ N tool rounds). */
@@ -26,8 +30,10 @@ export async function agentRun(
   let earlyStopContinues = 0;
 
   const maxReasoningOnly =
-    agent.cfg.maxReasoningOnlyRounds && agent.cfg.maxReasoningOnlyRounds > 0
-      ? agent.cfg.maxReasoningOnlyRounds
+    agent.cfg.maxReasoningOnlyRounds !== undefined
+      ? agent.cfg.maxReasoningOnlyRounds > 0
+        ? agent.cfg.maxReasoningOnlyRounds
+        : Infinity // explicit 0 = disable reasoning-only cap (never stop for reasoning-only)
       : DEFAULT_MAX_REASONING_ONLY;
 
   // Auto-load skills matching user input triggers
@@ -424,7 +430,15 @@ export async function agentRun(
               (tc: { id: string; name: string; arguments: string }) => ({
                 id: tc.id,
                 name: tc.name,
-                arguments: tc.arguments,
+                arguments: (() => {
+                  const budget = resolveToolCallArgumentTokenBudget(agent.cfg);
+                  return budget > 0
+                    ? capToolResultForLlm(tc.arguments, {
+                        maxTokens: budget,
+                        modelId: agent.cfg.model,
+                      })
+                    : tc.arguments;
+                })(),
               })
             );
           }
@@ -465,7 +479,18 @@ export async function agentRun(
         }
 
         if (hasToolCalls && toolCallBuffers.length > 0) {
-          assistantMsg.toolCalls = toolCallBuffers;
+          const argBudget = resolveToolCallArgumentTokenBudget(agent.cfg);
+          if (argBudget > 0) {
+            assistantMsg.toolCalls = toolCallBuffers.map((tc) => ({
+              ...tc,
+              arguments: capToolResultForLlm(tc.arguments, {
+                maxTokens: argBudget,
+                modelId: agent.cfg.model,
+              }),
+            }));
+          } else {
+            assistantMsg.toolCalls = toolCallBuffers;
+          }
           reasoningOnlyStreak = 0;
         }
 
@@ -644,6 +669,12 @@ export async function agentRun(
           continue;
         }
 
+        // C4 recovery: rebuild SDK client on sticky 5xx before surfacing error.
+        if (status === 500 || status === 502 || status === 503 || status === 504) {
+          const { createClient } = await import('../llm.js');
+          agent.client = createClient(agent.cfg);
+        }
+
         if (status === 401) {
           const envVar = agent.cfg.baseURL?.includes('mistral.ai')
             ? 'MISTRAL_API_KEY'
@@ -736,6 +767,11 @@ export async function agentRun(
           continue;
         }
 
+        if (status === 500 || status === 502 || status === 503 || status === 504) {
+          const { createClient } = await import('../llm.js');
+          agent.client = createClient(agent.cfg);
+        }
+
         if (status === 401) {
           const envVar = agent.cfg.baseURL?.includes('mistral.ai')
             ? 'MISTRAL_API_KEY'
@@ -807,10 +843,17 @@ export async function agentRun(
         timestamp: now(),
       };
       if (msg.tool_calls) {
+        const argBudget = resolveToolCallArgumentTokenBudget(agent.cfg);
         assistantMsg.toolCalls = msg.tool_calls.map((tc) => ({
           id: tc.id,
           name: tc.function.name,
-          arguments: tc.function.arguments,
+          arguments:
+            argBudget > 0
+              ? capToolResultForLlm(tc.function.arguments, {
+                  maxTokens: argBudget,
+                  modelId: agent.cfg.model,
+                })
+              : tc.function.arguments,
         }));
       }
       agent.messages.push(assistantMsg);

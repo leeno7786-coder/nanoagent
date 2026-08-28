@@ -72,6 +72,8 @@ export async function* streamChat(
         let usage: { input_tokens: number; output_tokens: number } | undefined;
         let yieldedMeaningfulContent = false;
 
+        let previousCompleteCallsStr = ''; // M3: avoid yielding duplicate tool-calls
+
         for await (const chunk of stream) {
           if (signal?.aborted) break;
 
@@ -150,11 +152,15 @@ export async function* streamChat(
               completeToolCalls.push({ id: buf.id, name: buf.name, arguments: buf.args });
             }
           }
+          const currentCallsStr = JSON.stringify(completeToolCalls);
+          const hasNewToolCalls = currentCallsStr !== previousCompleteCallsStr;
+          previousCompleteCallsStr = currentCallsStr;
 
           yield {
             content,
             reasoningContent,
-            toolCalls: completeToolCalls.length > 0 ? completeToolCalls : undefined,
+            toolCalls:
+              hasNewToolCalls && completeToolCalls.length > 0 ? completeToolCalls : undefined,
             finishReason,
           };
 

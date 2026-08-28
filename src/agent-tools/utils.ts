@@ -1,6 +1,7 @@
 import { syncTodoMessage } from '../agent-todos.js';
 import { now } from '../agent-utils.js';
 import type { AgentCore } from '../agent.js';
+import { capToolResultForLlm } from '../llm/tool-result-budget.js';
 
 export async function checkSubAgentConsent(
   agent: AgentCore,
@@ -13,25 +14,45 @@ export async function checkSubAgentConsent(
   return 'allow';
 }
 
-export function parseToolArgs(tc: { name: string; arguments: string }): Record<string, unknown> {
+export function parseToolArgs(
+  tc: { name: string; arguments: string },
+  budget = 4000
+): Record<string, unknown> {
+  let argsStr = typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments);
+  // Size precheck: cap oversized tool-call arguments before parsing so
+  // the model doesn't permanently load an unbounded string into history.
+  if (budget > 0 && argsStr.length > 0) {
+    const capped = capToolResultForLlm(argsStr, { maxTokens: budget, modelId: undefined });
+    if (capped !== argsStr && capped.includes('truncated')) {
+      // Truncated: inject the flag into the parsed result so the model
+      // sees it, then continue parsing the truncated JSON.
+      argsStr = capped;
+    }
+  }
   let args: unknown;
-  if (typeof tc.arguments === 'string') {
+  if (typeof argsStr === 'string') {
     try {
-      args = JSON.parse(tc.arguments);
+      args = JSON.parse(argsStr);
     } catch {
-      const jsonMatch = tc.arguments.match(/\{[\s\S]*\}/);
+      const jsonMatch = argsStr.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
           args = JSON.parse(jsonMatch[0]);
         } catch {
-          args = { raw_input: tc.arguments };
+          args = {
+            raw_input: argsStr,
+            truncated: argsStr !== tc.arguments || argsStr.includes('truncated'),
+          };
         }
       } else {
-        args = { raw_input: tc.arguments };
+        args = {
+          raw_input: argsStr,
+          truncated: argsStr !== tc.arguments || argsStr.includes('truncated'),
+        };
       }
     }
   } else {
-    args = tc.arguments;
+    args = argsStr;
   }
   return args as Record<string, unknown>;
 }

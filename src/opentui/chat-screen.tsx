@@ -88,45 +88,36 @@ function parseCodeBlocks(content: string): CodeSegment[] {
   return segments;
 }
 
-/** Raw source length a segment was parsed from (```lang\nCODE``` for code). */
-function segmentSourceLength(seg: CodeSegment): number {
-  if (seg.type === 'text') return seg.text.length;
-  return 3 + (seg.lang?.length ?? 0) + 1 + seg.code.length + 3;
-}
+export function parseCodeBlocksStreaming(
+  content: string,
+  cache?: { content: string; segments: CodeSegment[]; tailOffset: number }
+): CodeSegment[] {
+  if (cache && content === cache.content) return cache.segments;
 
-// Streaming parse cache: assistant content grows by append-only chunks.
-// Completed segments are stable; only the TRAILING segment can change (an
-// unclosed ``` fence may complete later), so on each chunk we keep all but
-// the last segment and re-parse just the tail. Falls back to a full parse
-// when the content isn't a pure append (compaction, edits, other messages).
-let parseCache: { content: string; segments: CodeSegment[]; tailOffset: number } = {
-  content: '',
-  segments: [],
-  tailOffset: 0,
-};
-
-export function parseCodeBlocksStreaming(content: string): CodeSegment[] {
-  if (content === parseCache.content) return parseCache.segments;
   let segments: CodeSegment[];
-  if (
-    parseCache.content &&
-    parseCache.segments.length > 0 &&
-    content.startsWith(parseCache.content)
-  ) {
+  if (cache && cache.content && cache.segments.length > 0 && content.startsWith(cache.content)) {
     segments = [
-      ...parseCache.segments.slice(0, -1),
-      ...parseCodeBlocks(content.slice(parseCache.tailOffset)),
+      ...cache.segments.slice(0, -1),
+      ...parseCodeBlocks(content.slice(cache.tailOffset)),
     ];
   } else {
     segments = parseCodeBlocks(content);
   }
   const last = segments[segments.length - 1];
-  parseCache = {
-    content,
-    segments,
-    tailOffset: last ? content.length - segmentSourceLength(last) : content.length,
-  };
+  const tailOffset = last ? content.length - segmentSourceLength(last) : content.length;
+
+  if (cache) {
+    cache.content = content;
+    cache.segments = segments;
+    cache.tailOffset = tailOffset;
+  }
+
   return segments;
+}
+
+function segmentSourceLength(seg: CodeSegment): number {
+  if (seg.type === 'text') return seg.text.length;
+  return 3 + (seg.lang?.length ?? 0) + 1 + seg.code.length + 3;
 }
 
 function renderLinesSafely(text: string, maxLines = 40, fgColor: string, prefix = '') {
@@ -870,7 +861,15 @@ function AssistantMessageView({
   const displayContent = message.content || '';
   // Memoized: incremental parse reuses stable segments across stream
   // chunks, and elapsedMs-tick re-renders skip the parse entirely.
-  const segments = useMemo(() => parseCodeBlocksStreaming(displayContent), [displayContent]);
+  const parseCacheRef = useRef<{
+    content: string;
+    segments: CodeSegment[];
+    tailOffset: number;
+  } | null>(null);
+  const segments = useMemo(
+    () => parseCodeBlocksStreaming(displayContent, parseCacheRef.current ?? undefined),
+    [displayContent]
+  );
   // Pre-sanitize code/diff blocks once per content change, not per render.
   const sanitizedCode = useMemo(
     () =>

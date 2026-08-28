@@ -259,6 +259,8 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     }
 
     if (key && key !== existingApiKey) {
+      // C2: the trusted save path is shown above; pressing Enter here is the
+      // explicit user consent to persist to the trusted home-dir config only.
       const saved = saveApiKeyToEnv(envVar, key);
       if (!saved) {
         setRuntimeError('Could not save API key');
@@ -533,6 +535,9 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
             {selectedProvider.icon} {selectedProvider.name}
           </text>
           <text fg={theme.mutedFg}>API key for {getApiKeyEnvVar(selectedProvider.id)}</text>
+          <text fg={theme.mutedFg}>
+            Saved to trusted home config (~/.qwen-agent-tui/.env) — never workspace .env
+          </text>
           {hasExisting && (
             <text fg={theme.agentFg}>Current key is set · Type to replace or Enter to keep</text>
           )}

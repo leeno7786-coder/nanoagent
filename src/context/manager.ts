@@ -610,6 +610,11 @@ export class ContextManager {
     this.config.enabled = enabled;
   }
 
+  /** Reset the learned API overhead (e.g. after tool-set / MCP changes). */
+  resetOverhead(): void {
+    this.apiOverheadTokens = 0;
+  }
+
   /**
    * Update configuration.
    */

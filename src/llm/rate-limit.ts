@@ -212,6 +212,10 @@ async function acquireInFlightSlot(
         resolve();
       };
       state.waiters.push(waiter);
+      // M7: cap waiter list to prevent unbounded memory growth under flood.
+      if (state.waiters.length > 100) {
+        state.waiters = state.waiters.slice(-100);
+      }
       if (signal) {
         signal.addEventListener('abort', onAbort, { once: true });
       }

@@ -187,6 +187,14 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   }, [resolvePendingPermission]);
 
   useEffect(() => {
+    // H4: pause tick when any overlay is open to avoid unnecessary renders.
+    if (overlay) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
     if (state === 'idle' || state === 'error' || state === 'waiting_for_user') {
       if (timerRef.current) {
         clearInterval(timerRef.current);

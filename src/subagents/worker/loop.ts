@@ -80,7 +80,7 @@ async function runSingleSubAgent(
   const readPaths = new Set<string>();
   const toolCallCounts = new Map<string, number>();
   const DISCOVERY_TOOLS = new Set(['list_dir', 'map_project_tree', 'stat_path', 'find_files']);
-  const TOOL_BUDGET = 18;
+  const TOOL_BUDGET = wctx.cfg.subagents?.toolBudget ?? 18;
   const triedFallbacks = initialWorkerTriedFallbacks(wctx.cfg);
   const failoverNotices: string[] = [];
   const withNotices = (output: string): string => {
@@ -295,7 +295,8 @@ async function runSingleSubAgent(
           } catch {
             args = {};
           }
-          const sig = `${tc.function.name}:${JSON.stringify(args)}`;
+          const canonicalArgs = JSON.stringify(args, Object.keys(args).sort());
+          const sig = `${tc.function.name}:${canonicalArgs}`;
           const filePath = args?.path || args?.file;
 
           if (toolCallCount >= TOOL_BUDGET) {

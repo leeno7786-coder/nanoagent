@@ -117,6 +117,9 @@ export function applyModelProfile(
   if (profile.maxToolResultTokens !== undefined) {
     patch.maxToolResultTokens = profile.maxToolResultTokens;
   }
+  if (profile.maxToolCallArgumentTokens !== undefined) {
+    patch.maxToolCallArgumentTokens = profile.maxToolCallArgumentTokens;
+  }
   if (profile.maxTokensPerMinute !== undefined) {
     patch.maxTokensPerMinute = profile.maxTokensPerMinute;
   }
@@ -136,6 +139,9 @@ export function applyModelProfile(
   if (profile.retryCount !== undefined) persist.retryCount = profile.retryCount;
   if (profile.maxToolResultTokens !== undefined) {
     persist.maxToolResultTokens = profile.maxToolResultTokens;
+  }
+  if (profile.maxToolCallArgumentTokens !== undefined) {
+    persist.maxToolCallArgumentTokens = profile.maxToolCallArgumentTokens;
   }
   if (profile.maxTokensPerMinute !== undefined) {
     persist.maxTokensPerMinute = profile.maxTokensPerMinute;

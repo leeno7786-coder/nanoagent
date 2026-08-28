@@ -78,8 +78,11 @@ export function shouldSendPromptCacheKey(cfg: Config): boolean {
   return cfg.supportsPromptCache === true;
 }
 
-/** Stable per workspace + model. Not a secret. */
-export function promptCacheKeyFor(cfg: Pick<Config, 'workspace' | 'model'>): string {
+/** Stable per workspace + model. Not a secret. Override with cfg.promptCacheKey. */
+export function promptCacheKeyFor(
+  cfg: Pick<Config, 'workspace' | 'model' | 'promptCacheKey'>
+): string {
+  if (cfg.promptCacheKey) return cfg.promptCacheKey;
   const raw = `${(cfg.workspace || '').replace(/\\/g, '/').toLowerCase()}|${(cfg.model || '').toLowerCase()}`;
   const digest = createHash('sha256').update(raw).digest('hex').slice(0, 24);
   return `na-${digest}`;

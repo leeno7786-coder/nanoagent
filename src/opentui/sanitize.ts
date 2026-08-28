@@ -17,7 +17,7 @@ const BEL = String.fromCharCode(7);
 const ANSI_RE = new RegExp(
   [
     ESC + '\\[[0-?]*[ -/]*[@-~]',
-    ESC + '\\][^' + BEL + ']*(?:' + BEL + '|' + ESC + '\\\\)',
+    ESC + '\\][^' + BEL + ']*(?:' + BEL + '|\\n|' + ESC + '\\\\)',
     ESC + '[()#][0-9A-B]',
     ESC + '[DMEc=>]',
   ].join('|'),

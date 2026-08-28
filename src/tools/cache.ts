@@ -47,7 +47,7 @@ export interface ToolCacheConfig {
  */
 export const DEFAULT_CACHE_CONFIG: ToolCacheConfig = {
   maxSize: 1000,
-  ttlMs: 30000, // 30 seconds
+  ttlMs: 2000, // 2 seconds — short enough that fs.watch invalidation dominates
   enabled: true,
   excludedTools: new Set([
     'execute_command',

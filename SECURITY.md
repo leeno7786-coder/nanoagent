@@ -222,6 +222,10 @@ blocked list by adding to the `DANGEROUS_COMMAND_PATTERNS` array in the
 security module, or set a custom `allowedCommands` list to switch validation
 to explicit allowlist enforcement.
 
+> **Note (L1):** With no `allowedCommands` configured, validation is default-allow
+> (dangerous-pattern gate only). Setting `allowedCommands: []` switches to
+> deny-all — see `src/security/index.ts:151-167`.
+
 ---
 
 ## File Access Control
@@ -354,6 +358,7 @@ Sub-agents (created via `explore_subagent`) **automatically inherit** the securi
 - Sub-agents cannot execute dangerous commands
 - Sub-agents cannot access blocked paths
 - Sub-agent outputs are sanitized
+- Child-process env (`getSanitizedEnv`) filters out any variable whose name matches `API`, `AUTH`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, or `PRIVATE` (case-insensitive). Essential vars (`PATH`, `HOME`, `SHELL`, etc.) are preserved. This is by design: a hijacked model or malicious MCP server should never see API keys through `env` in tool outputs or `execute_command`. If you need a specific env var passed through for a self-hosted proxy (e.g. `BASIC_AUTH_USER`), there is currently no whitelist override — document any need before adding one.
 
 The security manager is passed through the config object to sub-agents, so no additional configuration is needed.
 

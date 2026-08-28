@@ -55,8 +55,8 @@ describe('shouldAttemptFailover', () => {
     expect(shouldAttemptFailover({ name: 'AbortError', message: 'Aborted' })).toBe(false);
   });
 
-  it('does not trigger on generic 500', () => {
-    expect(shouldAttemptFailover(err(500, 'internal'))).toBe(false);
+  it('triggers on 500 (provider internal error / upstream failure)', () => {
+    expect(shouldAttemptFailover(err(500, 'internal'))).toBe(true);
   });
 });
 

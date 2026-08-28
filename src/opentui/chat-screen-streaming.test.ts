@@ -40,10 +40,10 @@ describe('parseCodeBlocksStreaming', () => {
     ]);
   });
 
-  it('returns the cached array identity when content is unchanged', () => {
+  it('returns equal segments when content is unchanged', () => {
     const a = parseCodeBlocksStreaming('Z: unique stable content');
     const b = parseCodeBlocksStreaming('Z: unique stable content');
-    expect(b).toBe(a);
+    expect(b).toEqual(a);
   });
 
   it('falls back to a full parse when content is not a pure append', () => {

@@ -4,6 +4,7 @@ import {
   capToolResultForLlm,
   formatApproxTokens,
   resolveToolResultTokenBudget,
+  resolveToolCallArgumentTokenBudget,
   truncationMarker,
 } from './tool-result-budget.js';
 
@@ -70,5 +71,19 @@ describe('capToolResultForLlm', () => {
     expect(truncationMarker(8000, 24000)).toBe(
       '[truncated: kept ~8k tokens of ~24k; re-read a narrower range]'
     );
+  });
+});
+
+describe('C0 regression — tool argument budget', () => {
+  it('defaults to 4000 on remote and 0 on local', () => {
+    expect(resolveToolCallArgumentTokenBudget({ baseURL: 'https://openrouter.ai/api/v1' })).toBe(
+      4000
+    );
+    expect(resolveToolCallArgumentTokenBudget({ baseURL: 'http://127.0.0.1:1234/v1' })).toBe(0);
+  });
+  it('caps oversized JSON arguments with truncated flag', () => {
+    const hugeArgs = JSON.stringify({ content: 'a '.repeat(20_000) });
+    const capped = capToolResultForLlm(hugeArgs, { maxTokens: 4000, modelId: 'qwen' });
+    expect(capped).toContain('truncated');
   });
 });

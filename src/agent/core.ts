@@ -116,6 +116,8 @@ export class AgentCore {
     // but different schemas still invalidate the cache.
     const key = `${all.map((t) => t.name).join(',')}|${[...activeSkills].sort().join(',')}`;
     if (this.toolSchemaCache?.key === key) return this.toolSchemaCache.tools;
+    // H5: tool-set change changes schema overhead — reset the high-water.
+    this.contextManager.resetOverhead();
     const tools = toOpenAI(all, this.cfg, activeSkills);
     this.toolSchemaCache = { key, tools };
     return tools;

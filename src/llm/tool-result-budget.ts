@@ -2,6 +2,7 @@ import type { Config } from '../types.js';
 import { countTokens, isLocalProvider } from './utils.js';
 
 const DEFAULT_CLOUD_TOOL_RESULT_TOKENS = 8000;
+const DEFAULT_CLOUD_TOOL_ARGUMENT_TOKENS = 4000;
 
 const PAYLOAD_KEYS = [
   'content',
@@ -28,6 +29,16 @@ export function resolveToolResultTokenBudget(
     return cfg.maxToolResultTokens > 0 ? Math.floor(cfg.maxToolResultTokens) : 0;
   }
   return isLocalProvider(cfg.baseURL) ? 0 : DEFAULT_CLOUD_TOOL_RESULT_TOKENS;
+}
+
+/** 0 = off. Unset → 4000 on remote/cloud, 0 on local. */
+export function resolveToolCallArgumentTokenBudget(
+  cfg: Pick<Config, 'maxToolCallArgumentTokens' | 'baseURL'>
+): number {
+  if (cfg.maxToolCallArgumentTokens !== undefined) {
+    return cfg.maxToolCallArgumentTokens > 0 ? Math.floor(cfg.maxToolCallArgumentTokens) : 0;
+  }
+  return isLocalProvider(cfg.baseURL) ? 0 : DEFAULT_CLOUD_TOOL_ARGUMENT_TOKENS;
 }
 
 export function formatApproxTokens(n: number): string {

@@ -48,6 +48,10 @@ export const writeFileTool: Tool = {
         // new file
       }
       const newText = String(args.content ?? '');
+      const rewroteEol =
+        existed && oldText.includes('\r\n') && !newText.includes('\r\n')
+          ? matchEol(oldText, newText) !== newText
+          : false;
       mkdirSync(dirname(p), { recursive: true });
       writeFileSync(p, newText, 'utf-8');
       const { added, removed, diff } = fileChangeDiff(relPath, oldText, newText);
@@ -59,6 +63,7 @@ export const writeFileTool: Tool = {
         removed,
         diff,
         bytes: Buffer.byteLength(newText),
+        eol_rewritten: rewroteEol ? true : undefined,
       });
     } catch (e: unknown) {
       return JSON.stringify({ ok: false, error: (e as { message?: string }).message });

@@ -41,6 +41,10 @@ export function looksLikePrematureCheckin(content: string): boolean {
     return false;
   }
 
+  // H2: treat as check-in only when there's a question/pattern AND the text
+  // is not a structured deliverable (headings, findings, long reports). The
+  // exclusions above handle deliverable language; here we enforce that the
+  // remaining candidate must actually look like a check-in.
   const endsWithQuestion = /\?\s*$/.test(text);
   const matchedPattern = CHECKIN_PATTERNS.some((re) => re.test(text));
   return endsWithQuestion || matchedPattern;

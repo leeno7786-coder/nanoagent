@@ -197,7 +197,7 @@ describe('ToolCacheManager', () => {
 describe('DEFAULT_CACHE_CONFIG', () => {
   it('should have reasonable defaults', () => {
     expect(DEFAULT_CACHE_CONFIG.maxSize).toBe(1000);
-    expect(DEFAULT_CACHE_CONFIG.ttlMs).toBe(30000);
+    expect(DEFAULT_CACHE_CONFIG.ttlMs).toBe(2000);
     expect(DEFAULT_CACHE_CONFIG.enabled).toBe(true);
     expect(DEFAULT_CACHE_CONFIG.excludedTools.size).toBeGreaterThan(0);
   });

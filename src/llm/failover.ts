@@ -77,7 +77,14 @@ export function shouldAttemptFailover(err: unknown, signal?: AbortSignal): boole
   if (isAbortError(err, signal)) return false;
   const status = httpStatusOf(err);
   if (status === 401 || status === 403 || status === 400) return false;
-  if (status === 429 || status === 502 || status === 503 || status === 504 || status === 529) {
+  if (
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    status === 529
+  ) {
     return true;
   }
   if (status === 0 && isTimeoutOrConnectionError(err)) return true;
@@ -88,6 +95,7 @@ export function shouldAttemptFailover(err: unknown, signal?: AbortSignal): boole
 export function describeFailoverReason(err: unknown): string {
   const status = httpStatusOf(err);
   if (status === 429) return '429 rate limit';
+  if (status === 500) return '500 provider internal error';
   if (status === 503 || status === 529) return `${status} unavailable`;
   if (status === 502) return '502 bad gateway';
   if (status === 504) return '504 timeout';
@@ -169,6 +177,10 @@ export function resolveApiKeyForTarget(
     return { apiKey: current.apiKey };
   }
 
+  // H1: The current key is only reused when the target provider matches the
+  // current one (same catalog id) — never copied from OpenAI to Anthropic,
+  // or from a cloud endpoint to an unrelated local endpoint. A local dummy
+  // key (`lm-studio`) is never reused for a remote fallback.
   const needed = envVars.length > 0 ? envVars.join(' or ') : 'the provider API key';
   return {
     error:

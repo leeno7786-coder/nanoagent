@@ -26,6 +26,7 @@ export interface ModelProfile {
   timeout?: number;
   retryCount?: number;
   maxToolResultTokens?: number;
+  maxToolCallArgumentTokens?: number;
   maxRequestsPerMinute?: number;
   maxTokensPerMinute?: number;
   maxConcurrentLlmRequests?: number;
@@ -109,6 +110,8 @@ export interface Config {
    * explicitly supports cache. `false` / `QWEN_PROMPT_CACHE=0` disables.
    */
   promptCache?: boolean;
+  /** Manual override for prompt-cache key (default: auto from workspace+model). */
+  promptCacheKey?: string;
   /** Provider ID (e.g. "lmstudio", "ollama", "openai", "openrouter"). */
   provider?: string;
 
@@ -122,6 +125,12 @@ export interface Config {
    * 0 = off. Unset defaults to 8000 on remote/cloud and 0 on local.
    */
   maxToolResultTokens?: number;
+  /**
+   * Cap each tool-call argument string sent to / stored in the model payload
+   * (tokens, JSON or plain). 0 = off. Unset defaults to ~4000 on remote/cloud,
+   * 0 on local — conservative enough to clear Anthropic/Gemini per-call limits.
+   */
+  maxToolCallArgumentTokens?: number;
   /**
    * Optional tokens-per-minute pace for cloud endpoints (0 / unset = off).
    * No catalog defaults — enable only when you know the tier cap.
@@ -239,6 +248,8 @@ export interface SubAgentPoolConfig {
   maxIterations?: number;
   /** Per-request timeout in ms for subagent calls (default: 900000 = 15min). */
   timeoutMs?: number;
+  /** Per-subagent max tool calls before forcing a final report (default: 18). */
+  toolBudget?: number;
 }
 
 /** Possible states of the agent lifecycle. */

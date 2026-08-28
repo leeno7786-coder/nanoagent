@@ -8,7 +8,6 @@ export const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
   /rm\s+-r\s+\//i,
   /dd\s+if=\/dev\//i,
   /mkfs/i,
-  /\bformat\s+[a-zA-Z]:/i,
 
   // Process management
   /kill\s+-9\s+1\b/i,
@@ -33,9 +32,18 @@ export const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
   />>\s*\/dev\//i,
 
   // Shell injection patterns
-  /\|\s*(sudo\s+)?(sh|bash|zsh|powershell|pwsh|cmd)\b/i,
-  /`\s*(sh|bash)\b/i,
-  /\$\(\s*(sh|bash)\b/i,
+  /\|\s*(sudo\s+)?(sh|bash|zsh|dash|ash|powershell|pwsh|cmd)\b/i,
+  /`\s*(sh|bash|dash|ash)\b/i,
+  /\$\(\s*(sh|bash|dash|ash)\b/i,
+  /\|\s*(sh\.exe|bash\.exe|python|python3|node)\b/i,
+  /powershell\s+-enc\b/i,
+  /iex\b/i,
+  /invoke-expression\b/i,
+  /downloadstring\b/i,
+  /wget\b.*\|/i,
+  /curl\b.*\|\s*(sh|bash)/i,
+  /node\s+-e\b/i,
+  /python\s+-c\b/i,
 
   // Windows-specific destructive
   /\bdel\s+\\\\/i,
@@ -44,4 +52,8 @@ export const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
   /\breg\s+add/i,
   /\bnet\s+user\s+/i,
   /\bnet\s+localgroup\s+/i,
+  /\bformat\s+[a-z]:/i,
+  /\bcipher\s+\/w/i,
+  /\bvssadmin\s+delete\s+shadows/i,
+  /\bbcdedit/i,
 ];

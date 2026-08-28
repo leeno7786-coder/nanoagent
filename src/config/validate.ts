@@ -87,6 +87,14 @@ export function validateConfig(cfg: Config): {
     }
   }
 
+  if (cfg.maxToolCallArgumentTokens !== undefined) {
+    if (cfg.maxToolCallArgumentTokens < 0 || cfg.maxToolCallArgumentTokens > 1_000_000) {
+      errors.push(
+        `maxToolCallArgumentTokens must be between 0 and 1000000, got ${cfg.maxToolCallArgumentTokens}. Example: QWEN_MAX_TOOL_CALL_ARG_TOKENS=4000 or { "maxToolCallArgumentTokens": 4000 } in ~/.nanogent.json`
+      );
+    }
+  }
+
   if (cfg.maxToolResultTokens !== undefined) {
     if (cfg.maxToolResultTokens < 0 || cfg.maxToolResultTokens > 1_000_000) {
       errors.push(
