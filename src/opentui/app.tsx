@@ -428,14 +428,18 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         // Workspace is required to scope the command to the project.
         const workspace = agent.cfg.workspace;
         if (!workspace) return;
+        // Ensure an abort controller exists so the command can be cancelled.
+        if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
+          abortControllerRef.current = new AbortController();
+        }
+        const signal = abortControllerRef.current.signal;
         // Run on a worker so the TUI stays responsive on long commands.
-        const result = await Promise.resolve(
-          runBangCommand(bang.command, {
-            workspace,
-            securityManager: agent.securityManager,
-            cfg: agent.cfg,
-          })
-        );
+        const result = await runBangCommand(bang.command, {
+          workspace,
+          securityManager: agent.securityManager,
+          cfg: agent.cfg,
+          signal,
+        });
         agent.messages.push({
           id: rnd(),
           role: 'user',

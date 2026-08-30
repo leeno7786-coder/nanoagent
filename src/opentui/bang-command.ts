@@ -29,6 +29,8 @@ export interface BangCommandOptions {
   cfg?: Pick<Config, 'securityManager' | 'commandTimeoutSeconds'>;
   /** Per-command timeout in seconds (default 60, capped at 600). */
   timeoutSeconds?: number;
+  /** Optional abort signal for cancellation. */
+  signal?: AbortSignal;
 }
 
 export interface BangParseResult {
@@ -65,15 +67,19 @@ export function parseBangCommand(input: string): BangParseResult | BangNotComman
  * `{ ok: false, error }`). Caller is responsible for rendering the result
  * in the chat history.
  */
-export function runBangCommand(command: string, options: BangCommandOptions): string {
+export async function runBangCommand(
+  command: string,
+  options: BangCommandOptions
+): Promise<string> {
   const cfg: Config = {
     ...(options.cfg ?? {}),
     securityManager: options.securityManager,
   } as Config;
-  return executeCommandTool.execute(
+  return executeCommandTool.executeAsync!(
     { command, timeout: options.timeoutSeconds },
     options.workspace,
-    cfg
+    cfg,
+    options.signal
   );
 }
 
@@ -125,9 +131,11 @@ export function formatBangResult(command: string, rawResult: string): string {
   if (!parsed.ok) {
     const header = `\`!${command}\` — blocked or failed`;
     if (parsed.timed_out) {
-      return `${header}\n\n⏱️ command timed out\n${parsed.error ? `\n${parsed.error}` : ''}`.trim();
+      const timeoutMsg = parsed.error || parsed.stderr || 'Command timed out';
+      return `${header}\n\n⏱️ command timed out\n${timeoutMsg}`.trim();
     }
-    return `${header}\n\n❌ ${parsed.error}`;
+    const errorMsg = parsed.error || parsed.stderr || 'Blocked or failed';
+    return `${header}\n\n❌ ${errorMsg}`;
   }
 
   const lines: string[] = [`\`!${command}\``];

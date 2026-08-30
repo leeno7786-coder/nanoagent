@@ -72,9 +72,9 @@ describe('runBangCommand', () => {
     }
   });
 
-  it('runs a safe command and returns ok:true with stdout', () => {
+  it('runs a safe command and returns ok:true with stdout', async () => {
     writeFileSync(join(tmpDir, 'hello.txt'), 'hi from bang');
-    const result = runBangCommand('cat hello.txt', {
+    const result = await runBangCommand('cat hello.txt', {
       workspace: tmpDir,
     });
     const parsed = JSON.parse(result) as {
@@ -87,18 +87,18 @@ describe('runBangCommand', () => {
     expect(parsed.code).toBe(0);
   });
 
-  it('returns ok:false with an error for a non-existent command', () => {
-    const result = runBangCommand('definitely-not-a-real-binary-xyz', {
+  it('returns ok:false with an error for a non-existent command', async () => {
+    const result = await runBangCommand('definitely-not-a-real-binary-xyz', {
       workspace: tmpDir,
     });
     const parsed = JSON.parse(result) as { ok: boolean; error?: string };
     expect(parsed.ok).toBe(false);
   });
 
-  it('blocks dangerous commands even without a security manager', () => {
+  it('blocks dangerous commands even without a security manager', async () => {
     // No securityManager passed — only the canonical dangerous-pattern gate
     // runs, but that gate alone must reject `rm -rf /` and friends.
-    const result = runBangCommand('rm -rf /tmp/should-never-run', {
+    const result = await runBangCommand('rm -rf /tmp/should-never-run', {
       workspace: tmpDir,
     });
     const parsed = JSON.parse(result) as { ok: boolean; error: string };
@@ -106,11 +106,11 @@ describe('runBangCommand', () => {
     expect(parsed.error).toMatch(/blocked|not allowed|dangerous/i);
   });
 
-  it('blocks commands the security manager marks as dangerous (sudo, ssh, etc.)', () => {
+  it('blocks commands the security manager marks as dangerous (sudo, ssh, etc.)', async () => {
     // With the security manager present, the broader allow-list / dangerous
     // gate applies. `sudo` is in DANGEROUS_COMMAND_PATTERNS.
     const sm = createSecurityManager({}, tmpDir);
-    const result = runBangCommand('sudo echo hi', {
+    const result = await runBangCommand('sudo echo hi', {
       workspace: tmpDir,
       securityManager: sm,
     });
@@ -119,9 +119,9 @@ describe('runBangCommand', () => {
     expect(parsed.error).toMatch(/blocked|not allowed|dangerous/i);
   });
 
-  it('runs the command in the supplied workspace, not the cwd', () => {
+  it('runs the command in the supplied workspace, not the cwd', async () => {
     writeFileSync(join(tmpDir, 'marker.txt'), 'inside-bang-workspace');
-    const result = runBangCommand('cat marker.txt', {
+    const result = await runBangCommand('cat marker.txt', {
       workspace: tmpDir,
     });
     const parsed = JSON.parse(result) as { ok: boolean; stdout: string };
@@ -129,10 +129,10 @@ describe('runBangCommand', () => {
     expect(parsed.stdout).toContain('inside-bang-workspace');
   });
 
-  it('honors the timeoutSeconds option', () => {
+  it('honors the timeoutSeconds option', async () => {
     // A short timeout should make `sleep 5` fail fast.
     const start = Date.now();
-    const result = runBangCommand('sleep 5', {
+    const result = await runBangCommand('sleep 5', {
       workspace: tmpDir,
       timeoutSeconds: 1,
     });

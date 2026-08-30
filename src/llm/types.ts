@@ -90,4 +90,13 @@ export interface ChatRequestOptions {
     status: number;
     message: string;
   }) => void;
+  /**
+   * Sub-agent hint: pass `'subagent'` so the request reads/writes the
+   * sub-agent scoped prompt-token cache. `'parent'` (default) preserves the
+   * pre-existing behavior. The string keeps `types.ts` free of a
+   * rate-limit import cycle.
+   */
+  scope?: 'parent' | 'subagent';
+  /** Fraction of the parent's TPM reservation this caller claims (0–1). */
+  subAgentClaimRatio?: number;
 }

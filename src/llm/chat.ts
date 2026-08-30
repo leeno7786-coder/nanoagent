@@ -35,6 +35,7 @@ export async function chat(
   while (true) {
     try {
       const tpm = cfg.maxTokensPerMinute ?? 0;
+      const scope = options?.scope ?? 'parent';
       await awaitEndpointTurn(
         cfg.baseURL,
         {
@@ -42,7 +43,9 @@ export async function chat(
           maxConcurrentLlmRequests: cfg.maxConcurrentLlmRequests,
           maxTokensPerMinute: tpm,
           estimatedPromptTokens:
-            tpm > 0 ? estimatePromptTokensForRequest(cfg.baseURL, messages, cfg.model) : 0,
+            tpm > 0 ? estimatePromptTokensForRequest(cfg.baseURL, messages, cfg.model, scope) : 0,
+          subAgentClaimRatio: options?.subAgentClaimRatio,
+          scope,
         },
         signal
       );
@@ -66,7 +69,7 @@ export async function chat(
 
         noteEndpointSuccess(cfg.baseURL);
         const usage = normalizeUsage(completionObj.usage);
-        if (usage) noteEndpointPromptTokens(cfg.baseURL, usage.input_tokens);
+        if (usage) noteEndpointPromptTokens(cfg.baseURL, usage.input_tokens, scope);
         return {
           message: {
             role: (msg?.role as string) || 'assistant',

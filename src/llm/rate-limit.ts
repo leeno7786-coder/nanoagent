@@ -3,6 +3,23 @@ import type { ChatMessage } from './types.js';
 
 const endpointRateLimitedUntil = new Map<string, number>();
 
+/**
+ * Sub-agent sessions share an endpoint with the parent and must not let their
+ * own prompt-token reservations be poisoned by the parent's huge context
+ * window (e.g. 1049k-ctx main model vs 2B sub-agent). We track prompt-token
+ * estimates in two scopes: `parent` (default) and `subagent`. Sub-agents
+ * read/write their own scope and never see the parent's estimate.
+ */
+export type EndpointScope = 'parent' | 'subagent';
+
+const SUBAGENT_SCOPE_SEPARATOR = '|scope=';
+
+function scopedKey(baseURL: string | undefined, scope: EndpointScope): string | undefined {
+  const key = getEndpointKey(baseURL);
+  if (!key) return undefined;
+  return scope === 'subagent' ? `${key}${SUBAGENT_SCOPE_SEPARATOR}subagent` : key;
+}
+
 function cleanExpiredRateLimits(): void {
   const now = Date.now();
   for (const [key, until] of endpointRateLimitedUntil.entries()) {
@@ -280,8 +297,12 @@ function flattenMessagesForCount(messages: ChatMessage[]): string {
   return text;
 }
 
-export function noteEndpointPromptTokens(baseURL: string | undefined, promptTokens: number): void {
-  const key = getEndpointKey(baseURL);
+export function noteEndpointPromptTokens(
+  baseURL: string | undefined,
+  promptTokens: number,
+  scope: EndpointScope = 'parent'
+): void {
+  const key = scopedKey(baseURL, scope);
   if (!key || !(promptTokens > 0)) return;
   lastPromptTokensByEndpoint.set(key, Math.floor(promptTokens));
 }
@@ -290,9 +311,10 @@ export function noteEndpointPromptTokens(baseURL: string | undefined, promptToke
 export function estimatePromptTokensForRequest(
   baseURL: string | undefined,
   messages: ChatMessage[],
-  modelId?: string
+  modelId?: string,
+  scope: EndpointScope = 'parent'
 ): number {
-  const key = getEndpointKey(baseURL);
+  const key = scopedKey(baseURL, scope);
   const last = key ? lastPromptTokensByEndpoint.get(key) : undefined;
   if (last && last > 0) {
     return Math.max(1, Math.ceil(last * 1.1));
@@ -413,6 +435,20 @@ export type EndpointTurnOpts = {
   maxTokensPerMinute?: number;
   /** Prompt-token reservation for TPM pacing. */
   estimatedPromptTokens?: number;
+  /**
+   * Sub-agent share of the parent's prompt-token reservation (0–1, default 1).
+   * When set < 1, the reservation is divided by this value: e.g. 0.25 means
+   * "use 1/4 of the parent's estimate". Prevents 4 parallel sub-agents on a
+   * shared endpoint from each waiting for the full parent's reservation.
+   * Only affects the TPM pacing reservation, not actual prompt size.
+   */
+  subAgentClaimRatio?: number;
+  /**
+   * Scope for the prompt-token estimate. Sub-agents pass `subagent` so they
+   * don't read or pollute the parent's `lastPromptTokensByEndpoint` cache
+   * (the parent may have a 1049k-ctx window with very different reservations).
+   */
+  scope?: EndpointScope;
 };
 
 /**
@@ -430,12 +466,17 @@ export async function awaitEndpointTurn(
     return;
   }
   await awaitRateLimitToken(baseURL, opts.maxRequestsPerMinute ?? 0, signal);
-  await awaitTpmTokens(
-    baseURL,
-    opts.maxTokensPerMinute ?? 0,
-    opts.estimatedPromptTokens ?? 0,
-    signal
-  );
+
+  // Sub-agent share: the reservation is divided by `subAgentClaimRatio`
+  // (e.g. 4 parallel sub-agents each claiming 1/4 of the parent's estimate
+  // instead of the full amount). Clamp to (0, 1] so a bad value can't
+  // amplify waits.
+  const ratio =
+    opts.subAgentClaimRatio !== undefined && opts.subAgentClaimRatio > 0
+      ? Math.min(1, opts.subAgentClaimRatio)
+      : 1;
+  const reservation = (opts.estimatedPromptTokens ?? 0) * ratio;
+  await awaitTpmTokens(baseURL, opts.maxTokensPerMinute ?? 0, reservation, signal);
   await acquireInFlightSlot(baseURL, opts.maxConcurrentLlmRequests ?? 0, signal);
 }
 

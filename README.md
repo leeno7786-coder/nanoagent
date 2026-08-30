@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.1.16** (`@omega3_0/nanoagent`) — fixes C0 (tool arg cap), H6 (500 failover), C4 (client rebuild), C1 (shell guard), C2 (key consent), C3 (cache TTL), H1-H7, M1-M7, L1-L6.
+Current release: **2.1.17** (`@omega3_0/nanoagent`) — fixes bang command abort result (`❌ undefined`), `formatBangResult` missing-error guard, sub-agent TPM scope separation (`EndpointScope`), plus previous fixes.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 

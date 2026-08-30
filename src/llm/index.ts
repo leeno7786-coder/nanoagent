@@ -38,6 +38,7 @@ export {
   estimatePromptTokensForRequest,
   isEndpointRateLimited,
   errorMessage,
+  type EndpointScope,
 } from './rate-limit.js';
 
 export { capToolResultForLlm, resolveToolResultTokenBudget } from './tool-result-budget.js';

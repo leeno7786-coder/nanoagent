@@ -37,6 +37,7 @@ export async function* streamChat(
   while (true) {
     try {
       const tpm = cfg.maxTokensPerMinute ?? 0;
+      const scope = options?.scope ?? 'parent';
       await awaitEndpointTurn(
         cfg.baseURL,
         {
@@ -44,7 +45,9 @@ export async function* streamChat(
           maxConcurrentLlmRequests: cfg.maxConcurrentLlmRequests,
           maxTokensPerMinute: tpm,
           estimatedPromptTokens:
-            tpm > 0 ? estimatePromptTokensForRequest(cfg.baseURL, messages, cfg.model) : 0,
+            tpm > 0 ? estimatePromptTokensForRequest(cfg.baseURL, messages, cfg.model, scope) : 0,
+          subAgentClaimRatio: options?.subAgentClaimRatio,
+          scope,
         },
         signal
       );
@@ -86,7 +89,7 @@ export async function* streamChat(
             const normalized = normalizeUsage(chunkAny.usage);
             if (normalized) {
               usage = normalized;
-              noteEndpointPromptTokens(cfg.baseURL, normalized.input_tokens);
+              noteEndpointPromptTokens(cfg.baseURL, normalized.input_tokens, scope);
             }
           }
 

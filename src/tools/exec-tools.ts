@@ -370,11 +370,15 @@ function execCmdAsync(
     let resolved = false;
 
     child.stdout?.on('data', (data) => {
-      stdoutBuffer += data.toString();
+      const str = data.toString();
+      stdoutBuffer += str;
+      process.stdout.write(str);
     });
 
     child.stderr?.on('data', (data) => {
-      stderrBuffer += data.toString();
+      const str = data.toString();
+      stderrBuffer += str;
+      process.stderr.write(str);
     });
 
     // Set up timeout to kill the child process explicitly
@@ -419,7 +423,12 @@ function execCmdAsync(
         clearTimeoutFn();
         child.kill();
         resolved = true;
-        resolvePromise(formatExecResult(false, '', 'Command cancelled', null));
+        resolvePromise(
+          JSON.stringify({
+            ...JSON.parse(formatExecResult(false, '', 'Command cancelled', null)),
+            error: 'Command cancelled',
+          })
+        );
         return;
       }
       signal.addEventListener(
@@ -429,7 +438,12 @@ function execCmdAsync(
             resolved = true;
             clearTimeoutFn();
             child.kill();
-            resolvePromise(formatExecResult(false, '', 'Command cancelled', null));
+            resolvePromise(
+              JSON.stringify({
+                ...JSON.parse(formatExecResult(false, '', 'Command cancelled', null)),
+                error: 'Command cancelled',
+              })
+            );
           }
         },
         { once: true }
