@@ -460,7 +460,7 @@ function isDangerous(cmd: string): boolean {
 export const executeCommandTool: Tool = {
   name: 'execute_command',
   description:
-    'Run a shell command in the workspace. Automatically supports extended timeouts (up to 600s) for downloads (curl, wget, git clone) and package installs (pip, uv, npm, bun). The command is awaited synchronously — the result is returned directly when it finishes or the timeout is hit.',
+    'Run a shell command in the workspace. Automatically supports extended timeouts (up to 600s) for downloads (curl, wget, git clone) and package installs (pip, uv, npm, bun). The command is awa[...]',
   parameters: {
     type: 'object',
     properties: {
