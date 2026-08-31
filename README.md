@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.1.17** (`@omega3_0/nanoagent`) — fixes bang command abort result (`❌ undefined`), `formatBangResult` missing-error guard, sub-agent TPM scope separation (`EndpointScope`), plus previous fixes.
+Current release: **2.1.18** (`@omega3_0/nanoagent`) — fixes `!` bang commands never reaching the model or surviving compaction (exchange is now recorded in the ContextManager, not just the UI history), plus silent-failure guards for the bang path; includes 2.1.17 fixes (bang abort result, `formatBangResult` guard, sub-agent TPM scope separation).
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
