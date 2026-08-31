@@ -27,11 +27,11 @@ import { THEMES, DEFAULT_THEME } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
 import { getProviderBaseURL } from '../providers.js';
 import { handleSlashCommand, checkAndAutoCompact } from './slash-commands.js';
-import { parseBangCommand, runBangCommand, formatBangResult } from './bang-command.js';
+import { parseBangCommand, runBangCommand, recordBangExchange } from './bang-command.js';
 import { useAppStore } from './app-store.js';
 import { useClipboardPaste } from './use-clipboard-paste.js';
 import { copyToClipboard } from '../clipboard.js';
-import { rnd } from '../agent-utils.js';
+import { addNoticeMessage } from '../agent-messages.js';
 
 /**
  * Messages the user can select/copy — shares ChatScreen's visibility filter
@@ -422,36 +422,45 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       // `!` shell-command shortcut (Vim/Claude-Code/aider convention). Runs
       // the command through the same execute_command path the LLM uses, so
       // SecurityManager + DANGEROUS_COMMAND_PATTERNS + workspace sandbox
-      // all apply. Renders inline as a user/tool pair; no LLM call.
+      // all apply. The exchange is recorded in BOTH agent.messages (chat
+      // panel) and the ContextManager — the model sees the command and its
+      // output, and compaction can't silently drop it. No LLM call.
       const bang = parseBangCommand(text);
       if (bang.isBang) {
-        // Workspace is required to scope the command to the project.
+        // Workspace is required to scope the command to the project. Never
+        // fail silently — tell the user why nothing ran.
         const workspace = agent.cfg.workspace;
-        if (!workspace) return;
+        if (!workspace) {
+          addNoticeMessage(agent, '`!` commands need a workspace. Open a project directory first.');
+          store.getState().syncFromAgent(agent);
+          return;
+        }
         // Ensure an abort controller exists so the command can be cancelled.
         if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
           abortControllerRef.current = new AbortController();
         }
         const signal = abortControllerRef.current.signal;
-        // Run on a worker so the TUI stays responsive on long commands.
-        const result = await runBangCommand(bang.command, {
-          workspace,
-          securityManager: agent.securityManager,
-          cfg: agent.cfg,
-          signal,
-        });
-        agent.messages.push({
-          id: rnd(),
-          role: 'user',
-          content: `!${bang.command}`,
-          timestamp: Date.now(),
-        });
-        agent.messages.push({
-          id: rnd(),
-          role: 'assistant',
-          content: formatBangResult(bang.command, result),
-          timestamp: Date.now(),
-        });
+        // Run async so the TUI stays responsive on long commands. Any throw
+        // is surfaced as a failed bang result instead of an unhandled
+        // rejection that leaves the chat panel unchanged.
+        try {
+          const result = await runBangCommand(bang.command, {
+            workspace,
+            securityManager: agent.securityManager,
+            cfg: agent.cfg,
+            signal,
+          });
+          recordBangExchange(agent, bang.command, result);
+        } catch (err) {
+          recordBangExchange(
+            agent,
+            bang.command,
+            JSON.stringify({
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          );
+        }
         agent.setState('idle');
         store.getState().syncFromAgent(agent);
         return;

@@ -17,8 +17,9 @@
  */
 
 import type { SecurityManager } from '../security/index.js';
-import type { Config } from '../types.js';
+import type { Config, Message } from '../types.js';
 import { executeCommandTool } from '../tools/exec-tools.js';
+import { rnd } from '../agent-utils.js';
 
 export interface BangCommandOptions {
   /** Workspace the command should run in (passed as `ws` to the tool). */
@@ -154,4 +155,44 @@ export function formatBangResult(command: string, rawResult: string): string {
     lines.push('', '(no output)');
   }
   return lines.join('\n');
+}
+
+/**
+ * Minimal chat-history sink for recording a bang exchange. Satisfied by
+ * AgentCore; kept structural so tests can use a plain stub.
+ */
+export interface BangChatSink {
+  messages: Message[];
+  contextManager: { addMessage(message: Message): void };
+}
+
+/**
+ * Record a `!` command exchange in BOTH the UI history (agent.messages) and
+ * the ContextManager. The context manager is the source of truth for the LLM
+ * payload AND for compaction rebuilds — pushing only to agent.messages means
+ * the model never sees the command or its output, and the next compaction
+ * silently drops the pair from the chat panel. The pair is registered as a
+ * user/assistant exchange so the model can see what ran and whether it worked
+ * (same convention as other CLI agents).
+ */
+export function recordBangExchange(
+  agent: BangChatSink,
+  command: string,
+  rawResult: string
+): void {
+  const userMsg: Message = {
+    id: rnd(),
+    role: 'user',
+    content: `!${command}`,
+    timestamp: Date.now(),
+  };
+  const assistantMsg: Message = {
+    id: rnd(),
+    role: 'assistant',
+    content: formatBangResult(command, rawResult),
+    timestamp: Date.now(),
+  };
+  agent.messages.push(userMsg, assistantMsg);
+  agent.contextManager.addMessage(userMsg);
+  agent.contextManager.addMessage(assistantMsg);
 }
