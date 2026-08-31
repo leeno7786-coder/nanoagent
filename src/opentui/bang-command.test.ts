@@ -3,8 +3,9 @@ import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { parseBangCommand, runBangCommand, formatBangResult } from './bang-command.js';
+import { parseBangCommand, runBangCommand, formatBangResult, recordBangExchange } from './bang-command.js';
 import { createSecurityManager } from '../security/index.js';
+import type { Message } from '../types.js';
 
 describe('parseBangCommand', () => {
   it('detects a leading `!` and strips it', () => {
@@ -212,6 +213,47 @@ describe('formatBangResult', () => {
     const out = formatBangResult('weird', 'not-json');
     expect(out).toContain('!weird');
     expect(out).toContain('not-json');
+  });
+});
+
+describe('recordBangExchange', () => {
+  function makeSink() {
+    const ctxMessages: Message[] = [];
+    const sink = {
+      messages: [] as Message[],
+      contextManager: { addMessage: (m: Message) => ctxMessages.push(m) },
+    };
+    return { sink, ctxMessages };
+  }
+
+  it('appends the user/assistant pair to BOTH messages and the context manager', () => {
+    const { sink, ctxMessages } = makeSink();
+    const raw = JSON.stringify({ ok: true, stdout: 'hi', stderr: '', code: 0 });
+    recordBangExchange(sink, 'echo hi', raw);
+
+    // UI history gets the pair…
+    expect(sink.messages).toHaveLength(2);
+    expect(sink.messages[0]!.role).toBe('user');
+    expect(sink.messages[0]!.content).toBe('!echo hi');
+    expect(sink.messages[1]!.role).toBe('assistant');
+    expect(sink.messages[1]!.content).toContain('hi');
+
+    // …and so does the ContextManager (same object identities), so the model
+    // sees the exchange and compaction can't drop it from the chat panel.
+    expect(ctxMessages).toHaveLength(2);
+    expect(ctxMessages[0]).toBe(sink.messages[0]);
+    expect(ctxMessages[1]).toBe(sink.messages[1]);
+  });
+
+  it('records failures into the context manager too (errors are never silent)', () => {
+    const { sink, ctxMessages } = makeSink();
+    const raw = JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
+    recordBangExchange(sink, 'rm -rf /', raw);
+
+    expect(ctxMessages).toHaveLength(2);
+    expect(ctxMessages[1]!.role).toBe('assistant');
+    expect(ctxMessages[1]!.content).toContain('blocked');
+    expect(ctxMessages[1]!.content).toContain('Command blocked for security reasons');
   });
 });
 
