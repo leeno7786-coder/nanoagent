@@ -11,10 +11,13 @@ import { homedir } from 'os';
 import { join, basename, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
 import type { Skill, SkillCommand } from './types.js';
+import { configDir, legacyConfigDir } from './config/paths.js';
 
 const SKILL_DIRS = [
   join(process.cwd(), 'skills'),
-  join(homedir(), '.qwen-agent-tui', 'skills'),
+  join(configDir(), 'skills'),
+  // Legacy pre-rename location, still honored as a read source.
+  join(legacyConfigDir(), 'skills'),
   join(homedir(), '.agents', 'skills'),
   join(homedir(), '.claude', 'skills'),
 ];
@@ -27,7 +30,8 @@ const TEMPLATE_DIR = join(
   'templates'
 );
 
-const SKILL_CONFIG_FILE = join(homedir(), '.qwen-agent-tui', 'skill-config.json');
+const SKILL_CONFIG_FILE = join(configDir(), 'skill-config.json');
+const LEGACY_SKILL_CONFIG_FILE = join(legacyConfigDir(), 'skill-config.json');
 
 // Resolved relative to this compiled module. Under a normal install the bin is
 // dist/main.js and this file compiles to dist/skills.js, so the package root
@@ -560,9 +564,11 @@ export function getSkillNames(): string[] {
 }
 
 function loadSkillConfig(): Record<string, boolean> {
-  if (!existsSync(SKILL_CONFIG_FILE)) return {};
+  // New location first, legacy pre-rename file as fallback.
+  const path = existsSync(SKILL_CONFIG_FILE) ? SKILL_CONFIG_FILE : LEGACY_SKILL_CONFIG_FILE;
+  if (!existsSync(path)) return {};
   try {
-    const content = readFileSync(SKILL_CONFIG_FILE, 'utf-8');
+    const content = readFileSync(path, 'utf-8');
     const parsed = JSON.parse(content);
     if (Array.isArray(parsed)) {
       return parsed.reduce((acc, skill) => ({ ...acc, [skill]: true }), {});

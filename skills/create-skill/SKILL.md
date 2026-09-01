@@ -3,13 +3,13 @@ name: create-skill
 description: Create a new .md skill for this system by having the agent generate the SKILL.md from a user description, write the file, and validate it.
 user-invocable: true
 triggers:
-  - "create skill"
-  - "new skill"
-  - "build a skill"
-  - "make a skill"
-  - "skill wizard"
-  - "scaffold skill"
-  - "generate skill"
+  - 'create skill'
+  - 'new skill'
+  - 'build a skill'
+  - 'make a skill'
+  - 'skill wizard'
+  - 'scaffold skill'
+  - 'generate skill'
 ---
 
 # Create Skill — Agent-Driven Generation
@@ -51,6 +51,7 @@ Use the LLM to draft the full SKILL.md content. Pass the user's description and 
   - `## Notes` — edge cases and safety warnings
 
 The model must follow the conventions of existing skills in `skills/`:
+
 - No filler — every section has actionable content
 - No secrets or machine-specific paths
 - One skill per workflow
@@ -92,5 +93,5 @@ It will be available on the next chat in this workspace.
 
 - Prefer **one skill per workflow** — avoid megaskills that try to cover every situation
 - Update an existing skill instead of adding a duplicate if the workflow evolves
-- Skills are loaded from `skills/`, `~/.qwen-agent-tui/skills/`, `~/.agents/skills/`, and `~/.claude/skills/` — the project `skills/` directory takes priority
+- Skills are loaded from `skills/`, `~/.nanoagent/skills/` (legacy: `~/.qwen-agent-tui/skills/`), `~/.agents/skills/`, and `~/.claude/skills/` — the project `skills/` directory takes priority
 - If the user wants to add supporting files (templates, references), create them in `skills/<slug>/` alongside `SKILL.md`

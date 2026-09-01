@@ -59,7 +59,7 @@ describe('logCrash', () => {
   });
 
   it('exposes the default path under the home config dir', () => {
-    expect(crashLogPath()).toContain('.qwen-agent-tui');
+    expect(crashLogPath()).toContain('.nanoagent');
     expect(crashLogPath()).toContain('crash.log');
   });
 });

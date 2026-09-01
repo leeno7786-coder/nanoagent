@@ -19,8 +19,9 @@ import { applyEffortFromEnvAndDefault, parseEffort } from './effort.js';
  * Trust-sensitive environment variables. Workspace/project .env files are
  * UNTRUSTED — any cloned repo can plant one — so these variables are only
  * honored when they come from the real environment (process launch) or the
- * trusted home-dir .env (~/.qwen-agent-tui/.env). They cover the MCP trust
- * override, security toggles, the API endpoint, and API-key overrides.
+ * trusted home-dir .env (~/.nanoagent/.env, legacy ~/.qwen-agent-tui/.env).
+ * They cover the MCP trust override, security toggles, the API endpoint, and
+ * API-key overrides.
  */
 const TRUST_SENSITIVE_ENV_VARS = new Set([
   'NANOGENT_TRUST_PROJECT_MCP',
@@ -66,9 +67,16 @@ function getHomedir(): string {
 
 function loadEnv(workspace: string) {
   // Trusted home-dir .env first (user-managed; where saveApiKeyToEnv writes).
-  const trustedPath = join(getHomedir(), '.qwen-agent-tui', '.env');
-  if (existsSync(trustedPath)) {
-    dotenvConfig({ path: resolve(trustedPath), quiet: true });
+  // New ~/.nanoagent location first, then the legacy ~/.qwen-agent-tui
+  // fallback — dotenv never overrides, so the first file loaded wins.
+  const trustedPaths = [
+    join(getHomedir(), '.nanoagent', '.env'),
+    join(getHomedir(), '.qwen-agent-tui', '.env'),
+  ];
+  for (const trustedPath of trustedPaths) {
+    if (existsSync(trustedPath)) {
+      dotenvConfig({ path: resolve(trustedPath), quiet: true });
+    }
   }
   // Snapshot before merging UNTRUSTED workspace .env files. dotenv never
   // overrides existing keys, so anything already set here is trusted.

@@ -21,17 +21,20 @@ interface TodoItem {
 }
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { configDir, legacyConfigDir } from '../config/paths.js';
 
-const DATA_DIR = join(homedir(), '.qwen-agent-tui');
+const DATA_DIR = configDir();
 export const TODO_STORAGE_PATH = join(DATA_DIR, 'todos.json');
+const LEGACY_TODO_STORAGE_PATH = join(legacyConfigDir(), 'todos.json');
 const STORAGE_FILE_PATH = TODO_STORAGE_PATH;
 
 function loadTodos(): TodoItem[] {
   try {
-    if (!existsSync(STORAGE_FILE_PATH)) return [];
-    const content = readFileSync(STORAGE_FILE_PATH, 'utf-8');
+    // Read the new location first; fall back to the legacy pre-rename file.
+    const path = existsSync(STORAGE_FILE_PATH) ? STORAGE_FILE_PATH : LEGACY_TODO_STORAGE_PATH;
+    if (!existsSync(path)) return [];
+    const content = readFileSync(path, 'utf-8');
     if (!content.trim()) return [];
     return JSON.parse(content);
   } catch {

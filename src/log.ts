@@ -11,8 +11,8 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
 import { dirname, join } from 'path';
+import { configDir } from './config/paths.js';
 
 let tuiActive = false;
 
@@ -27,7 +27,7 @@ export function isTuiActive(): boolean {
 
 /** Default crash log location (trusted home-dir config folder). */
 export function crashLogPath(): string {
-  return join(homedir(), '.qwen-agent-tui', 'crash.log');
+  return join(configDir(), 'crash.log');
 }
 
 const CRASH_LOG_MAX_BYTES = 256 * 1024;

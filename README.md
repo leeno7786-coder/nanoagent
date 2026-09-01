@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.1.22** (`@omega3_0/nanoagent`) — crash diagnostics: uncaught exceptions and unhandled rejections are now appended with full stacks to `~/.qwen-agent-tui/crash.log` (bounded size), so TUI crashes that garble the alternate screen can be diagnosed after the fact; the permission-accept path is hardened (resolver guarded, missing category tolerated); includes 2.1.21 (`/connect` provider persistence + OpenRouter key validation) and earlier fixes.
+Current release: **2.2.0** (`@omega3_0/nanoagent`) — the home state directory is now `~/.nanoagent`: saved API keys, sessions, input history, todos, skills, and the crash log all live there. Existing `~/.qwen-agent-tui` content keeps working (legacy read fallback, one-time `.env` migration on first key save, sessions/history merged from both locations). The MCP client name and OpenRouter referer were renamed to nanoagent as well; includes 2.1.22 (crash diagnostics) and earlier fixes.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 

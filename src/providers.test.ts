@@ -338,7 +338,8 @@ describe('providers.ts - Provider Resolution', () => {
 
     it('returns OpenRouter default headers from the catalog', () => {
       const headers = getProviderDefaultHeaders('https://openrouter.ai/api/v1');
-      expect(headers?.['X-Title']).toBe('Qwen Agent TUI');
+      expect(headers?.['X-Title']).toBe('NanoAgent');
+      expect(headers?.['HTTP-Referer']).toBe('https://github.com/leeno7786-coder/nanoagent');
     });
 
     it('exposes conservative RPM defaults for tight cloud providers', () => {
