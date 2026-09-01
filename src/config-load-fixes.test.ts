@@ -276,6 +276,53 @@ describe('catalog-driven API key lookup', () => {
     const cfg = loadConfig();
     expect(cfg.apiKey).toBe('sk-dash-from-env');
   });
+
+  it('restores a persisted /connect selection with the key from the trusted home .env', () => {
+    saveEnv(
+      'USERPROFILE',
+      'HOME',
+      'HOMEDRIVE',
+      'HOMEPATH',
+      'OPENROUTER_API_KEY',
+      'QWEN_BASE_URL',
+      'OPENAI_API_KEY',
+      'QWEN_MODEL'
+    );
+    const fakeHome = join(tmp, 'home-or');
+    const proj = join(tmp, 'proj-or');
+    mkdirSync(join(fakeHome, '.qwen-agent-tui'), { recursive: true });
+    mkdirSync(proj, { recursive: true });
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+    delete process.env.HOMEDRIVE;
+    delete process.env.HOMEPATH;
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.QWEN_BASE_URL;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.QWEN_MODEL;
+
+    // What /connect persists: the key goes to the trusted home .env, the
+    // provider/model/baseURL selection goes to ~/.nanogent.json.
+    writeFileSync(
+      join(fakeHome, '.qwen-agent-tui', '.env'),
+      'OPENROUTER_API_KEY=sk-or-persisted\n'
+    );
+    writeFileSync(
+      join(fakeHome, '.nanogent.json'),
+      JSON.stringify({
+        provider: 'openrouter',
+        model: 'minimax/minimax-m3:free',
+        baseURL: 'https://openrouter.ai/api/v1',
+      })
+    );
+
+    process.chdir(proj);
+    const cfg = loadConfig();
+    expect(cfg.provider).toBe('openrouter');
+    expect(cfg.model).toBe('minimax/minimax-m3:free');
+    expect(cfg.baseURL).toBe('https://openrouter.ai/api/v1');
+    expect(cfg.apiKey).toBe('sk-or-persisted');
+  });
 });
 
 describe('cloud rate-limit defaults', () => {

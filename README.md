@@ -1,15 +1,15 @@
 # ⚡ NanoAgent (`nanoagent`)
 
 ```text
-  _  _                 _                    _   
- | \| |__ _ _ _  ___  /_\  __ _ ___ _ _ | |_ 
+  _  _                 _                    _
+ | \| |__ _ _ _  ___  /_\  __ _ ___ _ _ | |_
  | .` / _` | ' \/ _ \/ _ \/ _` / -_) ' \|  _|
  |_|\_\__,_|_||_\___/_/ \_\__, \___|_||_|\__|
-                          |___/              
+                          |___/
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.1.20** (`@omega3_0/nanoagent`) — terminal-style `!` bang blocks: output streams live into a `$ cmd` + gutter block above the input, Escape/Ctrl+D interrupts, history renders as one terminal block with `(interrupted)` / `(timed out)` / `(exit N)` / `(no output)` markers; includes 2.1.19 (no raw stdout/stderr mirroring — TUI frame corruption fix), 2.1.18 (`!` exchange recorded in ContextManager — model sees it, chat panel keeps it) and earlier fixes.
+Current release: **2.1.21** (`@omega3_0/nanoagent`) — `/connect` now persists the provider/model/baseURL selection to `~/.nanogent.json` so the next launch restores it and reuses the saved key from the trusted home `.env` (no re-adding providers every start), and OpenRouter keys are validated against the authenticated `/auth/key` endpoint before connecting, so a stale key fails inside `/connect` instead of 401ing on the first chat message; includes 2.1.20 (terminal-style `!` bang blocks) and earlier fixes.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -118,13 +118,13 @@ nanoagent tui      # force TUI
 
 ### CLI commands
 
-| Command | What it does |
-|---|---|
-| `nanoagent` / `nanoagent tui` | Full-screen OpenTUI session |
-| `nanoagent run --prompt "…"` | One headless task |
-| `nanoagent models` | List models from the configured runtime |
-| `nanoagent doctor` | Config + runtime health check |
-| `nanoagent todo` | CLI todo list (`add`, `list`, `done`, `delete`, `clear`) |
+| Command                       | What it does                                             |
+| ----------------------------- | -------------------------------------------------------- |
+| `nanoagent` / `nanoagent tui` | Full-screen OpenTUI session                              |
+| `nanoagent run --prompt "…"`  | One headless task                                        |
+| `nanoagent models`            | List models from the configured runtime                  |
+| `nanoagent doctor`            | Config + runtime health check                            |
+| `nanoagent todo`              | CLI todo list (`add`, `list`, `done`, `delete`, `clear`) |
 
 `run` flags: `--prompt` / `--stdin`, `--workspace`, `--model`, `--base-url`, `--profile`, `--max-rounds`, `--max-iterations`, `--json`, `--quiet`, `--verbose`, `--yes` (auto-approve permissions), `--permission-mode <read_only\|ask\|allow_edits\|always_allow>`.
 
@@ -231,59 +231,59 @@ In the TUI:
 
 ## TUI slash commands
 
-| Command | Description |
-|---|---|
-| `/help` | Help overlay (F1) |
-| `/new` | Start a new session |
-| `/clear` | Clear chat (F2); keeps system messages |
-| `/compact` | Force context compaction |
-| `/auto <task>` | Autonomous run (F3 prefills `/auto`) |
-| `/config` | Live scalar overlay (global persist). `/config show` prints. `/config set` writes a file. |
-| `/settings` | Alias for `/config` overlay |
-| `/effort` | Show or set thinking effort (`none`–`extra-high`; writes global config when set) |
-| `/profile` | List or apply a named model snapshot (`--global` to persist) |
-| `/connect` | Pick runtime, API key, and model |
-| `/usage` | Session input/output tokens and estimated USD (when prices are known) |
-| `/doctor` | Health check |
-| `/models` | Local/remote models and context |
-| `/todo` `/todos` | Todo sidebar (F4) / list |
-| `/clear-todos` | Remove all todos |
-| `/skills` | Skills overlay (F8) |
-| `/skill` `/skill-load` `/unload` | List, load, or unload a skill |
-| `/graph build\|stats\|report` | Memory graph |
-| `/mcp` `/mcp-add` `/mcp-remove` | MCP servers |
-| `/permissions` | `read_only` / `ask` / `allow_edits` / `always_allow` |
-| `/cd [path]` | Change tool workspace |
-| `/allow [path]` | Extra tool path outside the workspace |
-| `/theme [name]` | Switch theme (F9 cycles) |
-| `/save` `/load` `/sessions` `/resume` `/rename` | Session persistence |
-| `/delete-session` | Delete a saved session |
-| `/export` | Export chat to markdown |
-| `/copy` | Copy selected message |
-| `/set <key> <val>` | Shorthand for `/config set` |
-| `/reload` | Reload config, skills, and runtime metadata |
-| `/exit` | Quit and auto-save (F10) |
+| Command                                         | Description                                                                               |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `/help`                                         | Help overlay (F1)                                                                         |
+| `/new`                                          | Start a new session                                                                       |
+| `/clear`                                        | Clear chat (F2); keeps system messages                                                    |
+| `/compact`                                      | Force context compaction                                                                  |
+| `/auto <task>`                                  | Autonomous run (F3 prefills `/auto`)                                                      |
+| `/config`                                       | Live scalar overlay (global persist). `/config show` prints. `/config set` writes a file. |
+| `/settings`                                     | Alias for `/config` overlay                                                               |
+| `/effort`                                       | Show or set thinking effort (`none`–`extra-high`; writes global config when set)          |
+| `/profile`                                      | List or apply a named model snapshot (`--global` to persist)                              |
+| `/connect`                                      | Pick runtime, API key, and model                                                          |
+| `/usage`                                        | Session input/output tokens and estimated USD (when prices are known)                     |
+| `/doctor`                                       | Health check                                                                              |
+| `/models`                                       | Local/remote models and context                                                           |
+| `/todo` `/todos`                                | Todo sidebar (F4) / list                                                                  |
+| `/clear-todos`                                  | Remove all todos                                                                          |
+| `/skills`                                       | Skills overlay (F8)                                                                       |
+| `/skill` `/skill-load` `/unload`                | List, load, or unload a skill                                                             |
+| `/graph build\|stats\|report`                   | Memory graph                                                                              |
+| `/mcp` `/mcp-add` `/mcp-remove`                 | MCP servers                                                                               |
+| `/permissions`                                  | `read_only` / `ask` / `allow_edits` / `always_allow`                                      |
+| `/cd [path]`                                    | Change tool workspace                                                                     |
+| `/allow [path]`                                 | Extra tool path outside the workspace                                                     |
+| `/theme [name]`                                 | Switch theme (F9 cycles)                                                                  |
+| `/save` `/load` `/sessions` `/resume` `/rename` | Session persistence                                                                       |
+| `/delete-session`                               | Delete a saved session                                                                    |
+| `/export`                                       | Export chat to markdown                                                                   |
+| `/copy`                                         | Copy selected message                                                                     |
+| `/set <key> <val>`                              | Shorthand for `/config set`                                                               |
+| `/reload`                                       | Reload config, skills, and runtime metadata                                               |
+| `/exit`                                         | Quit and auto-save (F10)                                                                  |
 
 ### Shortcuts
 
-| Key | Action |
-|---|---|
-| F1 | Help |
-| F2 | Clear chat |
-| F3 | Prefill `/auto` |
-| F4 | Todo sidebar |
-| F5 | Save session |
-| F6 | Load session |
-| F7 | Toggle mouse capture |
-| F8 | Skills overlay |
-| F9 | Cycle theme |
-| F10 | Exit |
-| Shift+Tab | Cycle permission mode |
-| Shift+Enter | Multi-line input |
-| Ctrl+↑/↓ | Select message |
-| Ctrl+C | Copy selected message |
-| Ctrl+D | Abort current run |
-| Shift+drag | Select and copy (or turn mouse capture off with F7) |
+| Key         | Action                                              |
+| ----------- | --------------------------------------------------- |
+| F1          | Help                                                |
+| F2          | Clear chat                                          |
+| F3          | Prefill `/auto`                                     |
+| F4          | Todo sidebar                                        |
+| F5          | Save session                                        |
+| F6          | Load session                                        |
+| F7          | Toggle mouse capture                                |
+| F8          | Skills overlay                                      |
+| F9          | Cycle theme                                         |
+| F10         | Exit                                                |
+| Shift+Tab   | Cycle permission mode                               |
+| Shift+Enter | Multi-line input                                    |
+| Ctrl+↑/↓    | Select message                                      |
+| Ctrl+C      | Copy selected message                               |
+| Ctrl+D      | Abort current run                                   |
+| Shift+drag  | Select and copy (or turn mouse capture off with F7) |
 
 ---
 

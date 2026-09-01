@@ -168,9 +168,42 @@ export async function fetchRemoteModels(baseURL: string, apiKey?: string): Promi
   }
 }
 
+/**
+ * OpenRouter's /models catalog is public, so it cannot validate credentials —
+ * a stale key still returns a model list and the failure only surfaces as a
+ * 401 on the first chat request. Probe the authenticated /auth/key endpoint
+ * first so an invalid key is rejected while the user is still in /connect.
+ */
+async function verifyOpenRouterKey(apiKey: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch('https://openrouter.ai/api/v1/auth/key', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    // Probe unreachable — fall through to the models request, which reports
+    // its own network errors.
+    return;
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error(
+      `OpenRouter rejected the API key (${response.status} ${response.statusText}). Paste a valid key from https://openrouter.ai/keys`
+    );
+  }
+}
+
 export async function fetchOpenRouterModels(apiKey?: string): Promise<ModelInfo[]> {
   if (apiKey && !isUsableApiKey(apiKey)) {
     throw new Error('API key is not usable (looks like a masked value). Paste the real key.');
+  }
+
+  if (apiKey) {
+    await verifyOpenRouterKey(apiKey);
   }
 
   const url = 'https://openrouter.ai/api/v1/models?sort=pricing-low-to-high';
