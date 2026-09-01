@@ -77,7 +77,10 @@ export async function runBangCommand(
     securityManager: options.securityManager,
   } as Config;
   return executeCommandTool.executeAsync!(
-    { command, timeout: options.timeoutSeconds },
+    // mirrorOutput:false — the TUI renders the result from the returned JSON;
+    // a raw passthrough write to stdout/stderr would corrupt the OpenTUI
+    // alternate-screen frame while the command runs.
+    { command, timeout: options.timeoutSeconds, mirrorOutput: false },
     options.workspace,
     cfg,
     options.signal
@@ -175,11 +178,7 @@ export interface BangChatSink {
  * user/assistant exchange so the model can see what ran and whether it worked
  * (same convention as other CLI agents).
  */
-export function recordBangExchange(
-  agent: BangChatSink,
-  command: string,
-  rawResult: string
-): void {
+export function recordBangExchange(agent: BangChatSink, command: string, rawResult: string): void {
   const userMsg: Message = {
     id: rnd(),
     role: 'user',
