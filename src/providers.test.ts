@@ -431,21 +431,25 @@ describe('providers.ts - Provider Resolution', () => {
     });
 
     it('converts OpenRouter per-token prices to $/1M', async () => {
-      const fetchMock = vi.fn().mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: () =>
-          Promise.resolve({
-            data: [
-              {
-                id: 'openrouter/free',
-                name: 'Free',
-                context_length: 128000,
-                pricing: { prompt: '0.00000015', completion: '0.0000006' },
-              },
-            ],
-          }),
-      });
+      const fetchMock = vi
+        .fn()
+        // Auth probe passes, then the catalog responds.
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK' })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              data: [
+                {
+                  id: 'openrouter/free',
+                  name: 'Free',
+                  context_length: 128000,
+                  pricing: { prompt: '0.00000015', completion: '0.0000006' },
+                },
+              ],
+            }),
+        });
       globalThis.fetch = fetchMock as unknown as typeof fetch;
       const models = await fetchOpenRouterModels('sk-test');
       expect(models[0]?.promptPricePerMillion).toBeCloseTo(0.15, 8);
@@ -483,24 +487,83 @@ describe('fetchOpenRouterModels', () => {
   });
 
   it('surfaces HTTP errors instead of an empty list', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+    globalThis.fetch = vi
+      .fn()
+      // Auth probe passes, then the catalog request itself fails.
+      .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK' })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      }) as unknown as typeof fetch;
+
+    await expect(fetchOpenRouterModels('sk-or-v1-test')).rejects.toThrow(/500/);
+  });
+
+  it('rejects a stale key via the auth probe without calling the models endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
       ok: false,
       status: 401,
       statusText: 'Unauthorized',
-    }) as unknown as typeof fetch;
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await expect(fetchOpenRouterModels('sk-or-v1-test')).rejects.toThrow(/401/);
+    await expect(fetchOpenRouterModels('sk-or-v1-stale')).rejects.toThrow(
+      /rejected the API key \(401/
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://openrouter.ai/api/v1/auth/key');
   });
 
-  it('returns models from a successful catalog response', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+  it('falls through to the models request when the auth probe is unreachable', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('socket hang up'))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            data: [{ id: 'openrouter/free', name: 'Free', context_length: 200000 }],
+          }),
+      });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const models = await fetchOpenRouterModels('sk-or-v1-test');
+    expect(models).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips the auth probe when no key is provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
       ok: true,
       status: 200,
       json: () =>
         Promise.resolve({
           data: [{ id: 'openrouter/free', name: 'Free', context_length: 200000 }],
         }),
-    }) as unknown as typeof fetch;
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const models = await fetchOpenRouterModels();
+    expect(models).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/models');
+  });
+
+  it('returns models from a successful catalog response', async () => {
+    globalThis.fetch = vi
+      .fn()
+      // Auth probe passes, then the catalog responds.
+      .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK' })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            data: [{ id: 'openrouter/free', name: 'Free', context_length: 200000 }],
+          }),
+      }) as unknown as typeof fetch;
 
     const models = await fetchOpenRouterModels('sk-or-v1-test');
     expect(models).toHaveLength(1);

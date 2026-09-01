@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useKeyboard } from '@opentui/react';
 import type { CliRenderer } from '@opentui/core';
 import { AgentCore } from '../agent.js';
-import { loadConfig } from '../config.js';
+import { loadConfig, saveConfigFile } from '../config.js';
 import { NANOAGENT_BANNER } from '../cli/help.js';
 import {
   saveSession,
@@ -32,6 +32,7 @@ import { useAppStore } from './app-store.js';
 import { useClipboardPaste } from './use-clipboard-paste.js';
 import { copyToClipboard } from '../clipboard.js';
 import { addNoticeMessage } from '../agent-messages.js';
+import { logWarn } from '../log.js';
 
 /**
  * Messages the user can select/copy — shares ChatScreen's visibility filter
@@ -616,6 +617,22 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           newConfig.apiKey = 'lm-studio';
         }
         await agent.reconfigure(newConfig);
+        // Remember the selection so the next launch restores this provider and
+        // resolves its key from the trusted home-dir .env. The raw API key is
+        // never written to the JSON config.
+        try {
+          saveConfigFile(
+            {
+              provider: provider.id,
+              model: model.id,
+              baseURL: newConfig.baseURL,
+            },
+            'global',
+            agent.cfg.workspace
+          );
+        } catch (error) {
+          logWarn('Could not persist provider selection:', error);
+        }
         const ctxNote = agent.cfg.modelContextLength
           ? ` \u00B7 ${Math.round(agent.cfg.modelContextLength / 1000)}k ctx`
           : '';
