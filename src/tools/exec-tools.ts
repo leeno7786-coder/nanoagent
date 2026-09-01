@@ -313,13 +313,17 @@ function execCmdAsync(
   ws: string,
   timeoutSeconds = 60,
   signal?: AbortSignal,
-  opts?: { mirrorOutput?: boolean }
+  opts?: {
+    mirrorOutput?: boolean;
+    onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void;
+  }
 ): Promise<string> {
   // Mirror child output to the real stdout/stderr by default (useful in `run`
   // CLI mode). TUI callers (e.g. the `!` bang command) must disable it — a raw
   // write would corrupt the alternate-screen frame; output is already captured
   // and rendered from the returned result.
   const mirror = opts?.mirrorOutput !== false;
+  const onOutput = opts?.onOutput;
   return new Promise((resolvePromise) => {
     if (!cmd.trim()) {
       resolvePromise(JSON.stringify({ ok: false, error: 'Command cannot be empty' }));
@@ -379,12 +383,22 @@ function execCmdAsync(
       const str = data.toString();
       stdoutBuffer += str;
       if (mirror) process.stdout.write(str);
+      try {
+        onOutput?.(str, 'stdout');
+      } catch {
+        /* a broken UI callback must not kill the command */
+      }
     });
 
     child.stderr?.on('data', (data) => {
       const str = data.toString();
       stderrBuffer += str;
       if (mirror) process.stderr.write(str);
+      try {
+        onOutput?.(str, 'stderr');
+      } catch {
+        /* a broken UI callback must not kill the command */
+      }
     });
 
     // Set up timeout to kill the child process explicitly
@@ -548,9 +562,12 @@ export const executeCommandTool: Tool = {
 
     return execCmdAsync(cmd, ws, userTimeout, signal, {
       // Internal callers (e.g. the `!` bang command) pass mirrorOutput:false so
-      // raw child output never corrupts the TUI frame. Not part of the
-      // LLM-facing schema — the model can't toggle it accidentally.
+      // raw child output never corrupts the TUI frame, and onOutput to stream
+      // chunks into the live terminal block. Neither is part of the LLM-facing
+      // schema — the model can't toggle them accidentally.
       mirrorOutput: (args as { mirrorOutput?: boolean }).mirrorOutput !== false,
+      onOutput: (args as { onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void })
+        .onOutput,
     });
   },
 };

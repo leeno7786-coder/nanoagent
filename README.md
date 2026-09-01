@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.1.19** (`@omega3_0/nanoagent`) — bang command output no longer mirrors raw to stdout/stderr (fixes TUI frame corruption during `!` commands), CI prettier fix, LF line-ending enforcement via `.gitattributes`; includes 2.1.18 (`!` exchange recorded in ContextManager — model sees it, chat panel keeps it) and earlier fixes.
+Current release: **2.1.20** (`@omega3_0/nanoagent`) — terminal-style `!` bang blocks: output streams live into a `$ cmd` + gutter block above the input, Escape/Ctrl+D interrupts, history renders as one terminal block with `(interrupted)` / `(timed out)` / `(exit N)` / `(no output)` markers; includes 2.1.19 (no raw stdout/stderr mirroring — TUI frame corruption fix), 2.1.18 (`!` exchange recorded in ContextManager — model sees it, chat panel keeps it) and earlier fixes.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 

@@ -422,9 +422,11 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       // `!` shell-command shortcut (Vim/Claude-Code/aider convention). Runs
       // the command through the same execute_command path the LLM uses, so
       // SecurityManager + DANGEROUS_COMMAND_PATTERNS + workspace sandbox
-      // all apply. The exchange is recorded in BOTH agent.messages (chat
-      // panel) and the ContextManager — the model sees the command and its
-      // output, and compaction can't silently drop it. No LLM call.
+      // all apply. Output streams live into a terminal-style block above the
+      // input (store.bangRun); on completion the exchange is recorded in BOTH
+      // agent.messages (chat panel) and the ContextManager — the model sees
+      // the command and its output, and compaction can't silently drop it.
+      // No LLM call.
       const bang = parseBangCommand(text);
       if (bang.isBang) {
         // Workspace is required to scope the command to the project. Never
@@ -435,11 +437,19 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           store.getState().syncFromAgent(agent);
           return;
         }
+        // One bang at a time — a second submission while one runs is dropped
+        // with a notice rather than racing two live blocks.
+        if (store.getState().bangRun) {
+          addNoticeMessage(agent, 'A `!` command is already running — wait or press Escape.');
+          store.getState().syncFromAgent(agent);
+          return;
+        }
         // Ensure an abort controller exists so the command can be cancelled.
         if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
           abortControllerRef.current = new AbortController();
         }
         const signal = abortControllerRef.current.signal;
+        store.getState().startBangRun(bang.command);
         // Run async so the TUI stays responsive on long commands. Any throw
         // is surfaced as a failed bang result instead of an unhandled
         // rejection that leaves the chat panel unchanged.
@@ -449,6 +459,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             securityManager: agent.securityManager,
             cfg: agent.cfg,
             signal,
+            onOutput: (chunk) => store.getState().appendBangOutput(chunk),
           });
           recordBangExchange(agent, bang.command, result);
         } catch (err) {
@@ -460,6 +471,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               error: err instanceof Error ? err.message : String(err),
             })
           );
+        } finally {
+          store.getState().endBangRun();
         }
         agent.setState('idle');
         store.getState().syncFromAgent(agent);
@@ -648,6 +661,13 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     }
 
     if (keyEvent.ctrl && (keyEvent.name === 'd' || keyEvent.name === 'D')) {
+      // A live bang run doesn't move agent.state off 'idle', so check it
+      // first — Ctrl+D must interrupt it just like a busy agent turn.
+      if (st.bangRun) {
+        abortControllerRef.current?.abort();
+        keyEvent.preventDefault?.();
+        return;
+      }
       const busy = st.state !== 'idle' && st.state !== 'error' && st.state !== 'waiting_for_user';
       if (busy) {
         resolvePendingPermission('deny');
@@ -710,6 +730,13 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     }
 
     if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
+      // Interrupt a live bang run first — it doesn't move agent.state off
+      // 'idle', so the busy check below would miss it.
+      if (st.bangRun) {
+        abortControllerRef.current?.abort();
+        keyEvent.preventDefault?.();
+        return;
+      }
       const busy = st.state !== 'idle' && st.state !== 'error' && st.state !== 'waiting_for_user';
       if (busy) {
         abortControllerRef.current?.abort();
