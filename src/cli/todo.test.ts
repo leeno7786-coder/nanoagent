@@ -9,8 +9,8 @@ import { join, sep } from 'node:path';
 import { TODO_STORAGE_PATH } from './todo.js';
 
 describe('todo storage path', () => {
-  it('resolves under ~/.qwen-agent-tui/todos.json', () => {
-    expect(TODO_STORAGE_PATH).toBe(join(homedir(), '.qwen-agent-tui', 'todos.json'));
+  it('resolves under ~/.nanoagent/todos.json', () => {
+    expect(TODO_STORAGE_PATH).toBe(join(homedir(), '.nanoagent', 'todos.json'));
   });
 
   it('is not inside the installed package directory', () => {

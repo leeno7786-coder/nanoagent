@@ -3,6 +3,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import type { Todo, Session, Message, Config } from './types.js';
 import { VersionedStore } from './storage.js';
+import { configDir, legacyConfigDir } from './config/paths.js';
 
 const SESSION_VERSION = 1;
 
@@ -48,9 +49,12 @@ export function buildConfigSnapshot(cfg: Config): Partial<Config> {
   };
 }
 
-const DATA_DIR = join(homedir(), '.qwen-agent-tui');
+const DATA_DIR = configDir();
 const SESSION_DIR = join(DATA_DIR, 'sessions');
 const HISTORY_FILE = join(DATA_DIR, 'input-history.json');
+// Legacy pre-rename locations — read/merge fallbacks only, never written.
+const LEGACY_SESSION_DIR = join(legacyConfigDir(), 'sessions');
+const LEGACY_HISTORY_FILE = join(legacyConfigDir(), 'input-history.json');
 
 function ensureDir() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
@@ -67,6 +71,13 @@ function hashWorkspace(ws: string): string {
 
 function sessionStore(id: string): VersionedStore<Session> {
   return new VersionedStore<Session>(join(SESSION_DIR, `${id}.json`), {
+    currentVersion: SESSION_VERSION,
+    backupCount: 3,
+  });
+}
+
+function legacySessionStore(id: string): VersionedStore<Session> {
+  return new VersionedStore<Session>(join(LEGACY_SESSION_DIR, `${id}.json`), {
     currentVersion: SESSION_VERSION,
     backupCount: 3,
   });
@@ -115,7 +126,7 @@ export function loadSession(id: string): Session | null {
   const safeId = sanitizeSessionId(id);
   if (!safeId) return null;
   const store = sessionStore(safeId);
-  const raw = store.read();
+  const raw = store.read() ?? legacySessionStore(safeId).read();
   if (!raw) return null;
   return stripEnvelope(raw as unknown as Record<string, unknown>);
 }
@@ -141,9 +152,11 @@ export function deleteSession(id: string): void {
   ensureDir();
   const safeId = sanitizeSessionId(id);
   if (!safeId) return;
-  const path = join(SESSION_DIR, `${safeId}.json`);
-  if (existsSync(path)) {
-    rmSync(path);
+  for (const dir of [SESSION_DIR, LEGACY_SESSION_DIR]) {
+    const path = join(dir, `${safeId}.json`);
+    if (existsSync(path)) {
+      rmSync(path);
+    }
   }
 }
 
@@ -169,7 +182,8 @@ export function renameSession(oldId: string, newId: string): boolean {
     return false;
   }
   const oldPath = join(SESSION_DIR, `${safeOldId}.json`);
-  if (!existsSync(oldPath)) {
+  const legacyOldPath = join(LEGACY_SESSION_DIR, `${safeOldId}.json`);
+  if (!existsSync(oldPath) && !existsSync(legacyOldPath)) {
     return false;
   }
 
@@ -182,7 +196,8 @@ export function renameSession(oldId: string, newId: string): boolean {
     session.updatedAt = Date.now();
     const store = sessionStore(safeNewId);
     store.write(session);
-    rmSync(oldPath);
+    if (existsSync(oldPath)) rmSync(oldPath);
+    if (existsSync(legacyOldPath)) rmSync(legacyOldPath);
     return true;
   } catch {
     return false;
@@ -191,13 +206,18 @@ export function renameSession(oldId: string, newId: string): boolean {
 
 export function listSessions(): string[] {
   ensureDir();
-  try {
-    return readdirSync(SESSION_DIR)
-      .filter((f) => f.endsWith('.json') && !f.endsWith('.bak'))
-      .map((f) => f.replace('.json', ''));
-  } catch {
-    return [];
-  }
+  const readDir = (dir: string): string[] => {
+    try {
+      return readdirSync(dir)
+        .filter((f) => f.endsWith('.json') && !f.endsWith('.bak'))
+        .map((f) => f.replace('.json', ''));
+    } catch {
+      return [];
+    }
+  };
+  // Merge the new and legacy session dirs; the new location wins on overlap
+  // (loadSession reads it first), so just dedupe.
+  return [...new Set([...readDir(SESSION_DIR), ...readDir(LEGACY_SESSION_DIR)])];
 }
 
 /**
@@ -274,9 +294,11 @@ function messagesToMarkdown(messages: Message[]): string {
 /** Load persisted input history. */
 export function loadInputHistory(): string[] {
   ensureDir();
-  if (!existsSync(HISTORY_FILE)) return [];
+  // New location first, legacy pre-rename file as fallback.
+  const path = existsSync(HISTORY_FILE) ? HISTORY_FILE : LEGACY_HISTORY_FILE;
+  if (!existsSync(path)) return [];
   try {
-    const data = JSON.parse(readFileSync(HISTORY_FILE, 'utf-8'));
+    const data = JSON.parse(readFileSync(path, 'utf-8'));
     if (Array.isArray(data)) return data.slice(-500);
   } catch {
     // ignore

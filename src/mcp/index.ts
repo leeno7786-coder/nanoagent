@@ -152,7 +152,7 @@ export class McpManager {
       return state;
     }
 
-    const client = new Client({ name: 'qwen-agent-tui', version: '1.1.0' });
+    const client = new Client({ name: 'nanoagent', version: '1.1.0' });
 
     try {
       if (config.type === 'local') {

@@ -1183,8 +1183,8 @@ export const RUNTIME_PROVIDERS: RuntimeProvider[] = [
     defaultRpm: 20,
     defaultMaxInFlight: 2,
     defaultHeaders: {
-      'HTTP-Referer': 'https://github.com/qwen-agent-tui',
-      'X-Title': 'Qwen Agent TUI',
+      'HTTP-Referer': 'https://github.com/leeno7786-coder/nanoagent',
+      'X-Title': 'NanoAgent',
     },
     models: [], // Will be fetched dynamically from OpenRouter API
   },

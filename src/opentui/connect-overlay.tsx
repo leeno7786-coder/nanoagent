@@ -536,7 +536,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
           </text>
           <text fg={theme.mutedFg}>API key for {getApiKeyEnvVar(selectedProvider.id)}</text>
           <text fg={theme.mutedFg}>
-            Saved to trusted home config (~/.qwen-agent-tui/.env) — never workspace .env
+            Saved to trusted home config (~/.nanoagent/.env) — never workspace .env
           </text>
           {hasExisting && (
             <text fg={theme.agentFg}>Current key is set · Type to replace or Enter to keep</text>
