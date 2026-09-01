@@ -44,6 +44,13 @@ interface AppState {
   contextUsage: ContextUsageSnapshot | undefined;
   subAgents: SubAgentSnapshot[];
 
+  /**
+   * Live `!` command run — non-null while a bang command executes. ChatScreen
+   * renders this as a streaming terminal block above the input; on completion
+   * the exchange is recorded into the message history and this clears.
+   */
+  bangRun: { command: string; output: string; startedAt: number } | null;
+
   sessions: Session[];
   currentSessionId: string | null;
 
@@ -77,6 +84,10 @@ interface AppState {
   setContextUsage: (u: ContextUsageSnapshot | undefined) => void;
   setSubAgents: (s: SubAgentSnapshot[]) => void;
 
+  startBangRun: (command: string) => void;
+  appendBangOutput: (chunk: string) => void;
+  endBangRun: () => void;
+
   setSessions: (s: Session[]) => void;
   setCurrentSessionId: (id: string | null) => void;
 
@@ -109,6 +120,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   lastCostUsd: undefined,
   contextUsage: undefined,
   subAgents: [],
+  bangRun: null,
 
   sessions: [],
   currentSessionId: null,
@@ -146,6 +158,17 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   setPendingPermissionReq: (r) => set({ pendingPermissionReq: r }),
   setPermissionResolver: (r) => set({ permissionResolver: r }),
+
+  startBangRun: (command) => set({ bangRun: { command, output: '', startedAt: Date.now() } }),
+  appendBangOutput: (chunk) =>
+    set((st) => {
+      if (!st.bangRun) return st;
+      // Cap the live buffer — a runaway command must not grow state forever.
+      // The full output still lands in the recorded exchange on completion.
+      const output = (st.bangRun.output + chunk).slice(-8000);
+      return { bangRun: { ...st.bangRun, output } };
+    }),
+  endBangRun: () => set({ bangRun: null }),
 
   setMessages: (m) => set({ messages: m }),
   setState: (s) => set({ state: s }),

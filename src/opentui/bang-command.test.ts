@@ -6,8 +6,10 @@ import { join } from 'path';
 import {
   parseBangCommand,
   runBangCommand,
-  formatBangResult,
+  formatBangBlock,
   recordBangExchange,
+  BANG_USER_ID_PREFIX,
+  BANG_RESULT_ID_PREFIX,
 } from './bang-command.js';
 import { createSecurityManager } from '../security/index.js';
 import type { Message } from '../types.js';
@@ -195,59 +197,94 @@ describe('runBangCommand', () => {
       (parsed.stderr?.length ?? 0) > 0;
     expect(timeoutFired).toBe(true);
   });
+
+  it('streams output chunks via onOutput while the command runs', async () => {
+    writeFileSync(join(tmpDir, 'stream.txt'), 'streamed-line');
+    const chunks: Array<{ chunk: string; stream: string }> = [];
+    const result = await runBangCommand('cat stream.txt', {
+      workspace: tmpDir,
+      onOutput: (chunk, stream) => chunks.push({ chunk, stream }),
+    });
+    const parsed = JSON.parse(result) as { ok: boolean };
+    expect(parsed.ok).toBe(true);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.map((c) => c.chunk).join('')).toContain('streamed-line');
+    expect(chunks.every((c) => c.stream === 'stdout')).toBe(true);
+  });
 });
 
-describe('formatBangResult', () => {
-  it('formats a successful command with exit 0 and stdout', () => {
+describe('formatBangBlock', () => {
+  it('renders a successful command as `$ cmd` + output, no status marker', () => {
     const raw = JSON.stringify({ ok: true, stdout: 'hello\n', stderr: '', code: 0 });
-    const out = formatBangResult('echo hello', raw);
-    expect(out).toContain('`!echo hello`');
-    expect(out).toContain('✓ exit 0');
+    const out = formatBangBlock('echo hello', raw);
+    expect(out.startsWith('$ echo hello')).toBe(true);
     expect(out).toContain('hello');
+    // Clean exit 0 with output gets no marker — the output speaks for itself.
+    expect(out).not.toContain('(exit');
+    expect(out).not.toContain('(failed');
   });
 
-  it('formats a non-zero exit with stderr', () => {
-    const raw = JSON.stringify({ ok: true, stdout: '', stderr: 'oops', code: 2 });
-    const out = formatBangResult('false', raw);
-    expect(out).toContain('`!false`');
-    expect(out).toContain('✗ exit 2');
+  it('marks a non-zero exit without an error message as (exit N)', () => {
+    const raw = JSON.stringify({ ok: false, stdout: '', stderr: 'oops', code: 2 });
+    const out = formatBangBlock('false', raw);
+    expect(out.startsWith('$ false')).toBe(true);
     expect(out).toContain('oops');
+    expect(out).toContain('(exit 2)');
+    expect(out).not.toContain('blocked');
   });
 
-  it('formats a blocked command with a clear error', () => {
+  it('marks a blocked command with its reason', () => {
     const raw = JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
-    const out = formatBangCommand_safe(raw);
-    expect(out).toContain('blocked or failed');
-    expect(out).toContain('Command blocked');
+    const out = formatBangBlock('sudo echo hi', raw);
+    expect(out).toContain('(failed: Command blocked for security reasons)');
   });
 
-  it('formats a timed-out command', () => {
+  it('marks an aborted command as (interrupted)', () => {
+    const raw = JSON.stringify({ ok: false, error: 'Command cancelled' });
+    const out = formatBangBlock('npm login', raw);
+    expect(out.startsWith('$ npm login')).toBe(true);
+    expect(out).toContain('(interrupted)');
+    expect(out).not.toContain('(failed');
+  });
+
+  it('keeps partial output when a command is interrupted mid-stream', () => {
+    const raw = JSON.stringify({
+      ok: false,
+      error: 'Command cancelled',
+      stdout: 'npm notice Log in on https://registry.npmjs.org/\n',
+    });
+    const out = formatBangBlock('npm login', raw);
+    expect(out).toContain('npm notice Log in on https://registry.npmjs.org/');
+    expect(out).toContain('(interrupted)');
+  });
+
+  it('marks a timed-out command', () => {
     const raw = JSON.stringify({
       ok: false,
       error: 'Command timed out after 1s',
       timed_out: true,
     });
-    const out = formatBangResult('sleep 99', raw);
-    expect(out).toContain('timed out');
+    const out = formatBangBlock('sleep 99', raw);
+    expect(out).toContain('(timed out');
   });
 
   it('shows "(no output)" when stdout and stderr are both empty', () => {
     const raw = JSON.stringify({ ok: true, stdout: '', stderr: '', code: 0 });
-    const out = formatBangResult('true', raw);
-    expect(out).toContain('(no output)');
+    const out = formatBangBlock('cd C:/', raw);
+    expect(out).toBe('$ cd C:/\n(no output)');
   });
 
   it('truncates very long stdout with a marker', () => {
     const long = 'x'.repeat(8000);
     const raw = JSON.stringify({ ok: true, stdout: long, stderr: '', code: 0 });
-    const out = formatBangResult('yes', raw);
+    const out = formatBangBlock('yes', raw);
     expect(out).toContain('truncated');
     expect(out.length).toBeLessThan(long.length);
   });
 
   it('falls back to raw output if the result is not valid JSON', () => {
-    const out = formatBangResult('weird', 'not-json');
-    expect(out).toContain('!weird');
+    const out = formatBangBlock('weird', 'not-json');
+    expect(out).toContain('$ weird');
     expect(out).toContain('not-json');
   });
 });
@@ -281,6 +318,18 @@ describe('recordBangExchange', () => {
     expect(ctxMessages[1]).toBe(sink.messages[1]);
   });
 
+  it('tags the pair with bang id prefixes so ChatScreen renders the terminal block', () => {
+    const { sink } = makeSink();
+    const raw = JSON.stringify({ ok: true, stdout: 'hi', stderr: '', code: 0 });
+    recordBangExchange(sink, 'echo hi', raw);
+
+    expect(sink.messages[0]!.id.startsWith(BANG_USER_ID_PREFIX)).toBe(true);
+    expect(sink.messages[1]!.id.startsWith(BANG_RESULT_ID_PREFIX)).toBe(true);
+    // The result half carries the terminal-style block (its `$ cmd` first line
+    // is what ChatScreen's gutter rendering strips).
+    expect(sink.messages[1]!.content.startsWith('$ echo hi')).toBe(true);
+  });
+
   it('records failures into the context manager too (errors are never silent)', () => {
     const { sink, ctxMessages } = makeSink();
     const raw = JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
@@ -288,17 +337,7 @@ describe('recordBangExchange', () => {
 
     expect(ctxMessages).toHaveLength(2);
     expect(ctxMessages[1]!.role).toBe('assistant');
-    expect(ctxMessages[1]!.content).toContain('blocked');
+    expect(ctxMessages[1]!.content).toContain('failed');
     expect(ctxMessages[1]!.content).toContain('Command blocked for security reasons');
   });
 });
-
-/**
- * Wrap formatBangResult so a typo in the production import doesn't silently
- * slip through when testing the error branch. The actual function is exported
- * from the module; this re-export just keeps the test file's expectations
- * explicit and stable if the import shape ever changes.
- */
-function formatBangCommand_safe(raw: string): string {
-  return formatBangResult('sudo echo hi', raw);
-}

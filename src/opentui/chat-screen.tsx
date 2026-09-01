@@ -8,6 +8,7 @@ import type { PermissionMode } from '../security/index.js';
 import type { SubAgentSnapshot } from '../agent-subagents.js';
 import { sanitizeForTui } from './sanitize.js';
 import { CommandDropdown } from './command-dropdown.js';
+import { BANG_USER_ID_PREFIX, BANG_RESULT_ID_PREFIX } from './bang-command.js';
 import { getSyntaxStyle } from './syntax-style.js';
 import type { Theme } from './theme.js';
 import { buildToolDisplayBlock, type ToolDisplayBlock } from './tool-display.js';
@@ -266,6 +267,14 @@ export function ChatScreen({
   const permissionMode = useAppStore((s) => s.permissionMode);
   const permCfg = PERM_CONFIG[permissionMode] ?? PERM_CONFIG.ask;
 
+  // Live `!` command run — terminal-style streaming block above the input.
+  const bangRun = useAppStore((s) => s.bangRun);
+  const bangLiveLines = useMemo(() => {
+    if (!bangRun || !bangRun.output) return [];
+    // Show the tail: a long-running command scrolls like a real terminal.
+    return sanitizeForTui(bangRun.output).split('\n').slice(-16);
+  }, [bangRun]);
+
   // Single lookup for tool-render data: message tool results carry the
   // content; the ToolResult list adds duration. Incremental across syncs:
   // during streaming only the tail assistant message is cloned, which does
@@ -481,6 +490,29 @@ export function ChatScreen({
         onSubmit={handleSubmitLocal}
         onPick={handleDropdownPick}
       />
+
+      {/* Live `!` command block — streams output while the command runs.
+          On completion the exchange becomes a terminal-style history pair. */}
+      {bangRun && (
+        <box
+          flexDirection="column"
+          paddingX={2}
+          paddingY={0}
+          flexShrink={0}
+          backgroundColor={theme.bgPanel}
+        >
+          <box flexDirection="row">
+            <text fg={theme.successFg || theme.agentFg}>{'$ '}</text>
+            <text fg={theme.headerFg}>{bangRun.command}</text>
+          </box>
+          {bangLiveLines.map((line, i) => (
+            <text key={i} fg={theme.mutedFg}>
+              {`  │ ${line}`}
+            </text>
+          ))}
+          <text fg={theme.statusThinking}>{'  │ running… (Esc to interrupt)'}</text>
+        </box>
+      )}
 
       <box
         flexDirection="row"
@@ -798,6 +830,34 @@ const MessageItem = memo(
   function MessageItem(props: MessageItemProps) {
     const { message, theme, highlighted = false } = props;
     if (message.role === 'system') return null;
+
+    // Bang command exchange: the user/assistant pair renders as one
+    // terminal-style block — `$ cmd` header from the user half, gutter-
+    // indented output lines from the result half (its own first line is the
+    // `$ cmd` header, already shown by the user half).
+    if (message.id.startsWith(BANG_USER_ID_PREFIX)) {
+      const cmd = message.content.replace(/^!/, '');
+      return (
+        <box flexDirection="row" marginY={1} marginBottom={0}>
+          <text fg={theme.successFg || theme.agentFg}>{'$ '}</text>
+          <text fg={theme.headerFg} bg={highlighted ? theme.bgSelected : undefined}>
+            {cmd}
+          </text>
+        </box>
+      );
+    }
+    if (message.id.startsWith(BANG_RESULT_ID_PREFIX)) {
+      const lines = sanitizeForTui(message.content).split('\n').slice(1);
+      return (
+        <box flexDirection="column" marginY={0} marginBottom={1}>
+          {lines.map((line, i) => (
+            <text key={i} fg={theme.mutedFg} bg={highlighted ? theme.bgSelected : undefined}>
+              {`  │ ${line || ' '}`}
+            </text>
+          ))}
+        </box>
+      );
+    }
 
     if (message.role === 'user') {
       return (
