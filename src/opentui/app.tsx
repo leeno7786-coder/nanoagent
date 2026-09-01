@@ -32,7 +32,7 @@ import { useAppStore } from './app-store.js';
 import { useClipboardPaste } from './use-clipboard-paste.js';
 import { copyToClipboard } from '../clipboard.js';
 import { addNoticeMessage } from '../agent-messages.js';
-import { logWarn, logCrash } from '../log.js';
+import { logWarn, logCrash, beginRunMarker, crashLogPath } from '../log.js';
 
 /**
  * Messages the user can select/copy — shares ChatScreen's visibility filter
@@ -165,6 +165,22 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         role: 'system',
         content:
           '\u26A0\uFE0F No API key configured. Use /connect to select a provider and enter your API key.',
+        timestamp: Date.now(),
+      });
+      syncFromAgent(agent);
+    }
+
+    // Native-level crashes (OpenTUI/Bun faults, terminal kill) bypass every JS
+    // handler, so crash.log stays empty for them — the run marker is the only
+    // trace. Surface it so users know to report.
+    const prevRun = beginRunMarker();
+    if (prevRun) {
+      agent.messages.push({
+        id: Math.random().toString(36).slice(2, 10),
+        role: 'system',
+        content:
+          `⚠️ The previous nanoagent session (started ${prevRun.startedAt}) did not shut down cleanly — ` +
+          `this indicates a native-level crash. Please report it; any JS-level errors are in ${crashLogPath()}.`,
         timestamp: Date.now(),
       });
       syncFromAgent(agent);
