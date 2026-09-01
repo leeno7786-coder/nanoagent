@@ -1,3 +1,7 @@
+# Text files are stored with LF line endings so prettier --check passes
+# identically on Windows, macOS, and Linux checkouts (CI runs on Ubuntu).
+* text=auto eol=lf
+
 # Preserve binary files without CRLF line ending transformation
 *.tgz binary
 *.wasm binary

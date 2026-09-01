@@ -312,8 +312,14 @@ function execCmdAsync(
   cmd: string,
   ws: string,
   timeoutSeconds = 60,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts?: { mirrorOutput?: boolean }
 ): Promise<string> {
+  // Mirror child output to the real stdout/stderr by default (useful in `run`
+  // CLI mode). TUI callers (e.g. the `!` bang command) must disable it — a raw
+  // write would corrupt the alternate-screen frame; output is already captured
+  // and rendered from the returned result.
+  const mirror = opts?.mirrorOutput !== false;
   return new Promise((resolvePromise) => {
     if (!cmd.trim()) {
       resolvePromise(JSON.stringify({ ok: false, error: 'Command cannot be empty' }));
@@ -372,13 +378,13 @@ function execCmdAsync(
     child.stdout?.on('data', (data) => {
       const str = data.toString();
       stdoutBuffer += str;
-      process.stdout.write(str);
+      if (mirror) process.stdout.write(str);
     });
 
     child.stderr?.on('data', (data) => {
       const str = data.toString();
       stderrBuffer += str;
-      process.stderr.write(str);
+      if (mirror) process.stderr.write(str);
     });
 
     // Set up timeout to kill the child process explicitly
@@ -540,7 +546,12 @@ export const executeCommandTool: Tool = {
         ? Math.min(args.timeout, isDownloadOrBuild ? 600 : 300)
         : defaultTimeout;
 
-    return execCmdAsync(cmd, ws, userTimeout, signal);
+    return execCmdAsync(cmd, ws, userTimeout, signal, {
+      // Internal callers (e.g. the `!` bang command) pass mirrorOutput:false so
+      // raw child output never corrupts the TUI frame. Not part of the
+      // LLM-facing schema — the model can't toggle it accidentally.
+      mirrorOutput: (args as { mirrorOutput?: boolean }).mirrorOutput !== false,
+    });
   },
 };
 

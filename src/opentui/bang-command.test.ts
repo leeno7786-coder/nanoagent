@@ -3,7 +3,12 @@ import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { parseBangCommand, runBangCommand, formatBangResult, recordBangExchange } from './bang-command.js';
+import {
+  parseBangCommand,
+  runBangCommand,
+  formatBangResult,
+  recordBangExchange,
+} from './bang-command.js';
 import { createSecurityManager } from '../security/index.js';
 import type { Message } from '../types.js';
 
@@ -86,6 +91,37 @@ describe('runBangCommand', () => {
     expect(parsed.ok).toBe(true);
     expect(parsed.stdout).toContain('hi from bang');
     expect(parsed.code).toBe(0);
+  });
+
+  it('does NOT mirror child output to process.stdout/stderr (TUI frame safety)', async () => {
+    // The TUI renders the result from the returned JSON; a raw passthrough
+    // write would corrupt the OpenTUI alternate-screen frame.
+    const marker = 'bang-mirror-check-xyz';
+    const origOut = process.stdout.write.bind(process.stdout);
+    const origErr = process.stderr.write.bind(process.stderr);
+    let mirrored = '';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    process.stdout.write = ((chunk: any) => {
+      mirrored += String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    process.stderr.write = ((chunk: any) => {
+      mirrored += String(chunk);
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const result = await runBangCommand(`echo ${marker}`, { workspace: tmpDir });
+      const parsed = JSON.parse(result) as { ok: boolean; stdout: string };
+      // Output is still captured and returned…
+      expect(parsed.ok).toBe(true);
+      expect(parsed.stdout).toContain(marker);
+    } finally {
+      process.stdout.write = origOut;
+      process.stderr.write = origErr;
+    }
+    // …but never written straight to the terminal.
+    expect(mirrored).not.toContain(marker);
   });
 
   it('returns ok:false with an error for a non-existent command', async () => {
