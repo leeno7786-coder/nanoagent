@@ -32,7 +32,7 @@ import { useAppStore } from './app-store.js';
 import { useClipboardPaste } from './use-clipboard-paste.js';
 import { copyToClipboard } from '../clipboard.js';
 import { addNoticeMessage } from '../agent-messages.js';
-import { logWarn } from '../log.js';
+import { logWarn, logCrash } from '../log.js';
 
 /**
  * Messages the user can select/copy — shares ChatScreen's visibility filter
@@ -85,14 +85,19 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Resolve (or deny) a pending permission request so agent.run can never
-  // hang waiting on an orphaned promise.
+  // hang waiting on an orphaned promise. Guarded: a throw inside a keyboard
+  // handler is a fatal uncaughtException, so never let this escape.
   const resolvePendingPermission = useCallback((choice: 'allow' | 'always_allow' | 'deny') => {
-    const st = store.getState();
-    if (!st.pendingPermissionReq) return;
-    const resolve = st.permissionResolver;
-    st.setPermissionResolver(null);
-    st.setPendingPermissionReq(null);
-    resolve?.(choice);
+    try {
+      const st = store.getState();
+      if (!st.pendingPermissionReq) return;
+      const resolve = st.permissionResolver;
+      st.setPermissionResolver(null);
+      st.setPendingPermissionReq(null);
+      resolve?.(choice);
+    } catch (err) {
+      logCrash('permission-resolve', err);
+    }
   }, []);
 
   useEffect(() => {
@@ -972,7 +977,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
                 marginY={1}
               >
                 <text fg={theme.warningFg || theme.toolFg}>
-                  {`\u26A0\uFE0F PERMISSION REQUIRED: ${pendingPermissionReq.category.toUpperCase()} OPERATION`}
+                  {`\u26A0\uFE0F PERMISSION REQUIRED: ${(pendingPermissionReq.category || 'unknown').toUpperCase()} OPERATION`}
                 </text>
                 <text fg={theme.headerFg}>
                   {`Tool: ${pendingPermissionReq.tool}${pendingPermissionReq.command ? ` | Command: "${pendingPermissionReq.command}"` : ''}`}

@@ -11,6 +11,7 @@
 import { runCli } from './cli/index.js';
 import { printRootHelp } from './cli/help.js';
 import { ensureBunAvailable, installBun } from './bun-detect.js';
+import { logCrash } from './log.js';
 
 /** Registered cleanup callbacks invoked during graceful shutdown. */
 const cleanupFns: Array<() => void | Promise<void>> = [];
@@ -51,6 +52,7 @@ export function setupProcessHandlers(): void {
   process.on('SIGTERM', onSignal);
 
   process.on('unhandledRejection', (reason) => {
+    logCrash('unhandledRejection', reason);
     console.error(
       'Unhandled rejection:',
       reason instanceof Error ? reason.message : String(reason)
@@ -58,6 +60,7 @@ export function setupProcessHandlers(): void {
   });
 
   process.on('uncaughtException', (err) => {
+    logCrash('uncaughtException', err);
     console.error('Uncaught exception:', err.message);
     runCleanup().finally(() => process.exit(1));
   });
