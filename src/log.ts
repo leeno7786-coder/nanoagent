@@ -54,6 +54,55 @@ export function logCrash(kind: string, err: unknown, filePath?: string): void {
   }
 }
 
+export interface RunMarker {
+  pid: number;
+  startedAt: string;
+  cleanExit?: boolean;
+}
+
+export function runMarkerPath(): string {
+  return join(configDir(), 'last-run.json');
+}
+
+/**
+ * Session liveness marker for crashes that bypass every JS handler (native
+ * OpenTUI/Bun faults, SIGKILL, terminal kill): the `exit` event fires on
+ * normal shutdown and on process.exit(), but NOT on a hard native crash, so
+ * a marker without cleanExit means the previous run died at the native level.
+ *
+ * Returns the previous run's marker when it indicates an unclean exit.
+ */
+export function beginRunMarker(filePath?: string, registerExitHook = true): RunMarker | null {
+  try {
+    const path = filePath ?? runMarkerPath();
+    let previous: RunMarker | null = null;
+    if (existsSync(path)) {
+      try {
+        const prev = JSON.parse(readFileSync(path, 'utf-8')) as RunMarker;
+        if (prev && typeof prev === 'object' && !prev.cleanExit) previous = prev;
+      } catch {
+        /* unreadable marker counts as unclean history we can't parse */
+      }
+    }
+    const dir = dirname(path);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const marker: RunMarker = { pid: process.pid, startedAt: new Date().toISOString() };
+    writeFileSync(path, JSON.stringify(marker), 'utf-8');
+    if (registerExitHook) {
+      process.on('exit', () => {
+        try {
+          writeFileSync(path, JSON.stringify({ ...marker, cleanExit: true }), 'utf-8');
+        } catch {
+          /* best-effort */
+        }
+      });
+    }
+    return previous;
+  } catch {
+    return null;
+  }
+}
+
 function debugEnabled(): boolean {
   return !!process.env.QWEN_DEBUG_LLM;
 }

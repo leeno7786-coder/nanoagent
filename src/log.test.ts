@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { logCrash, crashLogPath } from './log.js';
+import { logCrash, crashLogPath, beginRunMarker, runMarkerPath } from './log.js';
 
 describe('logCrash', () => {
   let tmp: string;
@@ -61,5 +61,52 @@ describe('logCrash', () => {
   it('exposes the default path under the home config dir', () => {
     expect(crashLogPath()).toContain('.nanoagent');
     expect(crashLogPath()).toContain('crash.log');
+  });
+});
+
+describe('beginRunMarker', () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'nanoagent-runmarker-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('returns null on a first run and writes a fresh marker', () => {
+    const path = join(tmp, 'last-run.json');
+    expect(beginRunMarker(path, false)).toBeNull();
+    const marker = JSON.parse(readFileSync(path, 'utf-8'));
+    expect(marker.pid).toBe(process.pid);
+    expect(marker.cleanExit).toBeUndefined();
+  });
+
+  it('reports the previous run when it never marked a clean exit', () => {
+    const path = join(tmp, 'last-run.json');
+    writeFileSync(path, JSON.stringify({ pid: 1234, startedAt: '2026-09-01T00:00:00Z' }), 'utf-8');
+    const prev = beginRunMarker(path, false);
+    expect(prev?.pid).toBe(1234);
+    expect(prev?.startedAt).toBe('2026-09-01T00:00:00Z');
+  });
+
+  it('ignores a previous run that exited cleanly', () => {
+    const path = join(tmp, 'last-run.json');
+    writeFileSync(
+      path,
+      JSON.stringify({ pid: 1234, startedAt: '2026-09-01T00:00:00Z', cleanExit: true }),
+      'utf-8'
+    );
+    expect(beginRunMarker(path, false)).toBeNull();
+  });
+
+  it('never throws on an unwritable path', () => {
+    expect(() => beginRunMarker('\0invalid', false)).not.toThrow();
+  });
+
+  it('exposes the default marker path under the home config dir', () => {
+    expect(runMarkerPath()).toContain('.nanoagent');
+    expect(runMarkerPath()).toContain('last-run.json');
   });
 });

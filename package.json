@@ -1,6 +1,6 @@
 {
   "name": "@omega3_0/nanoagent",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Ultra-lightweight, scalable CLI/TUI coding agent optimized for tiny local models & remote runtimes",
   "module": "dist/opentui/index.js",
   "type": "module",
@@ -90,8 +90,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@openrouter/sdk": "^0.13.7",
-    "@opentui/core": "^0.2.1",
-    "@opentui/react": "^0.2.1",
+    "@opentui/core": "0.5.9",
+    "@opentui/react": "0.5.9",
     "clipboardy": "^5.3.1",
     "diff": "^7.0.0",
     "dotenv": "^17.4.2",

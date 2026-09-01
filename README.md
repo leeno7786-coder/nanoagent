@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.2.0** (`@omega3_0/nanoagent`) — the home state directory is now `~/.nanoagent`: saved API keys, sessions, input history, todos, skills, and the crash log all live there. Existing `~/.qwen-agent-tui` content keeps working (legacy read fallback, one-time `.env` migration on first key save, sessions/history merged from both locations). The MCP client name and OpenRouter referer were renamed to nanoagent as well; includes 2.1.22 (crash diagnostics) and earlier fixes.
+Current release: **2.2.1** (`@omega3_0/nanoagent`) — upgrades the TUI renderer from `@opentui/*` 0.2.1 to 0.5.9 (three months of upstream fixes on the native Zig core) after a fatal crash on permission-accept that bypassed every JS handler, and adds a session liveness marker (`~/.nanoagent/last-run.json`): if nanoagent dies at the native level — where no exception handler can run — the next launch shows a notice so the crash is always visible and reportable; includes 2.2.0 (`~/.nanoagent` home dir migration) and earlier fixes.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
