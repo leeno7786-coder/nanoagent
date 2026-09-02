@@ -1,4 +1,5 @@
 import { sanitizeForTui } from './sanitize.js';
+import { getShellInfo } from '../tools/exec-tools.js';
 
 export interface ToolDisplayBlock {
   action: string;
@@ -28,7 +29,12 @@ function normalizePath(path?: string): string {
 }
 
 function shellActionLabel(): string {
-  return process.platform === 'win32' ? 'PowerShell' : 'Bash';
+  if (process.platform !== 'win32') return 'Bash';
+  // Match the shell execute_command actually uses (Git Bash when present).
+  const type = getShellInfo().type;
+  if (type === 'powershell') return 'PowerShell';
+  if (type === 'cmd') return 'Cmd';
+  return 'Bash';
 }
 
 const ACTION_LABELS: Record<string, string> = {
