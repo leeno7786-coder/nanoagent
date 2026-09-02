@@ -1,5 +1,6 @@
 import type { Config } from './types.js';
 import { isSmallModelFromConfig } from './model-runtime.js';
+import { getShellInfo } from './tools/exec-tools.js';
 
 export interface PromptContext {
   workspace: string;
@@ -134,10 +135,27 @@ export function buildSystemPrompt(cfg: Config, ctx: PromptContext): string {
 
   const small = isSmallModelFromConfig(cfg);
   const base = small ? buildSmallModelPrompt(ctx) : buildLargeModelPrompt(ctx, cfg);
+  // Name the ACTUAL shell execute_command uses — on Windows getShellInfo()
+  // prefers Git Bash, so claiming "PowerShell" here makes the model emit
+  // PowerShell one-liners that bash rejects with syntax errors.
   const platformNote =
     process.platform === 'win32'
-      ? 'Platform: Windows — shell commands run in PowerShell.'
+      ? `Platform: Windows — execute_command runs commands in ${describeShell()}. Use that shell's syntax.`
       : undefined;
 
   return appendPromptExtras(base, { ...ctx, platformNote }, small);
+}
+
+function describeShell(): string {
+  const shell = getShellInfo();
+  switch (shell.type) {
+    case 'git-bash':
+      return 'bash (Git Bash), with POSIX syntax — not PowerShell';
+    case 'powershell':
+      return 'PowerShell';
+    case 'cmd':
+      return 'cmd.exe';
+    default:
+      return shell.type;
+  }
 }

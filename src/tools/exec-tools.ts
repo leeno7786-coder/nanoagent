@@ -5,6 +5,7 @@ import { resolve, join } from 'path';
 import type { Tool } from './shared.js';
 import { NULL_BYTE_RE, REPLACEMENT_CHAR_RE, getSanitizedEnv } from './shared.js';
 import { DANGEROUS_COMMAND_PATTERNS } from '../security/patterns.js';
+import { isTuiActive } from '../log.js';
 
 interface ShellInfo {
   executable: string;
@@ -318,11 +319,14 @@ function execCmdAsync(
     onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void;
   }
 ): Promise<string> {
-  // Mirror child output to the real stdout/stderr by default (useful in `run`
-  // CLI mode). TUI callers (e.g. the `!` bang command) must disable it — a raw
-  // write would corrupt the alternate-screen frame; output is already captured
-  // and rendered from the returned result.
-  const mirror = opts?.mirrorOutput !== false;
+  // Mirror child output to the real stdout/stderr in CLI/headless mode
+  // (useful in `run` CLI mode). Mirroring is ALWAYS suppressed while the TUI
+  // is active — a raw write corrupts the alternate-screen frame (this was the
+  // "display garbles, then user Ctrl+C's out" crash): agent-driven tool calls
+  // never pass mirrorOutput, so a default-true mirror leaks child output
+  // straight into the TUI. Output is already captured in the returned result
+  // and rendered by the UI from there.
+  const mirror = opts?.mirrorOutput !== false && !isTuiActive();
   const onOutput = opts?.onOutput;
   return new Promise((resolvePromise) => {
     if (!cmd.trim()) {
