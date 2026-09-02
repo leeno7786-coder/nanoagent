@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.2.3** (`@omega3_0/nanoagent`) — fixes tool output leaking raw into the TUI frame (the "garbled display, then Ctrl+C" crash): child stdout/stderr mirroring is now suppressed whenever the TUI is active, not just for the `!` bang command; the Windows system prompt now names the actual shell (Git Bash, not PowerShell) so the model stops emitting un-runnable PowerShell one-liners; includes 2.2.2 (stderr tee + permission banner fix) and earlier fixes.
+Current release: **2.2.4** (`@omega3_0/nanoagent`) — fixes the write/edit tools mangling files: tool-call arguments are no longer token-truncated before execution for file-payload tools, all three write tools refuse truncated/unparseable arguments instead of writing partial or empty content, and echoed `NNNN| ` line-number prefixes from numbered reads are stripped from write/edit payloads (reported via `line_number_echo_stripped`); includes 2.2.3 (TUI output-leak fix) and earlier fixes.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
