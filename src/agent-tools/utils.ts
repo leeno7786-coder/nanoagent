@@ -16,11 +16,15 @@ export async function checkSubAgentConsent(
 
 export function parseToolArgs(
   tc: { name: string; arguments: string },
-  budget = 4000
+  budget = 0
 ): Record<string, unknown> {
   let argsStr = typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments);
-  // Size precheck: cap oversized tool-call arguments before parsing so
-  // the model doesn't permanently load an unbounded string into history.
+  // Size precheck: optionally cap oversized tool-call arguments before parsing
+  // so the model doesn't permanently load an unbounded string into history.
+  // Default is 0 (off): execution needs the FULL arguments — truncating here
+  // is what silently mangled files written via write_file/edit_file. History
+  // capping is handled upstream in agent/run.ts (which also exempts the
+  // file-payload tools), so parse-time capping is only for explicit callers.
   if (budget > 0 && argsStr.length > 0) {
     const capped = capToolResultForLlm(argsStr, { maxTokens: budget, modelId: undefined });
     if (capped !== argsStr && capped.includes('truncated')) {

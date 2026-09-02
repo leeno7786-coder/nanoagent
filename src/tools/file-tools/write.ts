@@ -15,6 +15,58 @@ function matchEol(hostText: string, value: string): string {
   return hostText.includes('\r\n') ? value.replace(/\r?\n/g, '\r\n') : value;
 }
 
+/**
+ * read_file prefixes lines with "NNNN| " for small models, and small models
+ * frequently echo those prefixes back into write_file/edit_file payloads —
+ * corrupting files with line-number garbage ("extra stuff gets added").
+ * Strip the prefixes, but ONLY when nearly every content line carries one
+ * AND the numbers are strictly increasing (a genuine read_file echo), so
+ * legitimate content with an occasional "12| x" line is left untouched.
+ */
+const LINE_NUMBER_ECHO_RE = /^\s{0,6}\d{1,5}\| ?/;
+
+export function stripLineNumberEcho(value: string): { text: string; stripped: boolean } {
+  if (!value.includes('|')) return { text: value, stripped: false };
+  const lines = value.split('\n');
+  const nonEmpty: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().length > 0) nonEmpty.push(i);
+  }
+  if (nonEmpty.length < 2) return { text: value, stripped: false };
+  const nums: number[] = [];
+  let matching = 0;
+  for (const i of nonEmpty) {
+    const m = lines[i].match(/^\s{0,6}(\d{1,5})\| ?/);
+    if (m) {
+      matching++;
+      nums.push(parseInt(m[1], 10));
+    }
+  }
+  if (matching / nonEmpty.length < 0.8) return { text: value, stripped: false };
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i] <= nums[i - 1]) return { text: value, stripped: false };
+  }
+  return { text: lines.map((l) => l.replace(LINE_NUMBER_ECHO_RE, '')).join('\n'), stripped: true };
+}
+
+/**
+ * Refuse to run a file-mutating tool whose arguments were truncated upstream
+ * (token-budget cap) or failed to parse. Writing partial/garbage content
+ * silently corrupts the workspace — a visible, recoverable error is better.
+ */
+function argsIntegrityError(tool: string, args: Record<string, unknown>): string | null {
+  if (args.truncated === true) {
+    return JSON.stringify({
+      ok: false,
+      error:
+        `${tool} arguments were truncated before reaching the tool (payload too large). ` +
+        'Nothing was written. Split the change into smaller pieces: write_file the first ' +
+        'part, then append the rest with edit_file.',
+    });
+  }
+  return null;
+}
+
 export const writeFileTool: Tool = {
   name: 'write_file',
   description: 'Write content to a file',
@@ -28,6 +80,17 @@ export const writeFileTool: Tool = {
   },
   execute: (args, ws, cfg) => {
     try {
+      const integrity = argsIntegrityError('write_file', args);
+      if (integrity) return integrity;
+      if (typeof args.content !== 'string') {
+        return JSON.stringify({
+          ok: false,
+          error:
+            "Missing or invalid 'content' — the tool-call arguments could not be parsed " +
+            '(usually malformed JSON: unescaped newlines or quotes). Nothing was written. ' +
+            'Retry with valid JSON, or split a large file into smaller writes.',
+        });
+      }
       const p = safe(args.path, ws, cfg);
 
       if (cfg?.securityManager) {
@@ -47,7 +110,8 @@ export const writeFileTool: Tool = {
       } catch {
         // new file
       }
-      const newText = String(args.content ?? '');
+      const echo = stripLineNumberEcho(args.content);
+      const newText = echo.text;
       const rewroteEol =
         existed && oldText.includes('\r\n') && !newText.includes('\r\n')
           ? matchEol(oldText, newText) !== newText
@@ -64,6 +128,7 @@ export const writeFileTool: Tool = {
         diff,
         bytes: Buffer.byteLength(newText),
         eol_rewritten: rewroteEol ? true : undefined,
+        line_number_echo_stripped: echo.stripped ? true : undefined,
       });
     } catch (e: unknown) {
       return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
@@ -86,6 +151,17 @@ export const editFileTool: Tool = {
   },
   execute: (args, ws, cfg) => {
     try {
+      const integrity = argsIntegrityError('edit_file', args);
+      if (integrity) return integrity;
+      if (typeof args.new_text !== 'string') {
+        return JSON.stringify({
+          ok: false,
+          error:
+            "Missing or invalid 'new_text' — the tool-call arguments could not be parsed " +
+            '(usually malformed JSON: unescaped newlines or quotes). Nothing was written. ' +
+            'Retry with valid JSON.',
+        });
+      }
       const p = safe(args.path, ws, cfg);
 
       if (cfg?.securityManager) {
@@ -94,7 +170,9 @@ export const editFileTool: Tool = {
           return JSON.stringify({ ok: false, error: result.error || 'Access denied' });
         }
       }
-      const oldText = String(args.old_text ?? '');
+      const oldEcho = stripLineNumberEcho(String(args.old_text ?? ''));
+      const newEcho = stripLineNumberEcho(args.new_text);
+      const oldText = oldEcho.text;
       if (!oldText) return JSON.stringify({ ok: false, error: 'old_text cannot be empty' });
 
       if (!existsSync(p)) {
@@ -156,7 +234,7 @@ export const editFileTool: Tool = {
         }
 
         if (matchStarts.length > 0) {
-          const newTextValue = matchEol(text, String(args.new_text ?? ''));
+          const newTextValue = matchEol(text, newEcho.text);
           const nextLines = [...fileLines];
           // Splice from the bottom up so earlier indexes stay valid.
           for (let m = matchStarts.length - 1; m >= 0; m--) {
@@ -178,6 +256,7 @@ export const editFileTool: Tool = {
             diff,
             replacements: matchStarts.length,
             fuzzy_match: true,
+            line_number_echo_stripped: oldEcho.stripped || newEcho.stripped ? true : undefined,
           });
         }
 
@@ -188,7 +267,7 @@ export const editFileTool: Tool = {
         });
       }
 
-      const replacementText = matchEol(text, String(args.new_text ?? ''));
+      const replacementText = matchEol(text, newEcho.text);
       const next = args.replace_all
         ? text.split(oldText).join(replacementText)
         : text.replace(oldText, replacementText);
@@ -203,6 +282,7 @@ export const editFileTool: Tool = {
         removed,
         diff,
         replacements: args.replace_all ? text.split(oldText).length - 1 : 1,
+        line_number_echo_stripped: oldEcho.stripped || newEcho.stripped ? true : undefined,
       });
     } catch (e: unknown) {
       return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
@@ -232,6 +312,17 @@ export const editFileLinesTool: Tool = {
   },
   execute: (args, ws, cfg) => {
     try {
+      const integrity = argsIntegrityError('edit_file_lines', args);
+      if (integrity) return integrity;
+      if (typeof args.new_text !== 'string') {
+        return JSON.stringify({
+          ok: false,
+          error:
+            "Missing or invalid 'new_text' — the tool-call arguments could not be parsed " +
+            '(usually malformed JSON: unescaped newlines or quotes). Nothing was written. ' +
+            'Retry with valid JSON.',
+        });
+      }
       const p = safe(args.path, ws, cfg);
 
       if (cfg?.securityManager) {
@@ -288,7 +379,8 @@ export const editFileLinesTool: Tool = {
           error: `start_line ${startLine} exceeds file length (${lines.length} lines)`,
         });
       }
-      const newText = matchEol(text, String(args.new_text ?? ''));
+      const echo = stripLineNumberEcho(args.new_text as string);
+      const newText = matchEol(text, echo.text);
       const before = lines.slice(0, startLine - 1);
       const after = lines.slice(Math.min(endLine, lines.length));
       // Preserve the file's line endings — splitting on /\r?\n/ strips CR,
@@ -309,6 +401,7 @@ export const editFileLinesTool: Tool = {
         end_line: Math.min(endLine, lines.length),
         lines_removed: Math.min(endLine, lines.length) - startLine + 1,
         lines_added: newText ? newText.split('\n').length : 0,
+        line_number_echo_stripped: echo.stripped ? true : undefined,
       });
     } catch (e: unknown) {
       return JSON.stringify({ ok: false, error: (e as { message?: string }).message });

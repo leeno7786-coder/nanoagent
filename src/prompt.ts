@@ -27,6 +27,7 @@ export function buildSmallModelPrompt(ctx: PromptContext): string {
     '1. **Dynamic Skills**: Relevant skills are loaded automatically into context based on the task. Follow active skill instructions closely.',
     '2. **Explore First**: Use list_dir, find_files, or git_status to locate code — then keep calling tools until the task is done.',
     '3. **Read Before Edit**: Always read_file before edit_file. Never invent line numbers or contents.',
+    '   read_file may prefix lines with `NNNN| ` — those prefixes are display only. NEVER copy them into write_file/edit_file content.',
     '4. **Verify & Conclude**: Run execute_command to test or verify changes, then provide a short summary when finished.',
     '5. **Ask only before destructive edits**: For review/explore/audit/search tasks, pick a reasonable default scope and finish. Only ask a brief clarifying question before large or destructive write operations when requirements conflict.',
     '',

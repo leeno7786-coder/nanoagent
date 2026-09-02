@@ -46,6 +46,29 @@ export function formatApproxTokens(n: number): string {
   return String(Math.max(0, Math.round(n)));
 }
 
+/**
+ * Tools whose arguments ARE the file payload. Truncating these before
+ * execution silently writes partial/garbage content to disk (the "mangled
+ * file" bug), so they are exempt from argument capping — correctness of the
+ * workspace beats context economy. Other tools' args keep the budget.
+ */
+const FILE_PAYLOAD_TOOLS = new Set(['write_file', 'edit_file', 'edit_file_lines']);
+
+/**
+ * Cap tool-call ARGUMENTS before they are persisted to history / executed.
+ * Same budget logic as capToolResultForLlm, but never truncates file-payload
+ * tools (write_file / edit_file / edit_file_lines).
+ */
+export function capToolArgumentsForLlm(
+  toolName: string,
+  args: string,
+  opts: ToolResultBudgetOpts
+): string {
+  if (opts.maxTokens <= 0 || !args) return args;
+  if (FILE_PAYLOAD_TOOLS.has(toolName)) return args;
+  return capToolResultForLlm(args, opts);
+}
+
 export function truncationMarker(keptTokens: number, totalTokens: number): string {
   return `[truncated: kept ~${formatApproxTokens(keptTokens)} tokens of ~${formatApproxTokens(totalTokens)}; re-read a narrower range]`;
 }
