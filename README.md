@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.2.4** (`@omega3_0/nanoagent`) — fixes the write/edit tools mangling files: tool-call arguments are no longer token-truncated before execution for file-payload tools, all three write tools refuse truncated/unparseable arguments instead of writing partial or empty content, and echoed `NNNN| ` line-number prefixes from numbered reads are stripped from write/edit payloads (reported via `line_number_echo_stripped`); includes 2.2.3 (TUI output-leak fix) and earlier fixes.
+Current release: **2.2.5** (`@omega3_0/nanoagent`) — fixes two real bugs uncovered by the long-standing "pre-existing" test failures: the child-process env sanitizer no longer breaks git when the environment injects `GIT_CONFIG_COUNT/KEY_n/VALUE_n` (the family is now all-or-nothing), and explicit CLI/programmatic options (`--base-url`, `--model`, …) now beat the home config file instead of being silently overwritten by it; test suites now scrub every trusted `.env` location; includes 2.2.4 (write/edit tool integrity) and earlier fixes.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -354,6 +354,24 @@ src/
 ---
 
 ## Changelog
+
+### 2.2.5 — Pre-existing test failures were real bugs
+
+The 7 "flaky" local failures turned out to be two genuine bugs plus a test gap:
+
+- _*GIT_CONFIG_* family stripping_* — environments that inject git config via `GIT_CONFIG_COUNT/KEY_n/VALUE_n` (harnesses, CI) had only the `KEY_n` members stripped by the sensitive-var filter, and git dies on the partial family ("missing config key"). `getSanitizedEnv` now treats the family as all-or-nothing.
+- **Config precedence** — `~/.nanogent.json` silently overwrote explicitly-passed options, so an explicit `--base-url` could be replaced by the saved `/connect` selection and the catalog would resolve the wrong provider's API key. Explicit options now win.
+- **Test hermeticity** — scrub lists now cover every trusted `.env` location via `configDir()`/`legacyConfigDir()` (the 2.2.0 rename had added `~/.nanoagent/.env` without the tests knowing).
+
+Full suite is green locally for the first time: 909 pass / 0 fail.
+
+### 2.2.4 — Write/edit tool integrity
+
+Fixes the "models mangle files" complaint, three ways:
+
+- **No more silent argument truncation** — tool-call arguments were token-capped (~4000) before execution; for `write_file` that cut the content field itself, and a broken parse made `write_file` empty the target file. File-payload tools are exempt from capping; execution always sees full arguments.
+- **Refusal instead of corruption** — `write_file` / `edit_file` / `edit_file_lines` reject truncated or unparseable arguments with an actionable error instead of writing partial/empty content.
+- **Line-number echo stripping** — small models copied `read_file`'s `NNNN| ` display prefixes into write/edit payloads; the tools now strip them (only on a strict ≥80%-of-lines, strictly-increasing match) and report `line_number_echo_stripped`.
 
 ### 2.2.3 — The "ghost crash" fix
 
