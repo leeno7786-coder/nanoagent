@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.2.1** (`@omega3_0/nanoagent`) — upgrades the TUI renderer from `@opentui/*` 0.2.1 to 0.5.9 (three months of upstream fixes on the native Zig core) after a fatal crash on permission-accept that bypassed every JS handler, and adds a session liveness marker (`~/.nanoagent/last-run.json`): if nanoagent dies at the native level — where no exception handler can run — the next launch shows a notice so the crash is always visible and reportable; includes 2.2.0 (`~/.nanoagent` home dir migration) and earlier fixes.
+Current release: **2.2.2** (`@omega3_0/nanoagent`) — the launcher now tees the child's stderr to `~/.nanoagent/stderr.log` (bounded), so native Bun/OpenTUI panics that `abort()` past every JS handler are captured with their full panic text; also fixes the permission banner's `[Y]/[A]/[N]` row rendering under OpenTUI 0.5.9 (explicit `flexDirection="row"`); includes 2.2.1 (OpenTUI 0.5.9 + session liveness marker) and earlier fixes.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 

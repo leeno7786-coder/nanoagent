@@ -8,7 +8,7 @@ import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
-import { resolveNanoagentLaunch, findBundledBun } from './run-nanoagent.mjs';
+import { resolveNanoagentLaunch, findBundledBun, teeStderrToCrashLog } from './run-nanoagent.mjs';
 
 const root = '/pkg/nanoagent';
 const repoRoot = join(import.meta.dir, '..');
@@ -120,5 +120,29 @@ describe('nanoagent launcher process', () => {
     await Promise.all([bunHelp.exited, launcherHelp.exited]);
     expect(launcherOut).toBe(bunOut);
     expect(launcherOut.length).toBeGreaterThan(20);
+  });
+});
+
+describe('teeStderrToCrashLog', () => {
+  it('mirrors child stderr into the bounded log file', async () => {
+    const { spawn } = await import('child_process');
+    const { readFileSync } = await import('fs');
+    const dir = mkdtempSync(join(tmpdir(), 'nanoagent-stderr-tee-'));
+    const logPath = join(dir, 'stderr.log');
+    const child = spawn(process.execPath, ['-e', 'process.stderr.write("panic: test fault")'], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    teeStderrToCrashLog(child, logPath);
+    await new Promise((resolve) => child.on('exit', resolve));
+    // The 'data' handler writes synchronously per chunk; give the last chunk a tick.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(readFileSync(logPath, 'utf-8')).toContain('panic: test fault');
+  });
+
+  it('does nothing when the child has no stderr pipe', () => {
+    const { spawn } = require('child_process');
+    const child = spawn(process.execPath, ['-e', ''], { stdio: ['ignore', 'ignore', 'ignore'] });
+    expect(() => teeStderrToCrashLog(child, join(tmpdir(), 'unused.log'))).not.toThrow();
+    child.kill();
   });
 });
