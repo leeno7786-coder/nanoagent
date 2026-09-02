@@ -127,10 +127,24 @@ export function getSanitizedEnv(): NodeJS.ProcessEnv {
   const sanitized: NodeJS.ProcessEnv = {};
   const sensitivePattern = new RegExp(SENSITIVE_ENV_PATTERNS.map((p) => p.source).join('|'), 'i');
 
+  // The GIT_CONFIG_COUNT / GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n family is
+  // parsed by git as a single unit ("command-line config"). KEY_n matches the
+  // sensitive /KEY/i filter while COUNT and VALUE_n don't — stripping only
+  // part of the family makes EVERY git child die with "missing config key
+  // GIT_CONFIG_KEY_0". All-or-nothing: if any member is filtered, drop them
+  // all; otherwise keep the complete set.
+  const GIT_CONFIG_FAMILY = /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/i;
+  const dropGitConfigFamily = Object.keys(process.env).some(
+    (k) => GIT_CONFIG_FAMILY.test(k) && sensitivePattern.test(k)
+  );
+
   for (const [key, value] of Object.entries(process.env)) {
     // Always include essential Node.js environment variables
     if (['PATH', 'HOME', 'USERPROFILE', 'TMP', 'TEMP', 'SHELL', 'COMSPEC'].includes(key)) {
       sanitized[key] = value;
+      continue;
+    }
+    if (dropGitConfigFamily && GIT_CONFIG_FAMILY.test(key)) {
       continue;
     }
     // Filter out sensitive variables

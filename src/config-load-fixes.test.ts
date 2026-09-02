@@ -9,14 +9,39 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, renameSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { loadConfig, getRealEnv } from './config/load.js';
+import { configDir, legacyConfigDir } from './config/paths.js';
 
 let tmp: string;
 const origCwd = process.cwd();
 const savedEnv: Record<string, string | undefined> = {};
+
+// Trusted home-dir .env files are honored BY DESIGN (that's where saved keys
+// live) — so these tests must move them aside to stay hermetic on machines
+// where the user has real keys/endpoints saved. Paths come from paths.ts so
+// the list tracks renames (2.2.0 added ~/.nanoagent/.env).
+const TRUSTED_ENV_FILES = [join(configDir(), '.env'), join(legacyConfigDir(), '.env')];
+let envFileBackups: (string | null)[] = [];
+
+function backupTrustedEnvFiles() {
+  envFileBackups = TRUSTED_ENV_FILES.map((p) => {
+    if (!existsSync(p)) return null;
+    const backup = p + '.testbackup';
+    renameSync(p, backup);
+    return backup;
+  });
+}
+
+function restoreTrustedEnvFiles() {
+  TRUSTED_ENV_FILES.forEach((p, i) => {
+    const backup = envFileBackups[i];
+    if (backup && existsSync(backup)) renameSync(backup, p);
+  });
+  envFileBackups = [];
+}
 
 function saveEnv(...keys: string[]) {
   for (const k of keys) savedEnv[k] = process.env[k];
@@ -30,11 +55,13 @@ function restoreEnv() {
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'nanogent-cfg-'));
+  backupTrustedEnvFiles();
 });
 
 afterEach(() => {
   process.chdir(origCwd);
   restoreEnv();
+  restoreTrustedEnvFiles();
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -627,5 +654,52 @@ describe('promptCache from config/env', () => {
     process.chdir(tmp);
     const cfg = loadConfig({ workspace: tmp });
     expect(cfg.promptCache).toBe(true);
+  });
+});
+
+describe('explicit options beat config files', () => {
+  function isolateHome() {
+    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH');
+    const fakeHome = join(tmp, 'home');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+    delete process.env.HOMEDRIVE;
+    delete process.env.HOMEPATH;
+    return fakeHome;
+  }
+
+  it('an explicitly-passed baseURL/model is not clobbered by the home config', () => {
+    const fakeHome = isolateHome();
+    // The home config pins a different provider — this is what made the
+    // S-001 API-key isolation tests pick up a real OpenRouter key: the
+    // explicit baseURL lost to the home file, then the catalog resolved
+    // the key for the WRONG provider.
+    writeFileSync(
+      join(fakeHome, '.nanogent.json'),
+      JSON.stringify({
+        provider: 'openrouter',
+        model: 'home-model',
+        baseURL: 'https://openrouter.ai/api/v1',
+      })
+    );
+    process.chdir(tmp);
+    const cfg = loadConfig({ baseURL: 'https://api.mistral.ai/v1', model: 'mistral-large-latest' });
+    expect(cfg.baseURL).toBe('https://api.mistral.ai/v1');
+    expect(cfg.model).toBe('mistral-large-latest');
+    // No key may be resolved for a provider that has none configured.
+    expect(cfg.apiKey ?? null).toBe(null);
+  });
+
+  it('home config still applies when no explicit option is passed', () => {
+    const fakeHome = isolateHome();
+    writeFileSync(
+      join(fakeHome, '.nanogent.json'),
+      JSON.stringify({ model: 'home-model', baseURL: 'https://openrouter.ai/api/v1' })
+    );
+    process.chdir(tmp);
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.model).toBe('home-model');
+    expect(cfg.baseURL).toBe('https://openrouter.ai/api/v1');
   });
 });
