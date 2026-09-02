@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.2.2** (`@omega3_0/nanoagent`) — the launcher now tees the child's stderr to `~/.nanoagent/stderr.log` (bounded), so native Bun/OpenTUI panics that `abort()` past every JS handler are captured with their full panic text; also fixes the permission banner's `[Y]/[A]/[N]` row rendering under OpenTUI 0.5.9 (explicit `flexDirection="row"`); includes 2.2.1 (OpenTUI 0.5.9 + session liveness marker) and earlier fixes.
+Current release: **2.2.3** (`@omega3_0/nanoagent`) — fixes tool output leaking raw into the TUI frame (the "garbled display, then Ctrl+C" crash): child stdout/stderr mirroring is now suppressed whenever the TUI is active, not just for the `!` bang command; the Windows system prompt now names the actual shell (Git Bash, not PowerShell) so the model stops emitting un-runnable PowerShell one-liners; includes 2.2.2 (stderr tee + permission banner fix) and earlier fixes.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
