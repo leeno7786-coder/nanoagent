@@ -357,7 +357,8 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   // clobber an explicit --model / --base-url / apiKey / etc. (Previously a
   // home config silently overrode explicitly-passed options.)
   if (explicitConfig) {
-    const { workspace: _explicitWs, ...rest } = explicitConfig;
+    const rest: Record<string, unknown> = { ...explicitConfig };
+    delete rest.workspace;
     Object.assign(cfg, rest);
   }
 
