@@ -353,6 +353,22 @@ src/
 
 ---
 
+## Changelog
+
+### 2.2.3 — The "ghost crash" fix
+
+The multi-release hunt for a crash that wasn't a crash. Symptom: accepting a permission prompt garbled the display and the process seemed to vanish. Each release added forensics until the evidence named the culprit:
+
+- **2.1.22** — `crash.log` for uncaught exceptions/rejections. Result: nothing logged — JS handlers never fired.
+- **2.2.0** — state dir moved to `~/.nanoagent`, giving diagnostics a stable home.
+- **2.2.1** — OpenTUI 0.2.1 → 0.5.9 upgrade + `last-run.json` liveness marker. Result: marker dirty, no `exit` event — looked like a native-level kill.
+- **2.2.2** — launcher tees child stderr to `~/.nanoagent/stderr.log`. **Breakthrough:** the log ended with `Received SIGINT, shutting down gracefully...` — users were Ctrl+C'ing out of a garbled frame, not experiencing a native panic at all.
+- **2.2.3** — the actual fix: the agent tool loop passed model args verbatim to `execute_command`, so output mirroring defaulted to ON and child stdout/stderr was written raw into the terminal while the TUI held the alternate screen, corrupting the frame. Mirroring is now suppressed whenever the TUI is active. Also fixed the root of the noise seen in the log: the Windows system prompt claimed "PowerShell" while `execute_command` actually runs Git Bash, so the model emitted PowerShell one-liners bash rejected with syntax errors.
+
+Also fixed along the way: permission banner `[Y]/[A]/[N]` row layout under OpenTUI 0.5.9 (2.2.2), `/connect` provider persistence and OpenRouter key validation (2.1.21).
+
+---
+
 ## License
 
 [MIT License](LICENSE)
