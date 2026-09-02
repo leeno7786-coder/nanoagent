@@ -8,7 +8,7 @@ import { rnd, now } from '../agent-utils.js';
 import { logError } from '../log.js';
 import { EARLY_STOP_CONTINUE_NUDGE, looksLikePrematureCheckin } from './early-stop.js';
 import {
-  capToolResultForLlm,
+  capToolArgumentsForLlm,
   resolveToolCallArgumentTokenBudget,
 } from '../llm/tool-result-budget.js';
 
@@ -433,7 +433,7 @@ export async function agentRun(
                 arguments: (() => {
                   const budget = resolveToolCallArgumentTokenBudget(agent.cfg);
                   return budget > 0
-                    ? capToolResultForLlm(tc.arguments, {
+                    ? capToolArgumentsForLlm(tc.name, tc.arguments, {
                         maxTokens: budget,
                         modelId: agent.cfg.model,
                       })
@@ -483,7 +483,7 @@ export async function agentRun(
           if (argBudget > 0) {
             assistantMsg.toolCalls = toolCallBuffers.map((tc) => ({
               ...tc,
-              arguments: capToolResultForLlm(tc.arguments, {
+              arguments: capToolArgumentsForLlm(tc.name, tc.arguments, {
                 maxTokens: argBudget,
                 modelId: agent.cfg.model,
               }),
@@ -849,7 +849,7 @@ export async function agentRun(
           name: tc.function.name,
           arguments:
             argBudget > 0
-              ? capToolResultForLlm(tc.function.arguments, {
+              ? capToolArgumentsForLlm(tc.function.name, tc.function.arguments, {
                   maxTokens: argBudget,
                   modelId: agent.cfg.model,
                 })
