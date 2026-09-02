@@ -998,7 +998,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
                 <text fg={theme.headerFg}>
                   {`Tool: ${pendingPermissionReq.tool}${pendingPermissionReq.command ? ` | Command: "${pendingPermissionReq.command}"` : ''}`}
                 </text>
-                <box marginY={0} marginTop={1} gap={3}>
+                <box flexDirection="row" marginY={0} marginTop={1} gap={3}>
                   <text fg={theme.accent || theme.userFg}>[Y] Allow Once</text>
                   <text fg={theme.successFg || theme.agentFg}>[A] Always Allow Target</text>
                   <text fg={theme.errorFg}>[N] Deny</text>

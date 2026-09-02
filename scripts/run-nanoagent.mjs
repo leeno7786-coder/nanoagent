@@ -7,7 +7,15 @@
  * is on PATH (TUI), otherwise Node + dist/main.js (headless).
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -99,6 +107,37 @@ function isMainModule() {
   return MAIN_NAMES.has(base);
 }
 
+/**
+ * Mirror the child's stderr to the terminal AND to ~/.nanoagent/stderr.log.
+ * Native Bun/OpenTUI panics print to stderr and then abort() — no JS handler
+ * inside the child runs — so this parent-side tee is the only way the panic
+ * text survives. Bounded: keeps the last 512 KB.
+ */
+const STDERR_LOG_MAX_BYTES = 512 * 1024;
+
+export function teeStderrToCrashLog(child, logPath) {
+  if (!child.stderr) return;
+  try {
+    const path = logPath ?? join(homedir(), '.nanoagent', 'stderr.log');
+    const dir = dirname(path);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    child.stderr.on('data', (chunk) => {
+      try {
+        process.stderr.write(chunk);
+        if (existsSync(path) && statSync(path).size > STDERR_LOG_MAX_BYTES) {
+          const tail = readFileSync(path, 'utf-8').slice(-(STDERR_LOG_MAX_BYTES / 2));
+          writeFileSync(path, `# truncated ${new Date().toISOString()}\n${tail}`, 'utf-8');
+        }
+        appendFileSync(path, chunk);
+      } catch {
+        /* best-effort */
+      }
+    });
+  } catch {
+    /* best-effort: never break the launch over logging */
+  }
+}
+
 async function main() {
   const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
   const srcMain = join(packageRoot, 'src', 'main.ts');
@@ -112,8 +151,11 @@ async function main() {
 
   if (launch.kind === 'bun-src' || launch.kind === 'bun-dist') {
     const child = spawn(launch.bunPath, [launch.entry, ...process.argv.slice(2)], {
-      stdio: 'inherit',
+      // stderr is piped (not inherited) so native-level Bun/OpenTUI panics —
+      // which bypass every JS handler inside the child — are still captured.
+      stdio: ['inherit', 'inherit', 'pipe'],
     });
+    teeStderrToCrashLog(child);
     const forward = (signal) => {
       try {
         child.kill(signal);
