@@ -241,11 +241,12 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     workspace: explicitWorkspace ? resolve(explicitWorkspace) : invocationCwd,
   };
 
+  let explicitConfig: Record<string, unknown> | undefined;
   if (pathOrConfig && typeof pathOrConfig === 'object') {
-    const filteredConfig = Object.fromEntries(
+    explicitConfig = Object.fromEntries(
       Object.entries(pathOrConfig).filter(([_, v]) => v !== undefined)
     );
-    Object.assign(cfg, filteredConfig);
+    Object.assign(cfg, explicitConfig);
   }
 
   loadEnv(cfg.workspace);
@@ -349,6 +350,16 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     cfg.workspace = invocationCwd;
   } else {
     cfg.workspace = resolve(cfg.workspace);
+  }
+
+  // Explicit programmatic/CLI options beat any config FILE values. The early
+  // assign above seeds workspace resolution; the home/project merges must not
+  // clobber an explicit --model / --base-url / apiKey / etc. (Previously a
+  // home config silently overrode explicitly-passed options.)
+  if (explicitConfig) {
+    const rest: Record<string, unknown> = { ...explicitConfig };
+    delete rest.workspace;
+    Object.assign(cfg, rest);
   }
 
   const scratchDir = join(cfg.workspace, '.nanoagent', 'scratchpad');

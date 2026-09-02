@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { loadConfig } from '../src/config';
+import { configDir, legacyConfigDir } from '../src/config/paths.js';
 import { join } from 'path';
 import { homedir } from 'os';
 import { existsSync, renameSync } from 'fs';
@@ -26,9 +27,13 @@ function restoreEnvFile(path: string, backupPath: string): void {
 }
 
 describe('config.ts', () => {
+  // Scrub every trusted .env location (derived from paths.ts so the list
+  // tracks the code — the 2.2.0 state-dir rename added ~/.nanoagent/.env,
+  // and missing it here let real user keys leak into these tests).
   const envFilePaths = [
     join(process.cwd(), '.env'),
-    join(homedir(), '.qwen-agent-tui', '.env'),
+    join(configDir(), '.env'),
+    join(legacyConfigDir(), '.env'),
     join(homedir(), '.env'),
   ];
   let originalEnv: NodeJS.ProcessEnv;
