@@ -133,6 +133,29 @@ describe('skills.ts - Skill Management', () => {
       const commands = getSkillCommands(skills);
       expect(commands).toEqual([]);
     });
+
+    it('should include disabled skills when includeDisabled is true', () => {
+      const skills = new Map([
+        [
+          'a-disabled',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { name: 'a-disabled', triggers: [], content: 'x', enabled: false } as any,
+        ],
+        [
+          'b-enabled',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { name: 'b-enabled', triggers: [], content: 'y', enabled: true } as any,
+        ],
+      ]);
+      const commands = getSkillCommands(skills, { includeDisabled: true });
+      expect(commands).toHaveLength(2);
+      const names = commands.map((c) => c.name).sort();
+      expect(names).toEqual(['/skill:a-disabled', '/skill:b-enabled']);
+      // Enabled entries surface before disabled ones.
+      expect(commands[0].name).toBe('/skill:b-enabled');
+      expect(commands[0].enabled).toBe(true);
+      expect(commands[1].enabled).toBe(false);
+    });
   });
 
   describe('getSkillNames', () => {

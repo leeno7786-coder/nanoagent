@@ -459,11 +459,14 @@ export function loadTemplates(): Map<string, Skill> {
   return map;
 }
 
-export function getSkillCommands(skills: Map<string, Skill>): SkillCommand[] {
+export function getSkillCommands(
+  skills: Map<string, Skill>,
+  opts: { includeDisabled?: boolean } = {}
+): SkillCommand[] {
   const commands: SkillCommand[] = [];
 
   for (const [name, skill] of skills) {
-    if (!skill.enabled) continue;
+    if (!skill.enabled && !opts.includeDisabled) continue;
     const commandName = skill.command || `skill:${name}`;
     const shortDesc = skill.description || '';
     const displayDesc = shortDesc.length > 80 ? shortDesc.slice(0, 77) + '...' : shortDesc;
@@ -473,10 +476,14 @@ export function getSkillCommands(skills: Map<string, Skill>): SkillCommand[] {
       description: displayDesc,
       fullDescription: skill.longDescription || skill.description || '',
       skillName: name,
+      enabled: !!skill.enabled,
     });
   }
 
-  commands.sort((a, b) => a.name.localeCompare(b.name));
+  commands.sort((a, b) => {
+    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
   return commands;
 }
 

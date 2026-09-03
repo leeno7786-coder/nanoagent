@@ -350,6 +350,10 @@ export interface SkillCommand {
   description: string;
   fullDescription: string;
   skillName: string;
+  /** True when the skill is enabled. Disabled skills still appear in the
+   * slash-command dropdown (marked as such) so users can find and toggle them,
+   * but invoking them is a no-op. */
+  enabled: boolean;
 }
 
 /**

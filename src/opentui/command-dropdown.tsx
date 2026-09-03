@@ -14,6 +14,7 @@ function itemId(index: number): string {
 interface Command {
   name: string;
   description: string;
+  enabled?: boolean;
 }
 
 const BUILTIN_COMMANDS: Command[] = [
@@ -79,7 +80,7 @@ export function CommandDropdown({
       return propSkillCommands;
     }
     const skills = loadSkills();
-    return getSkillCommands(skills);
+    return getSkillCommands(skills, { includeDisabled: true });
   }, [propSkillCommands]);
 
   const allCommands = useMemo(() => {
@@ -101,6 +102,7 @@ export function CommandDropdown({
       name: string;
       description: string;
       isSkill?: boolean;
+      enabled?: boolean;
       commandIndex?: number;
     }> = [];
 
@@ -127,6 +129,7 @@ export function CommandDropdown({
           name: c.name,
           description: c.description,
           isSkill: true,
+          enabled: c.enabled,
           commandIndex: commandIndex++,
         });
       }
@@ -164,6 +167,7 @@ export function CommandDropdown({
       const idx = Math.min(Math.max(selected, 0), commandCount - 1);
       const item = displayItems.find((i) => i.type === 'command' && i.commandIndex === idx);
       if (!item) return false;
+      if (item.isSkill === true && item.enabled === false) return false;
       onPick(item.name + suffix);
       return true;
     },
@@ -254,16 +258,25 @@ export function CommandDropdown({
 
         if (item.type === 'command') {
           const isSel = item.commandIndex === selected;
+          const isDisabled = item.isSkill === true && item.enabled === false;
           const padded = item.name.padEnd(pad, ' ');
+          const disabledTag = isDisabled ? ' [disabled]' : '';
+          const fg = isSel
+            ? theme.headerFg
+            : isDisabled
+              ? theme.mutedFg
+              : item.isSkill
+                ? theme.agentFg
+                : theme.inputFg;
 
           return (
             <text
               key={item.name}
               id={itemId(item.commandIndex ?? 0)}
-              fg={isSel ? theme.headerFg : item.isSkill ? theme.agentFg : theme.inputFg}
+              fg={fg}
               bg={isSel ? theme.bgSelected : undefined}
             >
-              {`${isSel ? '▸ ' : '  '}${padded}   ${item.description}`}
+              {`${isSel ? '▸ ' : '  '}${padded}   ${item.description}${disabledTag}`}
             </text>
           );
         }

@@ -268,6 +268,7 @@ export function ChatScreen({
   const permCfg = PERM_CONFIG[permissionMode] ?? PERM_CONFIG.ask;
 
   // Live `!` command run — terminal-style streaming block above the input.
+  const skillCommands = useAppStore((s) => s.skillCommands);
   const bangRun = useAppStore((s) => s.bangRun);
   const bangLiveLines = useMemo(() => {
     if (!bangRun || !bangRun.output) return [];
@@ -489,6 +490,7 @@ export function ChatScreen({
         theme={theme}
         onSubmit={handleSubmitLocal}
         onPick={handleDropdownPick}
+        skillCommands={skillCommands}
       />
 
       {/* Live `!` command block — streams output while the command runs.
