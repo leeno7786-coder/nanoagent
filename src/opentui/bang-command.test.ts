@@ -134,28 +134,17 @@ describe('runBangCommand', () => {
     expect(parsed.ok).toBe(false);
   });
 
-  it('blocks dangerous commands even without a security manager', async () => {
-    // No securityManager passed — only the canonical dangerous-pattern gate
-    // runs, but that gate alone must reject `rm -rf /` and friends.
-    const result = await runBangCommand('rm -rf /tmp/should-never-run', {
-      workspace: tmpDir,
-    });
-    const parsed = JSON.parse(result) as { ok: boolean; error: string };
-    expect(parsed.ok).toBe(false);
-    expect(parsed.error).toMatch(/blocked|not allowed|dangerous/i);
-  });
-
-  it('blocks commands the security manager marks as dangerous (sudo, ssh, etc.)', async () => {
-    // With the security manager present, the broader allow-list / dangerous
-    // gate applies. `sudo` is in DANGEROUS_COMMAND_PATTERNS.
+  it('runs commands the security manager allows', async () => {
+    // No dangerous-pattern screen: with no permission policy the command
+    // runs (it will fail because /tmp/should-never-run does not exist, but
+    // the failure is OS-level, not a validation block).
     const sm = createSecurityManager({}, tmpDir);
-    const result = await runBangCommand('sudo echo hi', {
+    const result = await runBangCommand('rmdir /tmp/should-never-run 2>nul', {
       workspace: tmpDir,
       securityManager: sm,
     });
-    const parsed = JSON.parse(result) as { ok: boolean; error: string };
-    expect(parsed.ok).toBe(false);
-    expect(parsed.error).toMatch(/blocked|not allowed|dangerous/i);
+    const parsed = JSON.parse(result) as { ok: boolean; error?: string };
+    expect(parsed.error ?? '').not.toMatch(/Command not allowed|dangerous pattern/i);
   });
 
   it('runs the command in the supplied workspace, not the cwd', async () => {

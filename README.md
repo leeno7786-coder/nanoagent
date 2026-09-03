@@ -307,7 +307,7 @@ nanoagent todo list
 
 Enabled by default:
 
-- **Command validation** — blocks dangerous shell patterns
+- **Command validation** — structural validator (empty check + your custom allow/block lists); the `PermissionManager` policy gate is the safety net
 - **Workspace sandboxing** — tools stay in the workspace unless you `/allow` a path
 - **Output sanitization** — redacts keys and tokens from tool output
 - **Untrusted project configs** — a cloned repo cannot auto-connect its own MCP servers or override trust via a workspace `.env`

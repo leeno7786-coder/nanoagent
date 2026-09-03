@@ -115,45 +115,22 @@ describe('SecurityManager', () => {
       }
     });
 
-    it('should block dangerous commands - rm -rf', () => {
-      const result = securityManager.validateCommand('rm -rf /');
-      expect(result.ok).toBe(false);
-      expect(result.error).toContain('blocked');
-    });
-
-    it('should block dangerous commands - dd', () => {
-      const result = securityManager.validateCommand('dd if=/dev/zero of=/dev/sda');
-      expect(result.ok).toBe(false);
-    });
-
-    it('should block dangerous commands - mkfs', () => {
-      const result = securityManager.validateCommand('mkfs.ext4 /dev/sda1');
-      expect(result.ok).toBe(false);
-    });
-
-    it('should block dangerous commands - kill -9', () => {
-      const result = securityManager.validateCommand('kill -9 1');
-      expect(result.ok).toBe(false);
-    });
-
-    it('should block dangerous commands - sudo', () => {
-      const result = securityManager.validateCommand('sudo rm -rf /');
-      expect(result.ok).toBe(false);
-    });
-
-    it('should block dangerous commands - chmod 777', () => {
-      const result = securityManager.validateCommand('chmod 777 /etc/passwd');
-      expect(result.ok).toBe(false);
-    });
-
-    it('should block dangerous commands - shell injection', () => {
-      const result = securityManager.validateCommand('echo hello; rm -rf /');
-      expect(result.ok).toBe(false);
-    });
-
-    it('should block dangerous commands - pipe to shell', () => {
-      const result = securityManager.validateCommand('echo hello | sh');
-      expect(result.ok).toBe(false);
+    it('passes previously-dangerous commands (PermissionManager is the gate)', () => {
+      // The dangerous-pattern screen has been removed; the PermissionManager
+      // (ask/allow/read_only) is the policy gate, not this validator.
+      const nowAllowed = [
+        'rm -rf /',
+        'dd if=/dev/zero of=/dev/sda',
+        'mkfs.ext4 /dev/sda1',
+        'kill -9 1',
+        'sudo rm -rf /',
+        'chmod 777 /etc/passwd',
+        'echo hello; rm -rf /',
+        'echo hello | sh',
+      ];
+      for (const cmd of nowAllowed) {
+        expect(securityManager.validateCommand(cmd).ok).toBe(true);
+      }
     });
 
     it('should block empty commands', () => {
@@ -435,9 +412,9 @@ describe('SecurityManager', () => {
       expect(securityManager.isSafeCommand('git status')).toBe(true);
     });
 
-    it('should return false for unsafe commands', () => {
-      expect(securityManager.isSafeCommand('rm -rf /')).toBe(false);
-      expect(securityManager.isSafeCommand('sudo rm -rf /')).toBe(false);
+    it('returns true for previously-blocked commands (no dangerous-pattern screen)', () => {
+      expect(securityManager.isSafeCommand('rm -rf /')).toBe(true);
+      expect(securityManager.isSafeCommand('sudo rm -rf /')).toBe(true);
     });
   });
 
@@ -455,7 +432,7 @@ describe('SecurityManager', () => {
       expect(securityManager.isSafeCommand('rm -rf /')).toBe(true);
 
       securityManager.setEnabled(true);
-      expect(securityManager.isSafeCommand('rm -rf /')).toBe(false);
+      expect(securityManager.isSafeCommand('rm -rf /')).toBe(true);
     });
   });
 

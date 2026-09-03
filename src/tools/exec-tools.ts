@@ -4,7 +4,6 @@ import { resolve, join } from 'path';
 
 import type { Tool } from './shared.js';
 import { NULL_BYTE_RE, REPLACEMENT_CHAR_RE, getSanitizedEnv } from './shared.js';
-import { DANGEROUS_COMMAND_PATTERNS } from '../security/patterns.js';
 import { isTuiActive } from '../log.js';
 
 interface ShellInfo {
@@ -191,11 +190,6 @@ function parseCommand(cmd: string): { command: string; args: string[]; useShell:
   };
 }
 
-/** Block only provably destructive commands. Broader policy is handled by SecurityManager and PermissionManager. */
-function validateCommand(cmd: string): boolean {
-  return !isDangerous(cmd);
-}
-
 function formatExecResult(ok: boolean, out: string, err?: string, code?: number | null): string {
   const cleanOut = (out || '').replace(NULL_BYTE_RE, '').replace(REPLACEMENT_CHAR_RE, '');
   const cleanErr = (err || '').replace(NULL_BYTE_RE, '').replace(REPLACEMENT_CHAR_RE, '');
@@ -214,10 +208,9 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
       return JSON.stringify({ ok: false, error: 'Command cannot be empty' });
     }
 
-    // SECURITY: Block destructive commands (rm -rf, mkfs, fork bombs, etc.)
-    if (!validateCommand(cmd)) {
-      return JSON.stringify({ ok: false, error: 'Command not allowed' });
-    }
+    // SecurityManager gates this command (custom blocked/allowed lists).
+    // PermissionManager (ask/allow/read_only) is the policy gate that prompts
+    // the user before running. No additional dangerous-pattern screen here.
 
     const timeoutMs = timeoutSeconds * 1000;
     const env = getSanitizedEnv();
@@ -331,12 +324,6 @@ function execCmdAsync(
   return new Promise((resolvePromise) => {
     if (!cmd.trim()) {
       resolvePromise(JSON.stringify({ ok: false, error: 'Command cannot be empty' }));
-      return;
-    }
-
-    // SECURITY: Block destructive commands (rm -rf, mkfs, fork bombs, etc.)
-    if (!validateCommand(cmd)) {
-      resolvePromise(JSON.stringify({ ok: false, error: 'Command not allowed' }));
       return;
     }
 
@@ -476,10 +463,6 @@ function execCmdAsync(
   });
 }
 
-function isDangerous(cmd: string): boolean {
-  return DANGEROUS_COMMAND_PATTERNS.some((p) => p.test(cmd));
-}
-
 // Command Execution and Build Tools
 export const executeCommandTool: Tool = {
   name: 'execute_command',
@@ -515,11 +498,6 @@ export const executeCommandTool: Tool = {
         });
       }
     }
-    // Always run the local dangerous-command check (additive with the
-    // security manager, not either/or)
-    if (isDangerous(cmd)) {
-      return JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
-    }
 
     // Sync path honors the timeout arg too (same caps as the async path).
     const isDownloadOrBuildCmd =
@@ -548,10 +526,6 @@ export const executeCommandTool: Tool = {
           error: result.error || 'Command blocked for security reasons',
         });
       }
-    }
-    // Always run the local dangerous-command check (additive)
-    if (isDangerous(cmd)) {
-      return JSON.stringify({ ok: false, error: 'Command blocked for security reasons' });
     }
 
     const isDownloadOrBuild =

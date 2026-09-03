@@ -6,11 +6,13 @@ NanoAgent includes built-in security features to protect against common security
 
 The security system provides three main layers of protection:
 
-1. **Command Validation** - Blocks dangerous shell commands
-2. **File Access Control** - Restricts file system access to safe paths
-3. **Output Sanitization** - Prevents sensitive data leakage in logs and responses
+1. **Command Validation** - Rejects empty commands and enforces any custom `blockedCommands` / `allowedCommands` lists you configure.
+2. **File Access Control** - Restricts file system access to safe paths (workspace sandbox + blocked-path patterns).
+3. **Output Sanitization** - Prevents sensitive data leakage in logs and responses.
 
-All security features are **enabled by default** and can be configured or disabled as needed.
+The interactive **policy gate** lives in `PermissionManager`, not in `validateCommand`. It decides whether each command requires user confirmation (`ask` / `allow_edits`), runs freely (`always_allow`), or is denied (`read_only`).
+
+> **Note:** NanoAgent no longer ships a built-in dangerous-pattern blocklist. `SecurityManager.validateCommand` is now a structural validator (empty check + your custom allow/block lists). The human-in-the-loop is the safety net — review each command when prompted, then choose `always_allow` for any command/category you trust.
 
 ---
 
@@ -158,73 +160,54 @@ export QWEN_SECURITY_MAX_BATCH_FILES=50
 
 ## Command Validation
 
-### Blocked Commands
+`SecurityManager.validateCommand` is a **structural** validator. It does **not**
+ship a list of dangerous patterns anymore; that responsibility moved to the
+policy gate (next section).
 
-The following command patterns are **blocked by default**:
+What it does, in order:
 
-#### System Destruction
-- `rm -rf` / `rm --no-preserve-root`
-- `dd if=/dev/zero` / `dd if=/dev/urandom`
-- `mkfs` / `mkfs.ext4` / `format`
-- Any command writing to root directory (`/`, `C:\`, etc.)
+1. Refuse empty / whitespace-only commands.
+2. If you configured custom `blockedCommands` (regex), reject any match.
+3. If you configured custom `allowedCommands` (set of exact prefixes), reject
+   anything not in the set. An empty `allowedCommands` switches validation to
+   deny-all (explicit allowlist enforcement).
 
-#### Process Management
-- `kill -9` / `pkill` / `killall` / `xkill`
+If all three checks pass, the command is **structurally OK**. Whether it
+actually runs is decided by the **PermissionManager policy gate** below.
 
-#### Privilege Escalation
-- `sudo` / `su`
-- `chmod 777` / `chmod -R`
-- `setuid` / `setgid`
-- `chown 0:0`
+### Permission Manager (the policy gate)
 
-#### Network Operations
-- `nc` / `netcat`
-- `curl -o /` / `wget -O /`
-- `ssh` / `scp` / `sftp` / `telnet` / `ftp`
+The interactive gate is `PermissionManager`. It uses the active
+`permissionMode` plus any per-tool/per-command rules you set:
 
-#### Shell Features
-- Command chaining with `;`, `&&`, `||` followed by dangerous commands
-- Command substitution with backticks or `$(...)`
-- Piping to shell: `| sh`, `| bash`, `| zsh`, `| dash`
+| Mode | Read | Write | Command / Shell |
+|------|------|-------|-----------------|
+| `read_only` | allow | deny | deny |
+| `ask` (default) | allow | ask | ask |
+| `allow_edits` | allow | allow | ask |
+| `always_allow` | allow | allow | allow |
 
-#### Code Execution
-- `eval` / `exec` / `source`
-- `python -c` / `py -c`
-- `perl -e` / `ruby -e`
-- `node -e` / `php -r`
-- `javac` / `java -jar`
+When the gate returns `ask`, the user is prompted in the TUI. Choosing
+`always_allow` persists an explicit allow rule for that tool or command, so
+the next invocation runs without a prompt. Headless `nanogent run` falls
+back to auto-deny unless you pass `--yes` or `--permission-mode always_allow`.
 
-#### Package Managers
-- `npm install -g` / `npm install --global`
-- `yarn global add`
-- `pnpm add -g`
-
-#### Cron Jobs
-- `crontab`
-- `at` (scheduling commands)
-- `batch` / `tasksch`
-
-### Allowed Commands
-
-Safe commands are **allowed by default**, including:
-
-- Read-only commands: `ls`, `dir`, `pwd`, `cat`, `echo`, `date`, `whoami`
-- Git operations: `git status`, `git diff`, `git log`, `git show`, etc.
-- Build tools: `npm run`, `yarn`, `pnpm` (without global install)
-- Development tools: `eslint`, `prettier`, `tsc`, `jest`, etc.
+MCP tools (`mcp_*`) are auto-allowed in every mode except `read_only`; explicit
+rules can still deny them.
 
 ### Custom Command Patterns
 
-Command validation is **default-allow**: any command that does not match a
-dangerous pattern passes validation, and the PermissionManager mode
-(`ask` by default) decides whether the user is prompted. You can extend the
-blocked list by adding to the `DANGEROUS_COMMAND_PATTERNS` array in the
-security module, or set a custom `allowedCommands` list to switch validation
-to explicit allowlist enforcement.
+You can extend validation in two places:
 
-> **Note (L1):** With no `allowedCommands` configured, validation is default-allow
-> (dangerous-pattern gate only). Setting `allowedCommands: []` switches to
-> deny-all — see `src/security/index.ts:151-167`.
+- **Custom block list** — `securityBlockedCommands: [RegExp, ...]` (set via the
+  `SecurityManager` API). Anything matching is rejected before the policy gate.
+- **Custom allow list** — `allowedCommands: Set<string>` (exact prefixes,
+  case-insensitive). Switches validation to allowlist enforcement; anything not
+  in the list is rejected even if the policy gate would allow it.
+
+> **Note (L1):** With no `allowedCommands` configured, validation is default-allow.
+> Setting `allowedCommands: new Set()` switches to deny-all — see
+> `src/security/index.ts`.
 
 ---
 
@@ -355,8 +338,7 @@ const result = globalSecurityManager.validateCommand('rm -rf /');
 
 Sub-agents (created via `explore_subagent`) **automatically inherit** the security configuration from the main agent. This ensures that:
 
-- Sub-agents cannot execute dangerous commands
-- Sub-agents cannot access blocked paths
+- Sub-agents run with the same file-access sandbox and blocked-path rules
 - Sub-agent outputs are sanitized
 - Child-process env (`getSanitizedEnv`) filters out any variable whose name matches `API`, `AUTH`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, or `PRIVATE` (case-insensitive). Essential vars (`PATH`, `HOME`, `SHELL`, etc.) are preserved. This is by design: a hijacked model or malicious MCP server should never see API keys through `env` in tool outputs or `execute_command`. If you need a specific env var passed through for a self-hosted proxy (e.g. `BASIC_AUTH_USER`), there is currently no whitelist override — document any need before adding one.
 
@@ -422,15 +404,27 @@ Even with sanitization, always review agent outputs before sharing them, especia
 
 ## Troubleshooting
 
-### Command Blocked as Dangerous
+### Command keeps asking for approval
 
-**Problem:** A legitimate command is being blocked.
+**Problem:** Every shell command triggers an "allow this command?" prompt and
+the agent can't make progress.
 
-**Solution:**
-1. Check if the command matches any dangerous pattern
-2. If you configured a custom `allowedCommands` list, add the command to it
-   (a custom allow list switches validation to allowlist enforcement)
-3. Or disable command validation for specific cases
+**Solution:** Pick a `permissionMode` that matches your trust level:
+
+- `/permissions ask execute_command` — keep prompting per command.
+- `/permissions always_allow execute_command` — auto-approve shell commands
+  (recommended only after reviewing what the agent will run).
+- `/permissions always_allow` — auto-approve everything (read + write + shell).
+- Headless: pass `--yes` to `nanogent run`, or `--permission-mode always_allow`.
+
+### Command rejected by validation
+
+**Problem:** A command fails `SecurityManager.validateCommand` with a hard
+error (not a permission prompt).
+
+**Solution:** `validateCommand` only rejects in two cases: empty input or a
+match against your `blockedCommands` / `allowedCommands` config. Adjust those
+lists or clear the allowlist (empty set = deny-all; absent field = default-allow).
 
 ### File Access Blocked
 
@@ -456,26 +450,32 @@ Even with sanitization, always review agent outputs before sharing them, especia
 
 ### Security Check Order
 
-1. **Command Validation**
-   - Check against dangerous patterns → Block if matched
-   - Check against custom blocked commands → Block if matched
-   - Check against allowed commands (if specified) → Block if not matched
-   - Default: Allow (the PermissionManager mode is the interactive gate)
+1. **Command Validation** (`SecurityManager.validateCommand`)
+   - Empty / whitespace-only → Block
+   - Custom `blockedCommands` regex → Block if matched
+   - Custom `allowedCommands` set (when non-empty) → Block if not matched
+   - Default: allow
 
-2. **File Access Validation**
-   - Check if path is within workspace → Block if outside
-   - Check against allowed paths (if specified) → Block if not matched
-   - Check against blocked paths → Block if matched
-   - Default: Allow
+2. **Permission Policy** (`PermissionManager.checkPermission`)
+   - Per-tool / per-command explicit rule → allow | ask | deny
+   - Fallback to `permissionMode` policy for `read` / `write` / `command` / `mcp`
+   - When `ask`, prompt the user (or auto-deny in headless without `--yes`)
 
-3. **Output Sanitization**
+3. **File Access Validation** (`SecurityManager.validateFileAccess`)
+   - Path must resolve inside workspace → Block otherwise
+   - Custom `allowedPaths` (when non-empty) → Block if not matched
+   - `blockedPaths` → Block if matched
+   - Read-side: file size ≤ `maxFileSize`
+   - Default: allow
+
+4. **Output Sanitization** (`SecurityManager.sanitizeOutput`)
    - Apply all sanitization patterns in order
    - Return sanitized output
 
 ### Performance
 
 Security checks add minimal overhead:
-- Command validation: ~1-2ms per command
+- Command validation: ~0.1ms per command (no regex list scan anymore)
 - File access validation: ~1-2ms per path
 - Output sanitization: ~1-5ms per output (depending on size)
 
@@ -490,6 +490,9 @@ The security hardening features are part of NanoAgent and are licensed under the
 ---
 
 ## Changelog
+
+### Unreleased
+- **Removed the built-in dangerous-command pattern list.** `DANGEROUS_COMMAND_PATTERNS` and `src/security/patterns.ts` are gone. `SecurityManager.validateCommand` is now a structural validator (empty check + your custom `blockedCommands` / `allowedCommands` lists). The `PermissionManager` policy gate (`ask` / `allow_edits` / `always_allow` / `read_only`) is the sole safety net for shell commands — review each command when prompted, then `always_allow` the ones you trust. Updated `src/security/`, `src/tools/exec-tools.ts`, and the corresponding test suites.
 
 ### v1.0.0 (Initial Release)
 - Initial security hardening implementation

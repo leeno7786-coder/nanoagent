@@ -135,12 +135,14 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
     const loadedSkills = loadSkills();
     store.getState().setSkills(loadedSkills);
-    store.getState().setSkillCommands(getSkillCommands(loadedSkills));
+    store.getState().setSkillCommands(getSkillCommands(loadedSkills, { includeDisabled: true }));
 
     const handleSkillRefresh = () => {
       const refreshedSkills = loadSkills();
       store.getState().setSkills(refreshedSkills);
-      store.getState().setSkillCommands(getSkillCommands(refreshedSkills));
+      store
+        .getState()
+        .setSkillCommands(getSkillCommands(refreshedSkills, { includeDisabled: true }));
     };
     (globalThis as Record<string, unknown>)['__refreshSkills'] = handleSkillRefresh;
 
@@ -443,7 +445,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
       // `!` shell-command shortcut (Vim/Claude-Code/aider convention). Runs
       // the command through the same execute_command path the LLM uses, so
-      // SecurityManager + DANGEROUS_COMMAND_PATTERNS + workspace sandbox
+      // SecurityManager + PermissionManager + workspace sandbox
       // all apply. Output streams live into a terminal-style block above the
       // input (store.bangRun); on completion the exchange is recorded in BOTH
       // agent.messages (chat panel) and the ContextManager — the model sees
@@ -597,14 +599,14 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const handleSkillsChange = useCallback(() => {
     const loaded = loadSkills();
     setSkills(loaded);
-    setSkillCommands(getSkillCommands(loaded));
+    setSkillCommands(getSkillCommands(loaded, { includeDisabled: true }));
   }, []);
 
   const handleSkillsClose = useCallback(() => {
     setOverlay(null);
     const loaded = loadSkills();
     setSkills(loaded);
-    setSkillCommands(getSkillCommands(loaded));
+    setSkillCommands(getSkillCommands(loaded, { includeDisabled: true }));
   }, []);
 
   const handleSkillSelect = useCallback((skillName: string) => {

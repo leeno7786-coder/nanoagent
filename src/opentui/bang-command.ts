@@ -5,7 +5,7 @@
  * user submits text whose first non-whitespace character is `!`, we:
  *   1. Strip the leading `!` (and any leading whitespace after it).
  *   2. Run the rest through the same `execute_command` tool the LLM uses,
- *      so the security manager and dangerous-pattern gate apply unchanged.
+ *      so the security manager and permission policy gate apply unchanged.
  *   3. Render the exchange as a terminal-style block — `$ cmd` header with
  *      gutter-indented output, streaming live while the command runs —
  *      and record it in the ContextManager so the model sees what ran and
@@ -76,8 +76,8 @@ export function parseBangCommand(input: string): BangParseResult | BangNotComman
 
 /**
  * Run a parsed `!` command via the canonical `execute_command` tool so the
- * same security stack (SecurityManager + DANGEROUS_COMMAND_PATTERNS +
- * workspace sandbox) applies as for LLM-issued commands.
+ * same security stack (SecurityManager allow/blocked lists + PermissionManager
+ * policy gate + workspace sandbox) applies as for LLM-issued commands.
  *
  * Returns a stringified tool result (JSON: `{ ok, stdout, stderr, code }` or
  * `{ ok: false, error }`). Caller is responsible for rendering the result

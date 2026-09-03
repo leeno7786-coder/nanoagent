@@ -6,7 +6,6 @@
 import { resolve, relative, isAbsolute } from 'path';
 import { existsSync, statSync } from 'fs';
 import { PermissionManager, PermissionMode, PermissionLevel } from './permissions.js';
-import { DANGEROUS_COMMAND_PATTERNS } from './patterns.js';
 
 export * from './permissions.js';
 
@@ -134,13 +133,6 @@ export class SecurityManager {
       return { ok: false, error: 'Empty command' };
     }
 
-    // Check against dangerous patterns
-    for (const pattern of DANGEROUS_COMMAND_PATTERNS) {
-      if (pattern.test(trimmed)) {
-        return { ok: false, error: `Command blocked: matches dangerous pattern` };
-      }
-    }
-
     // Check against custom blocked commands
     for (const pattern of this.config.blockedCommands) {
       if (pattern.test(trimmed)) {
@@ -160,11 +152,9 @@ export class SecurityManager {
       }
     }
 
-    // Default: allow. With no custom allow list, the dangerous-pattern screen
-    // is the hard gate and the PermissionManager (ask/allow modes) is the
-    // interactive gate — blocking unlisted commands here would make an
-    // explicit user approval meaningless. Setting allowedCommands switches
-    // validation to explicit allowlist enforcement (handled above).
+    // No dangerous-pattern screen: PermissionManager (ask/allow/read_only)
+    // is the policy gate. Setting allowedCommands switches validation to
+    // explicit allowlist enforcement (handled above).
     return { ok: true, command };
   }
 

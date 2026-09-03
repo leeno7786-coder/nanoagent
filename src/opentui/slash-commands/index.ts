@@ -243,7 +243,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       await agent.reloadFromDisk();
       const loadedSkills = loadSkills();
       setSkills(loadedSkills);
-      setSkillCommands(getSkillCommands(loadedSkills));
+      setSkillCommands(getSkillCommands(loadedSkills, { includeDisabled: true }));
       const ctxNote = agent.cfg.modelContextLength
         ? ` · ${Math.round(agent.cfg.modelContextLength / 1000)}k ctx`
         : '';
