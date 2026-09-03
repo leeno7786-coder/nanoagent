@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.2.5** (`@omega3_0/nanoagent`) — fixes two real bugs uncovered by the long-standing "pre-existing" test failures: the child-process env sanitizer no longer breaks git when the environment injects `GIT_CONFIG_COUNT/KEY_n/VALUE_n` (the family is now all-or-nothing), and explicit CLI/programmatic options (`--base-url`, `--model`, …) now beat the home config file instead of being silently overwritten by it; test suites now scrub every trusted `.env` location; includes 2.2.4 (write/edit tool integrity) and earlier fixes.
+Current release: **2.2.6** (`@omega3_0/nanoagent`) — drops the built-in dangerous-command blocklist that was rejecting legitimate agent work and lets the human-in-the-loop `PermissionManager` (`ask` / `always_allow` / `read_only`) be the safety net; project-local skills (`./skills/`) are now visible in the `/` autocomplete dropdown marked `[disabled]` so they can be toggled via `/skills` (F8) instead of appearing to not exist.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -354,6 +354,13 @@ src/
 ---
 
 ## Changelog
+
+### 2.2.6 — Drop the dangerous-pattern blocker, surface disabled skills
+
+Two fixes that unblock agent work:
+
+- **No more dangerous-command blocker.** The built-in `DANGEROUS_COMMAND_PATTERNS` list (`src/security/patterns.ts`) was rejecting commands that small models had to run, with no path through the `ask` / `always_allow` permission flow. `SecurityManager.validateCommand` is now a structural validator (empty check + your custom `blockedCommands` / `allowedCommands` lists); the `PermissionManager` policy gate (`ask` / `allow_edits` / `always_allow` / `read_only`) is the sole safety net for shell commands. Review each command when prompted, then choose `always_allow` for the ones you trust. `SECURITY.md` synced.
+- **Disabled skills are visible in `/` autocomplete.** Project-local skills (`./skills/`) correctly default to `enabled: false` (prompt-injection guard), but they were filtered out of the slash-command dropdown entirely, so users thought they didn't exist. `getSkillCommands(skills, { includeDisabled })` now surfaces them marked `[disabled]` and greyed out; toggle via `/skills` (F8) or `/config`. Enabled entries still sort first.
 
 ### 2.2.5 — Pre-existing test failures were real bugs
 
