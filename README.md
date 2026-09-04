@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.5.2** (`@omega3_0/nanoagent`) — the workspace now defaults to the directory you launched nanoagent from, so tools see your actual project. Includes the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
+Current release: **2.5.3** (`@omega3_0/nanoagent`) — reasoning-only turns now nudge the model instead of silently retrying identical context (small models no longer loop the same analysis invisibly), and wheel scrolling is restored. The workspace defaults to the directory you launched nanoagent from, so tools see your actual project. Includes the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -432,6 +432,13 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.5.3 — Reasoning-only loop fix + scroll restore
+
+- **No more invisible analysis loops.** Small thinking models (e.g. Qwen/Bonsai ≤8B) sometimes dump their entire analysis into the reasoning channel and emit no visible reply or tool calls. The harness retried silently with *identical* history — reasoning turns are stripped from the model payload — so the model deterministically regenerated the same analysis until the cap hit, with the context counter never moving. Each reasoning-only turn now injects a hidden nudge ("respond with content or tool calls") so the retry sees new context, and a visible `↻ Model produced thinking only… (n/max)` notice makes the loop transparent.
+- **Small models give up sooner.** Reasoning-only retries cap at 3 in ≤8B mode (was the default 5); `/config set maxReasoningOnlyRounds` still overrides.
+- **Wheel scrolling restored** — mouse capture re-enabled so the main chat window scrolls again.
+- **Tests:** suite 929 pass / 0 fail.
 
 ### 2.5.2 — Workspace follows the launch directory
 
