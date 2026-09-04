@@ -27,9 +27,18 @@ export interface PasteTarget {
   deleteSelection?: () => boolean;
 }
 
-/** Collapse clipboard text into a single line (API keys, TUI inputs). */
+/** Collapse clipboard text into a single line (API keys, single-line fields). */
 export function sanitizePastedLine(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '').trim();
+}
+
+/**
+ * Normalize a pasted block for multi-line targets (chat input): unify line
+ * endings and drop trailing newlines, but preserve interior line breaks so
+ * pasted code/logs keep their shape.
+ */
+export function sanitizePastedBlock(text: string): string {
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/g, '');
 }
 
 export function isPasteShortcut(key: PasteKeyLike): boolean {
@@ -44,13 +53,17 @@ export function isPasteMouseButton(button: number): boolean {
 }
 
 export function pasteIntoTarget(target: PasteTarget, pasted: string, mode: PasteMode): boolean {
-  const line = sanitizePastedLine(pasted);
-  if (!line) return false;
   if (mode === 'replace') {
+    const line = sanitizePastedLine(pasted);
+    if (!line) return false;
     target.selectAll?.();
     target.deleteSelection?.();
+    target.insertText(line);
+    return true;
   }
-  target.insertText(line);
+  const block = sanitizePastedBlock(pasted);
+  if (!block.trim()) return false;
+  target.insertText(block);
   return true;
 }
 

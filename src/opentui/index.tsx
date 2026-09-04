@@ -46,6 +46,8 @@ export async function runTui() {
     return;
   }
 
+  // Mouse capture stays off permanently so the terminal keeps its normal
+  // window behavior: drag-select copy and right-click / Ctrl+Shift+V paste.
   const appRenderer = await createCliRenderer({ useMouse: false });
   createRoot(appRenderer).render(<App renderer={appRenderer} />);
 }

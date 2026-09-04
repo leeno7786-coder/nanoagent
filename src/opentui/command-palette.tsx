@@ -26,7 +26,6 @@ export const PALETTE_ACTIONS: PaletteAction[] = [
   { id: 'todo', label: 'Toggle todo sidebar', hint: 'F4' },
   { id: 'save', label: 'Save session', hint: 'F5' },
   { id: 'history', label: 'Session history', hint: 'F6' },
-  { id: 'mouse', label: 'Toggle mouse capture', hint: 'F7' },
   { id: 'skills', label: 'Manage skills', hint: 'F8' },
   { id: 'permissions', label: 'Cycle permission mode', hint: 'Shift+Tab' },
   { id: 'exit', label: 'Exit NanoAgent', hint: 'F10' },
@@ -77,7 +76,7 @@ export function CommandPalette({ theme, onAction, onClose }: CommandPaletteProps
     setSelected(0);
   };
 
-  // All 14 actions fit on screen — render every match, no scroll window
+  // Every action fits on screen — render all matches, no scroll window
   // (avoids selection moving onto invisible rows).
   const visibleRows = filtered.length;
 

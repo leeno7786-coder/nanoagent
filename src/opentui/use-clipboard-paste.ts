@@ -8,13 +8,13 @@ import {
   readClipboardText,
   type PasteMode,
 } from '../clipboard.js';
-import { useAppStore } from './app-store.js';
 
 /**
- * App-side paste fallback. Native terminal paste (right-click, Ctrl+Shift+V)
- * is the reliable path and requires mouse capture OFF. This handler covers
- * Ctrl+V when a clipboard tool exists, and otherwise releases mouse capture
- * so the next paste can go through the terminal.
+ * App-side paste fallback. The renderer never captures the mouse, so the
+ * terminal's native paths (drag-select copy, right-click / Ctrl+Shift+V
+ * paste) always work like a normal window. This handler additionally covers
+ * Ctrl+V / Shift+Insert by reading the system clipboard directly when a
+ * clipboard tool exists (wl-clipboard, xclip, xsel, clipboardy).
  */
 export function useClipboardPaste(mode: PasteMode = 'insert'): void {
   const renderer = useRenderer();
@@ -26,10 +26,6 @@ export function useClipboardPaste(mode: PasteMode = 'insert'): void {
     const editor = renderer.currentFocusedEditor;
     if (text && editor && pasteIntoTarget(editor, text, modeRef.current)) {
       return true;
-    }
-    if (renderer.useMouse) {
-      renderer.useMouse = false;
-      useAppStore.getState().setMouseEnabled(false);
     }
     return false;
   };

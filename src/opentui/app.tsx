@@ -48,7 +48,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const overlay = useAppStore((s) => s.overlay);
   useClipboardPaste(overlay === 'connect' ? 'replace' : 'insert');
   const showTodos = useAppStore((s) => s.showTodos);
-  const mouseEnabled = useAppStore((s) => s.mouseEnabled);
   const theme = useAppStore((s) => s.theme);
   const state = useAppStore((s) => s.state);
   const messages = useAppStore((s) => s.messages);
@@ -746,12 +745,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         case 'save':
           handleSave();
           break;
-        case 'mouse': {
-          const next = !st.mouseEnabled;
-          renderer.useMouse = next;
-          st.setMouseEnabled(next);
-          break;
-        }
         case 'permissions': {
           const nextMode = st.cyclePermissionMode();
           const pm = agent?.securityManager?.permissionManager;
@@ -916,10 +909,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       st.setOverlay('history');
     } else if (keyEvent.name === 'f8' || keyEvent.name === 'F8') {
       st.setOverlay('skills');
-    } else if (keyEvent.name === 'f7' || keyEvent.name === 'F7') {
-      const next = !st.mouseEnabled;
-      renderer.useMouse = next;
-      st.setMouseEnabled(next);
     } else if (keyEvent.name === 'f9' || keyEvent.name === 'F9') {
       st.cycleTheme(Object.keys(THEMES), THEMES);
     } else if (keyEvent.name === 'f10' || keyEvent.name === 'F10') {
@@ -1122,7 +1111,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           contextUsage={contextUsage}
           elapsedMs={elapsedMs}
           theme={theme}
-          mouseEnabled={mouseEnabled}
           mcpToolCount={agentRef.current?.mcpManager?.totalTools ?? 0}
           workspace={agentRef.current?.cfg.workspace || process.cwd()}
         />

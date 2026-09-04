@@ -99,7 +99,6 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.mutedFg}> F4 Todo sidebar</text>
       <text fg={theme.mutedFg}> F5 Save session</text>
       <text fg={theme.mutedFg}> F6 Load session</text>
-      <text fg={theme.mutedFg}> F7 Toggle mouse capture</text>
       <text fg={theme.mutedFg}> F8 Skills overlay</text>
       <text fg={theme.mutedFg}> F9 Cycle theme</text>
       <text fg={theme.mutedFg}> F10 Exit</text>
@@ -115,18 +114,14 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.mutedFg}> Shift+Enter Multi-line input</text>
       <text fg={theme.mutedFg}> Ctrl+↑/↓ Select message</text>
       <text fg={theme.mutedFg}> Ctrl+C Copy selection or selected message</text>
-      <text fg={theme.mutedFg}> Ctrl+Shift+V or right-click Paste (terminal paste)</text>
+      <text fg={theme.mutedFg}> Ctrl+Shift+V, Ctrl+V, or right-click Paste</text>
       <text> </text>
 
       <text fg={theme.accent}>Copying and pasting:</text>
-      <text fg={theme.mutedFg}> Mouse capture is OFF by default for easy terminal paste</text>
-      <text fg={theme.mutedFg}> Select text and use terminal copy (Ctrl+Shift+C)</text>
-      <text fg={theme.mutedFg}> Right-click or Ctrl+Shift+V to paste into focused field</text>
-      <text fg={theme.mutedFg}> Press F7 to enable mouse capture for drag-select</text>
-      <text fg={theme.statusError} marginTop={1}>
-        {' '}
-        (Note: Mouse capture breaks right-click paste)
-      </text>
+      <text fg={theme.mutedFg}> Works like a normal terminal window — mouse capture stays off</text>
+      <text fg={theme.mutedFg}> Drag-select text, then Ctrl+Shift+C to copy</text>
+      <text fg={theme.mutedFg}> Right-click, Ctrl+Shift+V, or Ctrl+V to paste into the input</text>
+      <text fg={theme.mutedFg}> Multi-line paste keeps line breaks in chat; key fields collapse to one line</text>
     </scrollbox>
   );
 }

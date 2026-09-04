@@ -34,7 +34,6 @@ interface StatusBarProps {
   contextUsage?: ContextUsageSnapshot;
   elapsedMs?: number;
   theme: Theme;
-  mouseEnabled?: boolean;
   mcpToolCount?: number;
   workspace?: string;
 }
@@ -55,7 +54,6 @@ export function StatusBar({
   contextUsage,
   elapsedMs,
   theme,
-  mouseEnabled = false,
   mcpToolCount = 0,
   workspace,
 }: StatusBarProps) {
@@ -135,7 +133,6 @@ export function StatusBar({
         {s.label}
         {toolLabel} · F1 help · ctrl+p commands · ^D abort
       </text>
-      {!mouseEnabled && <text fg={theme.warningFg}> [MOUSE OFF]</text>}
     </box>
   );
 }

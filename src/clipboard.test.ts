@@ -80,6 +80,28 @@ describe('pasteIntoTarget', () => {
     expect(value).toBe('hello world');
   });
 
+  it('preserves interior line breaks when pasting into chat', () => {
+    let value = '';
+    const target = {
+      insertText(text: string) {
+        value += text;
+      },
+    };
+    expect(pasteIntoTarget(target, 'line one\r\nline two\nline three\n\n', 'insert')).toBe(true);
+    expect(value).toBe('line one\nline two\nline three');
+  });
+
+  it('collapses pasted text to a single line in replace mode', () => {
+    let value = '';
+    const target = {
+      insertText(text: string) {
+        value += text;
+      },
+    };
+    expect(pasteIntoTarget(target, 'sk-part-one\nsk-part-two\r\n', 'replace')).toBe(true);
+    expect(value).toBe('sk-part-onesk-part-two');
+  });
+
   it('replaces the current value when pasting an API key', () => {
     let value = 'old-key';
     const target = {

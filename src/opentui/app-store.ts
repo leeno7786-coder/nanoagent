@@ -23,7 +23,6 @@ interface AppState {
   overlay: Overlay;
   showPermissionMode: boolean;
   showTodos: boolean;
-  mouseEnabled: boolean;
   theme: Theme;
   selectedMessageIndex: number | null;
   pendingPermissionReq: PermissionRequest | null;
@@ -63,7 +62,6 @@ interface AppState {
   cyclePermissionMode: () => PermissionMode;
   setShowTodos: (s: boolean | ((prev: boolean) => boolean)) => void;
   toggleShowTodos: () => void;
-  setMouseEnabled: (e: boolean) => void;
   setTheme: (t: Theme) => void;
   cycleTheme: (themeNames: string[], themes: Record<string, Theme>) => void;
   setSelectedMessageIndex: (i: number | null | ((prev: number | null) => number | null)) => void;
@@ -101,7 +99,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
   overlay: null,
   showPermissionMode: false,
   showTodos: false,
-  mouseEnabled: false,
   theme: DEFAULT_THEME,
   selectedMessageIndex: null,
   pendingPermissionReq: null,
@@ -141,7 +138,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setShowTodos: (s) =>
     set(typeof s === 'function' ? { showTodos: s(get().showTodos) } : { showTodos: s }),
   toggleShowTodos: () => set((st) => ({ showTodos: !st.showTodos })),
-  setMouseEnabled: (e) => set({ mouseEnabled: e }),
   setTheme: (t) => set({ theme: t }),
   cycleTheme: (names, themes) =>
     set((st) => {

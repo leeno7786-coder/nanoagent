@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { ScrollBoxRenderable } from '@opentui/core';
-import { useKeyboard, useRenderer } from '@opentui/react';
+import { useKeyboard } from '@opentui/react';
 import type { Theme } from './theme.js';
 import {
   RUNTIME_PROVIDERS,
@@ -20,7 +20,6 @@ import {
 } from '../providers/index.js';
 import { saveApiKeyToEnv, getApiKey, isUsableApiKey } from '../config/index.js';
 import type { RuntimeProvider, ModelInfo } from '../types.js';
-import { useAppStore } from './app-store.js';
 import { sanitizePastedLine } from '../clipboard.js';
 
 interface ConnectOverlayProps {
@@ -62,7 +61,6 @@ function withCustomModelOption(provider: RuntimeProvider, models: ModelInfo[]): 
 }
 
 export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps) {
-  const renderer = useRenderer();
   const [selectedProviderIndex, setSelectedProviderIndex] = useState(0);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [state, setState] = useState<ConnectState>('selecting-provider');
@@ -76,20 +74,6 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
   const [runtimeStatus, setRuntimeStatus] = useState<string | null>(null);
   const providerScrollRef = useRef<ScrollBoxRenderable>(null);
   const modelScrollRef = useRef<ScrollBoxRenderable>(null);
-
-  // Mouse capture swallows right-click / middle-click, and this host often has
-  // no wl-clipboard/xsel. Release the mouse while the key field is focused so
-  // the terminal can paste natively.
-  useEffect(() => {
-    if (state !== 'entering-api-key') return;
-    const prev = renderer.useMouse;
-    renderer.useMouse = false;
-    useAppStore.getState().setMouseEnabled(false);
-    return () => {
-      renderer.useMouse = prev;
-      useAppStore.getState().setMouseEnabled(prev);
-    };
-  }, [state, renderer]);
 
   const handleApiKeyInput = (display: string) => {
     setApiKeyInput(sanitizePastedLine(display));
