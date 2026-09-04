@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.5.0** (`@omega3_0/nanoagent`) — a full TUI polish pass: six themes with semantic tokens, an opencode-style Ctrl+P command palette, quiet tool rows, tinted full-width diffs with line numbers, inline markdown in chat, a width-aware status bar, and normal-terminal copy/paste (mouse capture is gone for good). Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
+Current release: **2.5.1** (`@omega3_0/nanoagent`) — a full TUI polish pass: six themes with semantic tokens, an opencode-style Ctrl+P command palette, quiet tool rows, tinted full-width diffs with line numbers, inline markdown in chat, a width-aware status bar, and normal-terminal copy/paste (mouse capture is gone for good). Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -430,6 +430,14 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.5.1 — CI green + command surfacing fixes
+
+- **CI pipeline green again** — fixed 7 lint errors, prettier drift across `src/`, and two real bugs the red pipeline was hiding: `--help` now works without the launcher (the `NANOAGENT_ROOT` guard ran before help handling), and `mcp-manage.ts` / `store.ts` no longer resolve install paths at import time (which crashed any direct `bun src/main.ts` invocation).
+- **Docker image fixed** — the build stage now copies `scripts/` (the `fix-ext` build step needs it), and the image ships a canonical `NANOAGENT_ROOT` layout with bundled skills so the container actually boots.
+- **Rollback system is reachable from the UI** — `/snapshot`, `/diffs`, `/rollback` (plus `/new`, `/sessions`, `/resume`, `/rename`, `/delete-session`, `/copy`, `/clear-todos`, `/skill-load`, `/unload`) now appear in the `/` dropdown and F1 help. The Ctrl+P palette gains Snapshot / List snapshots / Rollback actions; rollback prefills `/rollback ` into the input instead of executing, so a stray Enter can't reset the workspace to baseline.
+- **Overlay/focus conflict fixed** — opening Ctrl+P (or any overlay) while the `/` dropdown was open left the dropdown capturing keys and broke chat-bar focus afterward. Overlays now suspend the dropdown and own focus; closing restores the chat input.
+- **Tests**: full suite green locally for the first time — 925 pass / 0 fail (env-dependent tests use the bundled bun or skip cleanly).
 
 ### 2.5.0 — TUI polish pass
 
