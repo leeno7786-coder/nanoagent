@@ -342,8 +342,10 @@ The startup banner shows the baseline status (`baseline snapshot: <workspace>/.n
 | Ctrl+↑/↓    | Select message                                      |
 | Ctrl+C      | Copy selected message                               |
 | Ctrl+D      | Abort current run                                   |
-| Drag-select | Copy (mouse capture is always off)                  |
-| Right-click / Ctrl+Shift+V / Ctrl+V | Paste — chat keeps line breaks, key fields collapse to one line |
+| Wheel       | Scroll the chat                                     |
+| PgUp/PgDn · Shift+↑/↓ | Scroll the chat (keyboard)                |
+| Shift+drag  | Select text (bypasses app mouse capture), then Ctrl+Shift+C to copy |
+| Right-click / Ctrl+V / Ctrl+Shift+V | Paste — chat keeps line breaks, key fields collapse to one line |
 
 ---
 

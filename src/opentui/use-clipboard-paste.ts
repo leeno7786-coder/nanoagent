@@ -10,11 +10,12 @@ import {
 } from '../clipboard.js';
 
 /**
- * App-side paste fallback. The renderer never captures the mouse, so the
- * terminal's native paths (drag-select copy, right-click / Ctrl+Shift+V
- * paste) always work like a normal window. This handler additionally covers
- * Ctrl+V / Shift+Insert by reading the system clipboard directly when a
- * clipboard tool exists (wl-clipboard, xclip, xsel, clipboardy).
+ * App-side paste handling. Mouse capture is ON (for wheel scroll), so
+ * right-click / middle-click reach this handler instead of the terminal —
+ * we read the system clipboard directly (wl-paste, xclip, xsel, clipboardy)
+ * and insert into the focused editor. Ctrl+V / Shift+Insert work the same
+ * way. Native selection copy stays available via Shift+drag, which
+ * bypasses app mouse capture in most terminals.
  */
 export function useClipboardPaste(mode: PasteMode = 'insert'): void {
   const renderer = useRenderer();

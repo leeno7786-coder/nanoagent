@@ -46,8 +46,10 @@ export async function runTui() {
     return;
   }
 
-  // Mouse capture stays off permanently so the terminal keeps its normal
-  // window behavior: drag-select copy and right-click / Ctrl+Shift+V paste.
-  const appRenderer = await createCliRenderer({ useMouse: false });
+  // Mouse capture is ON so the chat scrollbox gets wheel scrolling. Copy still
+  // works like a normal window: Shift+drag bypasses app capture for native
+  // selection, and right-click / Ctrl+V paste is handled app-side via
+  // clipboard tools (see use-clipboard-paste.ts).
+  const appRenderer = await createCliRenderer({ useMouse: true });
   createRoot(appRenderer).render(<App renderer={appRenderer} />);
 }

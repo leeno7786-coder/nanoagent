@@ -126,9 +126,12 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text> </text>
 
       <text fg={theme.accent}>Copying and pasting:</text>
-      <text fg={theme.mutedFg}> Works like a normal terminal window — mouse capture stays off</text>
-      <text fg={theme.mutedFg}> Drag-select text, then Ctrl+Shift+C to copy</text>
-      <text fg={theme.mutedFg}> Right-click, Ctrl+Shift+V, or Ctrl+V to paste into the input</text>
+      <text fg={theme.mutedFg}> Mouse wheel scrolls the chat</text>
+      <text fg={theme.mutedFg}>
+        {' '}
+        Shift+drag to select, Ctrl+Shift+C to copy (bypasses app capture)
+      </text>
+      <text fg={theme.mutedFg}> Right-click, Ctrl+V, or Ctrl+Shift+V to paste into the input</text>
       <text fg={theme.mutedFg}>
         {' '}
         Multi-line paste keeps line breaks in chat; key fields collapse to one line
