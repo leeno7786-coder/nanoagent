@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { AgentCore } from '../agent.js';
@@ -440,5 +440,85 @@ describe('handleSlashCommand', () => {
     await handleSlashCommand('/profile missing', h.ctx);
     expect(stub.reconfigureCalls).toHaveLength(0);
     expect(lastAssistantContent(h)).toContain('Unknown profile');
+  });
+});
+
+describe('working-tree slash commands', () => {
+  let ws: string;
+  let projectDir: string;
+  let stub: AgentStub;
+  let h: CtxHarness;
+
+  beforeEach(() => {
+    // Use a project subdir inside the workspace so the launcher-style
+    // copy (source → <workspace>/.nanoagent/working-tree/) doesn't try to
+    // recurse into itself. The agent's cfg.workspace points at the
+    // project, the working tree lives at projectDir/.nanoagent/...
+    ws = mkdtempSync(join(tmpdir(), 'slash-wt-'));
+    projectDir = join(ws, 'project');
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 1;\n');
+    writeFileSync(join(projectDir, 'README.md'), '# proj\n');
+    stub = makeAgent(projectDir);
+    h = makeCtx(stub, projectDir);
+  });
+
+  afterEach(() => {
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('/snapshot saves the current working-tree state and reports files', async () => {
+    const { initWorkingTree } = await import('../working-tree.js');
+    initWorkingTree(projectDir, projectDir);
+    await handleSlashCommand('/snapshot baseline', h.ctx);
+    const content = lastAssistantContent(h);
+    expect(content).toContain('baseline');
+    expect(content).toContain('Snapshot saved');
+  });
+
+  it('/diffs lists saved snapshots', async () => {
+    const { initWorkingTree } = await import('../working-tree.js');
+    initWorkingTree(projectDir, projectDir);
+    await handleSlashCommand('/snapshot first', h.ctx);
+    await handleSlashCommand('/snapshot second', h.ctx);
+    await handleSlashCommand('/diffs', h.ctx);
+    const content = lastAssistantContent(h);
+    expect(content).toContain('first');
+    expect(content).toContain('second');
+  });
+
+  it('/diffs with no snapshots shows a helpful message', async () => {
+    await handleSlashCommand('/diffs', h.ctx);
+    expect(lastAssistantContent(h)).toContain('No snapshots yet');
+  });
+
+  it('/rollback <name> restores an earlier snapshot and undoes an edit', async () => {
+    const { initWorkingTree, workingTreeDir } = await import('../working-tree.js');
+    initWorkingTree(projectDir, projectDir);
+    await handleSlashCommand('/snapshot before', h.ctx);
+    writeFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'export const x = 99;\n');
+    await handleSlashCommand('/rollback before', h.ctx);
+    expect(lastAssistantContent(h)).toContain('before');
+    const after = readFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'utf-8');
+    expect(after).toBe('export const x = 1;\n');
+  });
+
+  it('/rollback (no name) wipes the working tree back to source', async () => {
+    const { initWorkingTree, workingTreeDir } = await import('../working-tree.js');
+    initWorkingTree(projectDir, projectDir);
+    writeFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'export const x = 99;\n');
+    expect(readFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'utf-8')).toContain('99');
+    await handleSlashCommand('/rollback', h.ctx);
+    expect(lastAssistantContent(h)).toContain('rolled back');
+    const after = readFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'utf-8');
+    expect(after).toBe('export const x = 1;\n');
+  });
+
+  it('/rollback <unknown-name> reports the error', async () => {
+    const { initWorkingTree } = await import('../working-tree.js');
+    initWorkingTree(projectDir, projectDir);
+    await handleSlashCommand('/snapshot known', h.ctx);
+    await handleSlashCommand('/rollback ghost', h.ctx);
+    expect(lastAssistantContent(h)).toMatch(/snapshot not found|Failed to rollback/);
   });
 });

@@ -23,7 +23,7 @@ import type { AgentCore } from './agent.js';
 import { now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
 import { refreshSystemPrompt } from './agent-messages.js';
-import { logError, logWarn } from './log.js';
+import { logDebug, logError, logWarn } from './log.js';
 import { GLOBAL_CONFIG_FILE } from './config/paths.js';
 
 /** Normalize a path for comparison (forward slashes, lowercase on Windows). */
@@ -226,7 +226,7 @@ export async function initAgent(agent: AgentCore) {
       );
       logWarn(
         `[security] Skipped auto-connecting ${blockedNames.length} MCP server(s) from project config ${source}. ` +
-          `Move the "mcp" block to your global config (~/.nanogent.json) or set NANOGENT_TRUST_PROJECT_MCP=1 to allow it.`
+          `Move the "mcp" block to your canonical config (<NANOAGENT_ROOT>/config/nanogent.json) or set NANOGENT_TRUST_PROJECT_MCP=1 to allow it.`
       );
     }
     if (allowedNames.length > 0) {
@@ -252,6 +252,20 @@ export async function initAgent(agent: AgentCore) {
   agent.skillManager.onPromptSync = (content) => {
     agent._systemPromptContent = content;
   };
+
+  // Lazy-init the per-workspace working tree. The first tool call lands
+  // here; subsequent tool calls reuse the tree. The tree is a copy of
+  // cfg.workspace, so edits never touch the source until the user runs
+  // /rollback.
+  const { ensureWorkingTree } = await import('./working-tree.js');
+  try {
+    ensureWorkingTree(agent.cfg.workspace);
+  } catch (err) {
+    // The source path may not exist yet (e.g. first-run against an empty
+    // cwd). That's fine — tools just operate on the workspace as-is until
+    // the source is populated. Don't fail the whole agent init for this.
+    logDebug('[init] working tree not initialised:', (err as Error).message);
+  }
 
   // Populate activeSkills with enabled skills (always-active from config)
   for (const [name, skill] of allSkills) {

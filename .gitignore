@@ -69,3 +69,9 @@ dist-packages/
 # Local snapshot / reference (created by prior debug sessions, not part of the package)
 _repro/
 _local_pack/
+
+# Runtime state under the canonical install root. config/ holds the
+# global config; workspace/ holds the per-workspace default tree target.
+# Both are populated by the agent at runtime — never source-controlled.
+config/
+workspace/

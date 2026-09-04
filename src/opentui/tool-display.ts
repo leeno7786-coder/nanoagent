@@ -81,7 +81,12 @@ function targetFromArgs(
   result?: Record<string, unknown>
 ): string {
   if (toolName === 'execute_command' || toolName === 'run_command') {
-    return String((args?.command ?? result?.command ?? '') as string).trim() || '(command)';
+    const command = String((args?.command ?? result?.command ?? '') as string).trim();
+    if (!command) return '(command)';
+    // Multi-line commands (heredocs etc.) render as one quiet row; the
+    // remaining lines already show up in the output preview below.
+    const newline = command.indexOf('\n');
+    return newline === -1 ? command : `${command.slice(0, newline)} …`;
   }
 
   if (toolName === 'manage_todos') {

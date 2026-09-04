@@ -23,7 +23,7 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
   return (
     <scrollbox
       flexDirection="column"
-      borderStyle="double"
+      borderStyle="single"
       borderColor={theme.borderColor}
       paddingX={2}
       paddingY={1}
@@ -35,7 +35,7 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.mutedFg}>Esc to close</text>
       <text> </text>
 
-      <text fg={theme.userFg}>Commands:</text>
+      <text fg={theme.accent}>Commands:</text>
       <text fg={theme.agentFg}> /new Start a new session (clear all)</text>
       <text fg={theme.agentFg}> /clear Clear chat history</text>
       <text fg={theme.agentFg}> /compact Compact conversation context</text>

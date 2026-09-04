@@ -142,6 +142,12 @@ describe('run-loop review fixes', () => {
   }
 
   it('routes sequential tool results through ContextManager; no dangling tool_calls after compaction', async () => {
+    // Write the file into the working tree (where tools actually operate),
+    // not directly into the workspace dir. The agent's cfg.workspace IS
+    // the source — the working tree is a copy at <ws>/.nanoagent/working-tree/.
+    const { initWorkingTree, workingTreeDir } = await import('../working-tree.js');
+    initWorkingTree(ws, ws);
+
     const agent = newAgent(makeConfig(ws, { modelContextLength: 1200 }));
     await agent.init();
     agent.onPermissionRequest = async () => 'allow';
@@ -165,7 +171,7 @@ describe('run-loop review fixes', () => {
       .getMessages()
       .find((m) => m.role === 'tool' && m.toolCallId === 'call-1');
     expect(ctxToolMsg).toBeDefined();
-    expect(existsSync(join(ws, 'out.txt'))).toBe(true);
+    expect(existsSync(join(workingTreeDir(ws), 'out.txt'))).toBe(true);
 
     // Seed enough history to force a compaction that removes the tool round
     for (let i = 0; i < 20; i++) {
@@ -223,13 +229,17 @@ describe('run-loop review fixes', () => {
   }, 20000);
 
   it('sanitizes secrets out of tool output before it enters history', async () => {
+    // Working tree is where read_file looks. Init it from the workspace.
+    const { initWorkingTree, workingTreeDir } = await import('../working-tree.js');
+    initWorkingTree(ws, ws);
+
     const agent = newAgent();
     await agent.init();
 
     // A file whose contents look like an API key — read_file output must be
     // redacted before the tool message is stored/sent to the model.
     writeFileSync(
-      join(ws, 'leak.txt'),
+      join(workingTreeDir(ws), 'leak.txt'),
       'api key: sk-abc123def456ghi789jkl012mno345pqr678',
       'utf-8'
     );

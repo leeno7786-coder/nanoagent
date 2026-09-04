@@ -118,6 +118,25 @@ export function SCRATCHPAD_DIR_FOR(_workspace?: string): string {
   return installPath('scratchpad');
 }
 
+/**
+ * Per-workspace metadata. Always lives at <workspace>/.nanoagent/ — the
+ * workspace is the project root the user pointed at, and this is where
+ * working-tree state, snapshots, and the rollback log are kept.
+ */
+export function WORKSPACE_META_DIR_FOR(workspace: string): string {
+  return join(workspace, '.nanoagent');
+}
+
+/** Where the actual editable files live for the given workspace. */
+export function WORKING_TREE_DIR_FOR(workspace: string): string {
+  return join(WORKSPACE_META_DIR_FOR(workspace), 'working-tree');
+}
+
+/** Where named .diff snapshots are stored for the given workspace. */
+export function SNAPSHOTS_DIR_FOR(workspace: string): string {
+  return join(WORKSPACE_META_DIR_FOR(workspace), 'snapshots');
+}
+
 /** config/todos.json — persistent todos. */
 export const TODO_FILE = () => installPath('config', 'todos.json');
 

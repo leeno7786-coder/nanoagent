@@ -262,21 +262,21 @@ export function CommandDropdown({
           const padded = item.name.padEnd(pad, ' ');
           const disabledTag = isDisabled ? ' [disabled]' : '';
           const fg = isSel
-            ? theme.headerFg
+            ? theme.onAccentFg
             : isDisabled
               ? theme.mutedFg
               : item.isSkill
                 ? theme.agentFg
-                : theme.inputFg;
+                : theme.headerFg;
 
           return (
             <text
               key={item.name}
               id={itemId(item.commandIndex ?? 0)}
               fg={fg}
-              bg={isSel ? theme.bgSelected : undefined}
+              bg={isSel ? theme.accentBg : undefined}
             >
-              {`${isSel ? '▸ ' : '  '}${padded}   ${item.description}${disabledTag}`}
+              {`  ${padded}   ${item.description}${disabledTag}`}
             </text>
           );
         }

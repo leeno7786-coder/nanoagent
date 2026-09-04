@@ -16,7 +16,6 @@ import { ErrorBoundary } from './error-boundary.js';
 import { useAppStore } from './app-store.js';
 import {
   formatBusyContext,
-  formatTurnUsage,
   type ContextUsageSnapshot,
   type TurnUsage,
 } from './token-display.js';
@@ -574,7 +573,7 @@ function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: T
           {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
         </box>
         {block.summary && block.summary !== '(no output)' && (
-          <text fg={theme.mutedFg}> ⎿ {block.summary}</text>
+          <text fg={theme.mutedFg}> └ {block.summary}</text>
         )}
         {block.previewLines?.length
           ? linePreview(block.previewLines, 6, theme.mutedFg, theme, '  ')
@@ -788,7 +787,7 @@ function SubAgentPanel({
 
             {isRunning && streamLine !== '' && (
               <text fg={theme.mutedFg} marginLeft={2}>
-                ⎿ {streamLine}
+                └ {streamLine}
               </text>
             )}
 
@@ -943,7 +942,6 @@ function AssistantMessageView({
   message,
   theme,
   toolInfoByCallId,
-  lastUsage,
   state,
   currentTool,
   elapsedMs,
@@ -1082,9 +1080,7 @@ function AssistantMessageView({
           );
         })()}
 
-      {message.role === 'assistant' && formatTurnUsage(lastUsage) && (
-        <text fg={theme.mutedFg}> {formatTurnUsage(lastUsage)}</text>
-      )}
+      {/* Turn usage lives in the status bar — no per-message token rows. */}
     </box>
   );
 }

@@ -4,6 +4,17 @@ import type { AgentCore } from '../agent.js';
 import { addToolMessage } from '../agent-messages.js';
 import { logDebug, logError } from '../log.js';
 import { parseToolArgs, checkSubAgentConsent, handleSpecialToolResults } from './utils.js';
+import { effectiveToolWorkspace } from '../working-tree.js';
+
+/**
+ * Tools read and write inside the per-workspace working tree, not the
+ * source. `cfg.workspace` is the user's project root (for context, git,
+ * detection); the tree is where edits land. The cache is keyed on the
+ * source so re-running against the same source reuses entries.
+ */
+function toolWorkspace(agent: AgentCore): string {
+  return effectiveToolWorkspace(agent.cfg.workspace);
+}
 
 export async function executeToolDirect(
   agent: AgentCore,
@@ -41,9 +52,10 @@ export async function executeToolDirect(
   }
 
   const configWithSecurity = { ...agent.cfg, securityManager: agent.securityManager };
+  const ws = toolWorkspace(agent);
   const raw = tool.executeAsync
-    ? await tool.executeAsync(args, agent.cfg.workspace, configWithSecurity)
-    : tool.execute(args, agent.cfg.workspace, configWithSecurity);
+    ? await tool.executeAsync(args, ws, configWithSecurity)
+    : tool.execute(args, ws, configWithSecurity);
   // Sanitize secrets out of tool output before it can reach the model.
   return agent.securityManager.sanitizeOutput(raw, agent.cfg.apiKey ?? undefined);
 }
@@ -123,7 +135,7 @@ export async function executeToolSequential(
       }
     }
 
-    const cached = agent.toolCache.get(tc.name, args, agent.cfg.workspace);
+    const cached = agent.toolCache.get(tc.name, args, toolWorkspace(agent));
     if (cached) {
       output = cached.result;
       wasCached = true;
@@ -208,7 +220,7 @@ export async function executeToolSequential(
       try {
         output = await tool.executeAsync(
           args,
-          agent.cfg.workspace,
+          toolWorkspace(agent),
           configWithSecurity,
           signal,
           subHooks
@@ -218,7 +230,7 @@ export async function executeToolSequential(
       }
     } else {
       output = tool
-        ? tool.execute(args, agent.cfg.workspace, configWithSecurity)
+        ? tool.execute(args, toolWorkspace(agent), configWithSecurity)
         : JSON.stringify({ ok: false, error: `Unknown tool: ${tc.name}`, tool: tc.name });
     }
   } catch (e: unknown) {
@@ -241,7 +253,7 @@ export async function executeToolSequential(
       const args = parseToolArgs(tc);
       const resultObj = JSON.parse(output);
       if (resultObj && typeof resultObj === 'object' && resultObj.ok === true) {
-        agent.toolCache.set(tc.name, args, agent.cfg.workspace, output, duration, true);
+        agent.toolCache.set(tc.name, args, toolWorkspace(agent), output, duration, true);
       }
     } catch (e) {
       logDebug('Tool output not cached due to invalid format:', e);
@@ -354,7 +366,7 @@ export async function executeToolsParallel(
         }
       }
 
-      const cached = agent.toolCache.get(tc.name, args, agent.cfg.workspace);
+      const cached = agent.toolCache.get(tc.name, args, toolWorkspace(agent));
       if (cached) {
         output = cached.result;
         wasCached = true;
@@ -416,7 +428,7 @@ export async function executeToolsParallel(
         try {
           output = await tool.executeAsync(
             args,
-            agent.cfg.workspace,
+            toolWorkspace(agent),
             configWithSecurity,
             signal,
             subHooks
@@ -426,7 +438,7 @@ export async function executeToolsParallel(
         }
       } else {
         output = tool
-          ? tool.execute(args, agent.cfg.workspace, configWithSecurity)
+          ? tool.execute(args, toolWorkspace(agent), configWithSecurity)
           : JSON.stringify({ ok: false, error: 'Unknown tool' });
       }
 
@@ -438,7 +450,7 @@ export async function executeToolsParallel(
           const resultObj = JSON.parse(output);
           if (resultObj && typeof resultObj === 'object' && resultObj.ok === true) {
             const duration = performance.now() - toolStart;
-            agent.toolCache.set(tc.name, args, agent.cfg.workspace, output, duration, true);
+            agent.toolCache.set(tc.name, args, toolWorkspace(agent), output, duration, true);
           }
         } catch (e) {
           logDebug('Parallel tool output not cached due to invalid format:', e);

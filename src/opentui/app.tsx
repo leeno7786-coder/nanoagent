@@ -25,6 +25,7 @@ import { StatusBar } from './status-bar.js';
 import { TodoSidebar } from './todo-sidebar.js';
 import { THEMES, DEFAULT_THEME } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
+import { readWorkingTreeMetadata, workingTreeDir } from '../working-tree.js';
 import { getProviderBaseURL } from '../providers/index.js';
 import { handleSlashCommand, checkAndAutoCompact } from './slash-commands/index.js';
 import { parseBangCommand, runBangCommand, recordBangExchange } from './bang-command.js';
@@ -152,10 +153,21 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     process.on('SIGINT', handleSigint);
 
     if (agent.messages.length === 0) {
+      // Working-tree status: did the lazy init copy a fresh tree, reuse an
+      // existing one, or fall back to operating on the source?
+      const wtMeta = readWorkingTreeMetadata(agent.cfg.workspace);
+      const wtPath = workingTreeDir(agent.cfg.workspace);
+      const wtState = wtMeta
+        ? `working tree: \`${wtPath}\` (source: \`${wtMeta.sourcePath}\`)`
+        : `working tree: not initialised (tools will operate on \`${agent.cfg.workspace}\` until first tool call)`;
       agent.messages.push({
         id: 'welcome-banner',
         role: 'assistant',
-        content: `${NANOAGENT_BANNER}\nWelcome to **NanoAgent**! Type \`/help\` for commands or \`/config\` to manage settings.`,
+        content:
+          `${NANOAGENT_BANNER}\nWelcome to **NanoAgent**!\n\n` +
+          `workspace: \`${agent.cfg.workspace}\`\n` +
+          `${wtState}\n\n` +
+          `Tools edit the working tree, never the source. Use \`/snapshot [name]\` to save a checkpoint, \`/rollback [name]\` to restore one, and \`/rollback\` (no name) to wipe the tree back to source. Type \`/help\` for commands or \`/config\` to manage settings.`,
         timestamp: Date.now(),
       });
       syncFromAgent(agent);

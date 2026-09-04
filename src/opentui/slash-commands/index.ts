@@ -634,6 +634,83 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       }
       process.exit(0);
       return;
+    case 'snapshot': {
+      const name = args.trim() || undefined;
+      const { defaultSnapshotName, captureSnapshot } = await import('../../snapshots.js');
+      try {
+        const info = captureSnapshot(agent.cfg.workspace, name ?? defaultSnapshotName());
+        pushAssistant(
+          agent,
+          `📸 Snapshot saved: \`${info.name}\`\n  files: ${info.filesChanged}\n  path: \`${info.path}\``,
+          setMessages
+        );
+      } catch (err) {
+        pushAssistant(
+          agent,
+          `Failed to capture snapshot: ${err instanceof Error ? err.message : String(err)}`,
+          setMessages
+        );
+      }
+      return;
+    }
+    case 'diffs': {
+      const { listSnapshots } = await import('../../snapshots.js');
+      const snaps = listSnapshots(agent.cfg.workspace);
+      if (snaps.length === 0) {
+        pushAssistant(
+          agent,
+          'No snapshots yet. Run `/snapshot [name]` to capture the current working-tree state.',
+          setMessages
+        );
+        return;
+      }
+      const lines = snaps.map(
+        (s) =>
+          `  • \`${s.name}\`  ·  ${s.filesChanged} files  ·  ${s.createdAt}`
+      );
+      pushAssistant(
+        agent,
+        `**Snapshots (newest first):**\n${lines.join('\n')}\n\nRestore with \`/rollback <name>\` or wipe the working tree back to source with \`/rollback\`.`,
+        setMessages
+      );
+      return;
+    }
+    case 'rollback': {
+      const { restoreSnapshot } = await import('../../snapshots.js');
+      const { dropWorkingTree, initWorkingTree } = await import('../../working-tree.js');
+      const target = args.trim();
+      try {
+        if (!target) {
+          // Tree swap: replace the working tree contents with the source.
+          // The user's edits are lost (unless they were /snapshotted first).
+          dropWorkingTree(agent.cfg.workspace);
+          initWorkingTree(agent.cfg.workspace, agent.cfg.workspace);
+          pushAssistant(
+            agent,
+            `↺ Working tree rolled back to source (${agent.cfg.workspace}).`,
+            setMessages
+          );
+        } else {
+          const result = restoreSnapshot(agent.cfg.workspace, target);
+          let warn = '';
+          if (result.missingIntermediate.length > 0) {
+            warn = `\n\n⚠ Some intermediate snapshots in the chain were missing: ${result.missingIntermediate.join(', ')}. The restore applied what was available.`;
+          }
+          pushAssistant(
+            agent,
+            `↺ Rolled back to snapshot \`${target}\` (${result.applied} files)${warn}`,
+            setMessages
+          );
+        }
+      } catch (err) {
+        pushAssistant(
+          agent,
+          `Failed to rollback: ${err instanceof Error ? err.message : String(err)}`,
+          setMessages
+        );
+      }
+      return;
+    }
     case 'graph': {
       const sub = args.split(' ')[0].toLowerCase();
       const ws = agent?.cfg?.workspace || process.cwd();
