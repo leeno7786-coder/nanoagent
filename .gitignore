@@ -75,3 +75,6 @@ _local_pack/
 # Both are populated by the agent at runtime — never source-controlled.
 config/
 workspace/
+
+# Runtime artifacts
+.nanoagent/

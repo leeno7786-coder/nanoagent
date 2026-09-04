@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.5.3** (`@omega3_0/nanoagent`) — reasoning-only turns now nudge the model instead of silently retrying identical context (small models no longer loop the same analysis invisibly), and wheel scrolling is restored. The workspace defaults to the directory you launched nanoagent from, so tools see your actual project. Includes the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
+Current release: **2.5.4** (`@omega3_0/nanoagent`) — the small-model system prompt now opens with an explicit turn contract (every reply ends with tool calls or a visible answer, never thinking-only), and a dead-chat-input regression on Windows Terminal is fixed (mouse-movement tracking off, wheel scroll kept). Reasoning-only turns nudge the model instead of silently retrying identical context. The workspace defaults to the directory you launched nanoagent from, so tools see your actual project. Includes the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -432,6 +432,12 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.5.4 — Small-model prompt rework + dead-input fix
+
+- **Small-model system prompt reworked around a "turn contract".** Every reply must end with tool calls or a visible answer — never internal thinking only — so thinking-channel models don't burn turns on invisible analysis. Adds act-don't-narrate, keep-moving (act on tool results immediately), chat-style output rules (brief working notes, skimmable final summary), and recovery rules (never repeat an identical failing call).
+- **Fix dead chat input on Windows.** Mouse capture (restored in 2.5.3 for wheel scrolling) also enabled mouse-*movement* tracking by default; the flood of motion reports on Windows Terminal could starve the key parser, leaving the chat bar unresponsive. Movement tracking is now off — wheel scroll and click paste keep working.
+- **Tests:** suite 929 pass / 0 fail.
 
 ### 2.5.3 — Reasoning-only loop fix + scroll restore
 
