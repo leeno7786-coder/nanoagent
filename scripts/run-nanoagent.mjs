@@ -215,6 +215,11 @@ async function main() {
   const launcherFile = fileURLToPath(import.meta.url);
   const packageRoot = resolveInstallRoot({ env: process.env, launcherFile });
 
+  // The directory the user actually launched from. The child gets chdir'd to
+  // the install root (so cwd is never an accident), but the agent's default
+  // workspace must be THIS directory — where the user opened nanoagent.
+  const launchCwd = process.cwd();
+
   // Fail fast if any duplicate-candidate inputs are present in the environment.
   // We don't read these today, but reserve the right to reject them later —
   // the whole point is no duplicate resolution.
@@ -240,6 +245,7 @@ async function main() {
   const childEnv = {
     ...process.env,
     NANOAGENT_ROOT: packageRoot,
+    NANOAGENT_LAUNCH_CWD: launchCwd,
   };
 
   if (launch.kind === 'bun-src' || launch.kind === 'bun-dist') {
@@ -274,6 +280,7 @@ async function main() {
 
   if (launch.kind === 'node-dist') {
     process.env.NANOAGENT_ROOT = packageRoot;
+    process.env.NANOAGENT_LAUNCH_CWD = launchCwd;
     try {
       process.chdir(packageRoot);
     } catch {

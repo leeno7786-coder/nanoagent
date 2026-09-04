@@ -22,6 +22,17 @@ import {
 } from './paths.js';
 
 /**
+ * Default agent workspace: the directory the user launched nanoagent from
+ * (captured by scripts/run-nanoagent.mjs before it chdirs the child into the
+ * install root). Falls back to the canned install-root workspace only when no
+ * launch directory is known (tests, embedded use).
+ */
+function defaultWorkspace(): string {
+  const launchCwd = process.env.NANOAGENT_LAUNCH_CWD;
+  return launchCwd && launchCwd.length > 0 ? resolve(launchCwd) : WORKSPACE_DIR();
+}
+
+/**
  * Trust-sensitive environment variables. Workspace/project .env files are
  * UNTRUSTED — any cloned repo can plant one — so these variables are only
  * honored when they come from the real environment (process launch) or the
@@ -232,7 +243,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
 
   const cfg: Config = {
     ...getDefault(),
-    workspace: explicitWorkspace ? resolve(explicitWorkspace) : WORKSPACE_DIR(),
+    workspace: explicitWorkspace ? resolve(explicitWorkspace) : defaultWorkspace(),
   };
 
   let explicitConfig: Record<string, unknown> | undefined;
@@ -253,7 +264,8 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   // "config disappears depending on where you launch from" bug.
   const globalConfigPath = GLOBAL_CONFIG_FILE();
   // Workspace-local override, only when an explicit --workspace was supplied.
-  // The workspace is ALWAYS explicit now; we don't autodetect from cwd.
+  // The launch directory supplies the default workspace but NOT a config
+  // override — an arbitrary project dir must not silently reconfigure the agent.
   const workspaceLocalPath = explicitWorkspace
     ? join(resolve(explicitWorkspace), 'nanogent.json')
     : undefined;
@@ -312,7 +324,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   }
 
   if (cfg.workspace) cfg.workspace = resolve(cfg.workspace);
-  else cfg.workspace = WORKSPACE_DIR();
+  else cfg.workspace = defaultWorkspace();
 
   // Explicit programmatic/CLI options beat any config FILE values. The early
   // assign above seeds workspace resolution; the home/project merges must not

@@ -597,3 +597,45 @@ describe('no implicit cwd/home config discovery', () => {
     expect(cfg.model).not.toBe('home-model');
   });
 });
+
+describe('launch-cwd workspace default', () => {
+  it('defaults the workspace to NANOAGENT_LAUNCH_CWD when set', () => {
+    saveEnv('NANOAGENT_LAUNCH_CWD');
+    const launchDir = join(tmp, 'launch-here');
+    mkdirSync(launchDir, { recursive: true });
+    process.env.NANOAGENT_LAUNCH_CWD = launchDir;
+
+    const cfg = loadConfig();
+    expect(cfg.workspace).toBe(resolve(launchDir));
+  });
+
+  it('falls back to the install-root workspace when no launch cwd is known', () => {
+    saveEnv('NANOAGENT_LAUNCH_CWD');
+    delete process.env.NANOAGENT_LAUNCH_CWD;
+
+    const cfg = loadConfig();
+    expect(cfg.workspace).toBe(nanoagentPaths().workspaceDir);
+  });
+
+  it('explicit --workspace still beats the launch cwd', () => {
+    saveEnv('NANOAGENT_LAUNCH_CWD');
+    const launchDir = join(tmp, 'launch-here');
+    mkdirSync(launchDir, { recursive: true });
+    process.env.NANOAGENT_LAUNCH_CWD = launchDir;
+
+    const cfg = loadConfig({ workspace: tmp });
+    expect(cfg.workspace).toBe(resolve(tmp));
+  });
+
+  it('a launch-cwd nanogent.json is NOT read as a config override', () => {
+    saveEnv('NANOAGENT_LAUNCH_CWD');
+    const launchDir = join(tmp, 'launch-here');
+    mkdirSync(launchDir, { recursive: true });
+    process.env.NANOAGENT_LAUNCH_CWD = launchDir;
+    writeFileSync(join(launchDir, 'nanogent.json'), JSON.stringify({ model: 'planted-model' }));
+
+    const cfg = loadConfig();
+    expect(cfg.workspace).toBe(resolve(launchDir));
+    expect(cfg.model).not.toBe('planted-model');
+  });
+});

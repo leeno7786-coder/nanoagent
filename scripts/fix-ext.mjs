@@ -16,7 +16,12 @@ function resolveToSpec(fromFile, spec) {
   const noJs = spec.replace(/\.js$/, '');
   const base = resolve(dirname(fromFile), noJs);
   // Directory with index file?
-  let st; try { st = statSync(base); } catch { st = null; }
+  let st;
+  try {
+    st = statSync(base);
+  } catch {
+    st = null;
+  }
   if (st && st.isDirectory()) {
     for (const e of srcExts) {
       if (existsSync(join(base, 'index' + e))) return `${noJs}/index.js`;
@@ -36,11 +41,15 @@ function walk(dir) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     const st = statSync(p);
-    if (st.isDirectory()) { walk(p); continue; }
+    if (st.isDirectory()) {
+      walk(p);
+      continue;
+    }
     if (!/\.(ts|tsx|jsx|mts|cts)$/.test(name)) continue;
     if (name.endsWith('.d.ts')) continue;
     let src = readFileSync(p, 'utf8');
-    const re = /(\bfrom\s+|\bimport\s+|\bexport\s+\*\s+from\s+|\bexport\s*\{[^}]*\}\s+from\s+)(['"])(\.[^'"]*?)(['"])/g;
+    const re =
+      /(\bfrom\s+|\bimport\s+|\bexport\s+\*\s+from\s+|\bexport\s*\{[^}]*\}\s+from\s+)(['"])(\.[^'"]*?)(['"])/g;
     const dynRe = /\bimport\s*\(\s*(['"])(\.[^'"]*?)\1\s*\)/g;
     let changed = false;
     let out = src.replace(re, (m, kw, q1, spec, q2) => {
@@ -55,7 +64,10 @@ function walk(dir) {
       changed = true;
       return `import(${q}${fixed}${q})`;
     });
-    if (changed) { writeFileSync(p, out); console.log('patched', p.replace(root, 'src')); }
+    if (changed) {
+      writeFileSync(p, out);
+      console.log('patched', p.replace(root, 'src'));
+    }
   }
 }
 walk(root);

@@ -45,9 +45,9 @@ test('Command validation blocks dangerous commands', () => {
     'dd if=/dev/zero',
     'sudo rm -rf /',
     'kill -9 1',
-    'mkfs.ext4 /dev/sda1'
+    'mkfs.ext4 /dev/sda1',
   ];
-  
+
   for (const cmd of dangerousCommands) {
     const result = sm.validateCommand(cmd);
     if (result.ok) {
@@ -61,14 +61,8 @@ test('Command validation blocks dangerous commands', () => {
 // Test 3: Command Validation - Allow Safe Commands
 test('Command validation allows safe commands', () => {
   const sm = createSecurityManager({}, process.cwd());
-  const safeCommands = [
-    'ls -la',
-    'git status',
-    'cat file.txt',
-    'echo hello',
-    'pwd'
-  ];
-  
+  const safeCommands = ['ls -la', 'git status', 'cat file.txt', 'echo hello', 'pwd'];
+
   for (const cmd of safeCommands) {
     const result = sm.validateCommand(cmd);
     if (!result.ok) {
@@ -82,13 +76,8 @@ test('Command validation allows safe commands', () => {
 // Test 4: File Access Control - Block Sensitive Paths
 test('File access control blocks sensitive paths', () => {
   const sm = createSecurityManager({}, process.cwd());
-  const blockedPaths = [
-    '.env',
-    '.git/config',
-    '.ssh/id_rsa',
-    'node_modules/package'
-  ];
-  
+  const blockedPaths = ['.env', '.git/config', '.ssh/id_rsa', 'node_modules/package'];
+
   for (const path of blockedPaths) {
     const result = sm.validateFileAccess(path, 'read');
     if (result.ok) {
@@ -102,12 +91,8 @@ test('File access control blocks sensitive paths', () => {
 // Test 5: File Access Control - Allow Normal Paths
 test('File access control allows normal paths', () => {
   const sm = createSecurityManager({}, process.cwd());
-  const allowedPaths = [
-    'src/index.ts',
-    'README.md',
-    'src/main.ts'
-  ];
-  
+  const allowedPaths = ['src/index.ts', 'README.md', 'src/main.ts'];
+
   for (const path of allowedPaths) {
     const result = sm.validateFileAccess(path, 'read');
     if (!result.ok) {
@@ -123,10 +108,13 @@ test('Output sanitization sanitizes API keys', () => {
   const sm = createSecurityManager({}, process.cwd());
   const inputs = [
     { input: 'sk-abc123def456ghi789jkl012mno345pqr678', shouldContain: '[OPENAI_KEY_REDACTED]' },
-    { input: 'or-abc123def456ghi789jkl012mno345pqr678', shouldContain: '[OPENROUTER_KEY_REDACTED]' },
-    { input: 'AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', shouldContain: '[GOOGLE_KEY_REDACTED]' }
+    {
+      input: 'or-abc123def456ghi789jkl012mno345pqr678',
+      shouldContain: '[OPENROUTER_KEY_REDACTED]',
+    },
+    { input: 'AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', shouldContain: '[GOOGLE_KEY_REDACTED]' },
   ];
-  
+
   for (const { input, shouldContain } of inputs) {
     const sanitized = sm.sanitizeOutput(input);
     if (!sanitized.includes(shouldContain)) {
@@ -147,9 +135,9 @@ test('Output sanitization sanitizes tokens', () => {
   const inputs = [
     { input: 'Bearer my-secret-token', shouldContain: '[REDACTED]' },
     { input: 'password=secret123', shouldContain: '[REDACTED]' },
-    { input: 'token=abc123', shouldContain: '[REDACTED]' }
+    { input: 'token=abc123', shouldContain: '[REDACTED]' },
   ];
-  
+
   for (const { input, shouldContain } of inputs) {
     const sanitized = sm.sanitizeOutput(input);
     if (!sanitized.includes(shouldContain)) {
@@ -164,10 +152,12 @@ test('Output sanitization sanitizes tokens', () => {
 test('Configuration loads correctly', () => {
   const sm = createSecurityManager({}, process.cwd());
   const config = sm.getConfig();
-  return config.enabled === true && 
-         config.validateCommands === true &&
-         config.validateFileAccess === true &&
-         config.sanitizeOutput === true;
+  return (
+    config.enabled === true &&
+    config.validateCommands === true &&
+    config.validateFileAccess === true &&
+    config.sanitizeOutput === true
+  );
 });
 
 // Test 9: Security Can Be Disabled
@@ -179,11 +169,14 @@ test('Security can be disabled', () => {
 
 // Test 10: Custom Configuration
 test('Custom configuration works', () => {
-  const sm = createSecurityManager({
-    enabled: true,
-    validateCommands: false,
-    maxFileSize: 1000
-  }, process.cwd());
+  const sm = createSecurityManager(
+    {
+      enabled: true,
+      validateCommands: false,
+      maxFileSize: 1000,
+    },
+    process.cwd()
+  );
   const config = sm.getConfig();
   return config.validateCommands === false && config.maxFileSize === 1000;
 });
@@ -198,9 +191,12 @@ test('Workspace validation works', () => {
 
 // Test 12: Allowed Paths Override
 test('Allowed paths override blocked paths', () => {
-  const sm = createSecurityManager({
-    allowedPaths: ['**/test/**']
-  }, process.cwd());
+  const sm = createSecurityManager(
+    {
+      allowedPaths: ['**/test/**'],
+    },
+    process.cwd()
+  );
   const result = sm.validateFileAccess('src/test/file.txt', 'read');
   return result.ok === true;
 });

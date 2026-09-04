@@ -10,7 +10,16 @@
  * npm --os=win32 --cpu=x64 so OpenTUI's win32 native optional package is pulled.
  */
 import { createHash } from 'node:crypto';
-import { createWriteStream, existsSync, mkdirSync, rmSync, cpSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  cpSync,
+  readFileSync,
+  writeFileSync,
+  chmodSync,
+} from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { execSync } from 'node:child_process';
@@ -126,7 +135,10 @@ async function main() {
   cpSync(path.join(ROOT, 'dist'), path.join(STAGE, 'dist'), { recursive: true });
   cpSync(path.join(ROOT, 'skills'), path.join(STAGE, 'skills'), { recursive: true });
   mkdirSync(path.join(STAGE, 'scripts'), { recursive: true });
-  cpSync(path.join(ROOT, 'scripts', 'run-nanoagent.mjs'), path.join(STAGE, 'scripts', 'run-nanoagent.mjs'));
+  cpSync(
+    path.join(ROOT, 'scripts', 'run-nanoagent.mjs'),
+    path.join(STAGE, 'scripts', 'run-nanoagent.mjs')
+  );
   for (const f of ['package.json', 'README.md', 'LICENSE', 'SECURITY.md', 'AGENTS.md']) {
     cpSync(path.join(ROOT, f), path.join(STAGE, f));
   }
