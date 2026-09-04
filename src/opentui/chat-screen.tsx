@@ -309,6 +309,9 @@ export function ChatScreen({
   // Live `!` command run — terminal-style streaming block above the input.
   const skillCommands = useAppStore((s) => s.skillCommands);
   const bangRun = useAppStore((s) => s.bangRun);
+  // Any open overlay (palette, help, connect…) suspends the slash dropdown
+  // and yields input focus to the overlay; closing restores both.
+  const overlayOpen = useAppStore((s) => s.overlay !== null);
   const bangLiveLines = useMemo(() => {
     if (!bangRun || !bangRun.output) return [];
     // Show the tail: a long-running command scrolls like a real terminal.
@@ -531,6 +534,7 @@ export function ChatScreen({
         onSubmit={handleSubmitLocal}
         onPick={handleDropdownPick}
         skillCommands={skillCommands}
+        enabled={!overlayOpen}
       />
 
       {/* Live `!` command block — streams output while the command runs.
@@ -573,7 +577,7 @@ export function ChatScreen({
           value={inputValue}
           onInput={setInputValue}
           onSubmit={handleInputSubmit}
-          focused
+          focused={!overlayOpen}
         />
         <box flexDirection="row" flexShrink={0} marginLeft={1}>
           <text fg={permCfg.getColor(theme)}>

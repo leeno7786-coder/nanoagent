@@ -62,6 +62,8 @@ interface CommandDropdownProps {
   onPick: (command: string) => void;
   onSubmit?: (value: string) => void;
   skillCommands?: SkillCommand[];
+  /** False while an overlay (palette, help, …) owns the keyboard. */
+  enabled?: boolean;
 }
 
 export function CommandDropdown({
@@ -70,10 +72,11 @@ export function CommandDropdown({
   onPick,
   onSubmit,
   skillCommands: propSkillCommands,
+  enabled = true,
 }: CommandDropdownProps) {
   const [selected, setSelected] = useState(0);
   const scrollRef = useRef<ScrollBoxRenderable>(null);
-  const open = inputValue.startsWith('/');
+  const open = enabled && inputValue.startsWith('/');
   const filterText = inputValue.toLowerCase();
 
   // Load skill commands
