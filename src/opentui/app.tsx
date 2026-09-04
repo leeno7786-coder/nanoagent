@@ -739,6 +739,18 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         case 'export':
           void handleSubmit('/export');
           break;
+        case 'snapshot':
+          void handleSubmit('/snapshot');
+          break;
+        case 'diffs':
+          void handleSubmit('/diffs');
+          break;
+        case 'rollback':
+          // Never execute bare — a no-name rollback restores the workspace
+          // baseline. Prefill the input so the user picks a snapshot (or
+          // confirms the baseline deliberately).
+          st.setInputPrefill('/rollback ');
+          break;
         case 'todo':
           st.toggleShowTodos();
           break;

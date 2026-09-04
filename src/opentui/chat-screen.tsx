@@ -206,6 +206,8 @@ const ARG_BEARING = new Set([
   '/todo',
   '/unload',
   '/skill-load',
+  '/snapshot',
+  '/rollback',
   '/skill',
   '/skills',
 ]);
@@ -312,6 +314,16 @@ export function ChatScreen({
   // Any open overlay (palette, help, connect…) suspends the slash dropdown
   // and yields input focus to the overlay; closing restores both.
   const overlayOpen = useAppStore((s) => s.overlay !== null);
+
+  // One-shot input prefill (e.g. the palette's rollback action, which must
+  // not execute bare — a no-name rollback restores the workspace baseline).
+  const inputPrefill = useAppStore((s) => s.inputPrefill);
+  useEffect(() => {
+    if (inputPrefill !== null) {
+      setInputValue(inputPrefill);
+      useAppStore.getState().setInputPrefill(null);
+    }
+  }, [inputPrefill]);
   const bangLiveLines = useMemo(() => {
     if (!bangRun || !bangRun.output) return [];
     // Show the tail: a long-running command scrolls like a real terminal.

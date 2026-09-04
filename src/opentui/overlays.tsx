@@ -65,6 +65,11 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.headerFg}> /copy [id] Copy message content to clipboard</text>
       <text fg={theme.headerFg}> /save [name] Save conversation</text>
       <text fg={theme.headerFg}> /load Load a saved conversation</text>
+      <text fg={theme.headerFg}> /new Start a new session</text>
+      <text fg={theme.headerFg}> /delete-session [id] Delete a saved session</text>
+      <text fg={theme.headerFg}> /snapshot [name] Capture a workspace snapshot</text>
+      <text fg={theme.headerFg}> /diffs List saved snapshots, newest first</text>
+      <text fg={theme.headerFg}> /rollback [name] Restore a snapshot (no name = baseline)</text>
       <text fg={theme.headerFg}> /reload Reload config, skills, and LM Studio metadata</text>
       <text fg={theme.headerFg}> /theme [name] Switch color theme</text>
       <text fg={theme.headerFg}>

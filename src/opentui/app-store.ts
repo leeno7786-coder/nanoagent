@@ -26,6 +26,8 @@ interface AppState {
   showTodos: boolean;
   theme: Theme;
   selectedMessageIndex: number | null;
+  /** One-shot text the chat input should adopt (e.g. palette prefills). */
+  inputPrefill: string | null;
   pendingPermissionReq: PermissionRequest | null;
   permissionResolver: ((choice: 'allow' | 'always_allow' | 'deny') => void) | null;
   permissionMode: PermissionMode;
@@ -66,6 +68,7 @@ interface AppState {
   setTheme: (t: Theme) => void;
   cycleTheme: (themeNames: string[], themes: Record<string, Theme>) => void;
   setSelectedMessageIndex: (i: number | null | ((prev: number | null) => number | null)) => void;
+  setInputPrefill: (v: string | null) => void;
 
   setPendingPermissionReq: (r: PermissionRequest | null) => void;
   setPermissionResolver: (r: ((choice: 'allow' | 'always_allow' | 'deny') => void) | null) => void;
@@ -102,6 +105,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   showTodos: false,
   theme: DEFAULT_THEME,
   selectedMessageIndex: null,
+  inputPrefill: null,
   pendingPermissionReq: null,
   permissionResolver: null,
   permissionMode: 'ask',
@@ -138,6 +142,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
   setShowTodos: (s) =>
     set(typeof s === 'function' ? { showTodos: s(get().showTodos) } : { showTodos: s }),
+  setInputPrefill: (v) => set({ inputPrefill: v }),
   toggleShowTodos: () => set((st) => ({ showTodos: !st.showTodos })),
   setTheme: (t) => set({ theme: t }),
   cycleTheme: (names, themes) =>
