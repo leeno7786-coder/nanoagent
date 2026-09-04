@@ -77,7 +77,9 @@ export function CommandPalette({ theme, onAction, onClose }: CommandPaletteProps
     setSelected(0);
   };
 
-  const visibleRows = Math.min(filtered.length, 12);
+  // All 14 actions fit on screen — render every match, no scroll window
+  // (avoids selection moving onto invisible rows).
+  const visibleRows = filtered.length;
 
   return (
     <box position="absolute" top={3} left={0} right={0} alignItems="center" zIndex={20}>
@@ -112,7 +114,7 @@ export function CommandPalette({ theme, onAction, onClose }: CommandPaletteProps
           <text fg={theme.mutedFg}>(no matching action)</text>
         ) : (
           <box flexDirection="column" height={visibleRows} flexShrink={0} overflow="hidden">
-            {filtered.slice(0, visibleRows).map((item, i) => {
+            {filtered.map((item, i) => {
               const isSel = i === selected;
               const fg = isSel ? theme.onAccentFg : theme.headerFg;
               const metaFg = isSel ? theme.onAccentFg : theme.mutedFg;
