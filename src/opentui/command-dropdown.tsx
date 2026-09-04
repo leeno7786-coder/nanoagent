@@ -14,21 +14,23 @@ function itemId(index: number): string {
 interface Command {
   name: string;
   description: string;
+  /** Right-aligned key hint shown in the palette row (e.g. 'F1'). */
+  hint?: string;
   enabled?: boolean;
 }
 
 const BUILTIN_COMMANDS: Command[] = [
-  { name: '/help', description: 'Show help (F1)' },
-  { name: '/clear', description: 'Clear chat (F2)' },
+  { name: '/help', description: 'Show help', hint: 'F1' },
+  { name: '/clear', description: 'Clear chat', hint: 'F2' },
   { name: '/compact', description: 'Compact conversation' },
-  { name: '/auto', description: 'Autonomous mode (F3)' },
-  { name: '/todo', description: 'Todo sidebar (F4)' },
-  { name: '/save', description: 'Save session (F5)' },
-  { name: '/load', description: 'Load session (F6)' },
+  { name: '/auto', description: 'Autonomous mode', hint: 'F3' },
+  { name: '/todo', description: 'Todo sidebar', hint: 'F4' },
+  { name: '/save', description: 'Save session', hint: 'F5' },
+  { name: '/load', description: 'Load session', hint: 'F6' },
   { name: '/cd', description: 'Change tool workspace' },
   { name: '/allow', description: 'Approve extra tool path' },
   { name: '/export', description: 'Export chat to markdown' },
-  { name: '/skills', description: 'Manage skills (F8)' },
+  { name: '/skills', description: 'Manage skills', hint: 'F8' },
   { name: '/reload', description: 'Reload configuration' },
   {
     name: '/config',
@@ -38,7 +40,7 @@ const BUILTIN_COMMANDS: Command[] = [
   { name: '/effort', description: 'Thinking effort: none|low|medium|high|extra-high' },
   { name: '/set', description: 'Quick-set config option (/set model <name>)' },
   { name: '/profile', description: 'List or apply a named model profile (/profile <name>)' },
-  { name: '/theme', description: 'Switch theme' },
+  { name: '/theme', description: 'Switch theme', hint: 'F9' },
   { name: '/connect', description: 'Connect a runtime provider' },
   { name: '/usage', description: 'Session tokens and estimated USD' },
   { name: '/doctor', description: 'Health check (config + LM Studio)' },
@@ -51,7 +53,7 @@ const BUILTIN_COMMANDS: Command[] = [
     name: '/permissions',
     description: 'Tool & command permissions (read_only, ask, allow_edits, always_allow)',
   },
-  { name: '/exit', description: 'Quit (F10)' },
+  { name: '/exit', description: 'Quit', hint: 'F10' },
 ];
 
 interface CommandDropdownProps {
@@ -83,7 +85,7 @@ export function CommandDropdown({
     return getSkillCommands(skills, { includeDisabled: true });
   }, [propSkillCommands]);
 
-  const allCommands = useMemo(() => {
+  const allCommands = useMemo<Command[]>(() => {
     return [...BUILTIN_COMMANDS, ...loadedSkillCommands];
   }, [loadedSkillCommands]);
 
@@ -101,6 +103,7 @@ export function CommandDropdown({
       type: 'header' | 'command';
       name: string;
       description: string;
+      hint?: string;
       isSkill?: boolean;
       enabled?: boolean;
       commandIndex?: number;
@@ -114,6 +117,7 @@ export function CommandDropdown({
           type: 'command',
           name: c.name,
           description: c.description,
+          hint: c.hint,
           commandIndex: commandIndex++,
         });
       }
@@ -212,21 +216,6 @@ export function CommandDropdown({
 
   if (!open) return null;
 
-  if (commandCount === 0) {
-    return (
-      <box
-        borderStyle="single"
-        borderColor={theme.borderColor}
-        paddingX={1}
-        height={3}
-        flexShrink={0}
-        backgroundColor={theme.bgPanel}
-      >
-        <text fg={theme.mutedFg}>(no match — Enter sends "{inputValue}")</text>
-      </box>
-    );
-  }
-
   const pad = Math.max(
     ...filteredBuiltin.map((c) => c.name.length),
     ...filteredSkills.map((c) => c.name.length)
@@ -234,54 +223,90 @@ export function CommandDropdown({
   const headerCount =
     (filteredBuiltin.length > 0 ? 1 : 0) +
     (filteredSkills.length > 0 && filteredBuiltin.length > 0 ? 1 : 0);
-  const visibleRows = Math.min(commandCount + headerCount, 6);
+  const visibleRows = Math.min(commandCount + headerCount, 10);
 
   return (
-    <scrollbox
-      ref={scrollRef}
-      flexDirection="column"
-      borderStyle="single"
-      borderColor={theme.borderColor}
-      paddingX={1}
-      height={Math.min(visibleRows + 2, 8)}
-      flexShrink={0}
-      backgroundColor={theme.bgPanel}
-    >
-      {displayItems.map((item, _displayIndex) => {
-        if (item.type === 'header') {
-          return (
-            <text key={`header-${item.name}`} fg={theme.mutedFg} marginTop={1}>
-              {`  ${item.name}`}
-            </text>
-          );
-        }
+    <box position="absolute" top={2} left={0} right={0} alignItems="center" zIndex={10}>
+      <box
+        flexDirection="column"
+        width="62%"
+        borderStyle="single"
+        borderColor={theme.borderColor}
+        paddingX={1}
+        paddingY={1}
+        flexShrink={0}
+        backgroundColor={theme.bgPanel}
+      >
+        {/* Title row */}
+        <box flexDirection="row" justifyContent="space-between" flexShrink={0}>
+          <text fg={theme.headerFg}>Commands</text>
+          <text fg={theme.mutedFg}>esc</text>
+        </box>
 
-        if (item.type === 'command') {
-          const isSel = item.commandIndex === selected;
-          const isDisabled = item.isSkill === true && item.enabled === false;
-          const padded = item.name.padEnd(pad, ' ');
-          const disabledTag = isDisabled ? ' [disabled]' : '';
-          const fg = isSel
-            ? theme.onAccentFg
-            : isDisabled
-              ? theme.mutedFg
-              : item.isSkill
-                ? theme.agentFg
-                : theme.headerFg;
+        {/* Search row */}
+        <box flexDirection="row" flexShrink={0} marginBottom={1}>
+          <text fg={theme.accent}>{inputValue.slice(0, 1)}</text>
+          <text fg={theme.headerFg}>{inputValue.slice(1)}</text>
+          <text fg={theme.mutedFg}>▏</text>
+        </box>
 
-          return (
-            <text
-              key={item.name}
-              id={itemId(item.commandIndex ?? 0)}
-              fg={fg}
-              bg={isSel ? theme.accentBg : undefined}
-            >
-              {`  ${padded}   ${item.description}${disabledTag}`}
-            </text>
-          );
-        }
-        return null;
-      })}
-    </scrollbox>
+        {commandCount === 0 ? (
+          <text fg={theme.mutedFg}>(no match — Enter sends "{inputValue}")</text>
+        ) : (
+          <scrollbox
+            ref={scrollRef}
+            flexDirection="column"
+            height={visibleRows}
+            flexShrink={0}
+          >
+            {displayItems.map((item) => {
+              if (item.type === 'header') {
+                return (
+                  <text key={`header-${item.name}`} fg={theme.mutedFg} marginTop={1}>
+                    {`  ${item.name}`}
+                  </text>
+                );
+              }
+
+              const isSel = item.commandIndex === selected;
+              const isDisabled = item.isSkill === true && item.enabled === false;
+              const fg = isSel
+                ? theme.onAccentFg
+                : isDisabled
+                  ? theme.mutedFg
+                  : item.isSkill
+                    ? theme.agentFg
+                    : theme.headerFg;
+              const metaFg = isSel ? theme.onAccentFg : theme.mutedFg;
+
+              return (
+                <box
+                  key={item.name}
+                  flexDirection="row"
+                  backgroundColor={isSel ? theme.accentBg : undefined}
+                  paddingX={1}
+                >
+                  <text id={itemId(item.commandIndex ?? 0)} fg={fg}>
+                    {item.name.padEnd(pad, ' ')}
+                  </text>
+                  <text fg={metaFg}>
+                    {'  '}
+                    {item.description}
+                    {isDisabled ? ' [disabled]' : ''}
+                  </text>
+                  <box flexGrow={1} />
+                  {item.hint && <text fg={metaFg}>{item.hint}</text>}
+                </box>
+              );
+            })}
+          </scrollbox>
+        )}
+
+        {/* Footer hints */}
+        <box flexDirection="row" justifyContent="flex-end" flexShrink={0} marginTop={1}>
+          <text fg={theme.mutedFg}>↑↓ navigate · Enter select · Tab complete</text>
+        </box>
+      </box>
+    </box>
   );
 }

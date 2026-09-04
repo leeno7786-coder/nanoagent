@@ -277,11 +277,115 @@ const warmDark: Theme = {
   },
 };
 
+const coolDark: Theme = {
+  name: 'coolDark',
+
+  userFg: '#a8b8d0',
+  agentFg: '#93bdab',
+  toolFg: '#7aa2c9',
+  errorFg: '#d9838e',
+
+  statusIdle: '#93bdab',
+  statusThinking: '#8fb8d9',
+  statusTool: '#7fb5b8',
+  statusError: '#d9838e',
+
+  borderColor: '#323a46',
+  mutedFg: '#6a7382',
+  headerFg: '#d3dae6',
+  inputFg: '#a8b8d0',
+  bgSelected: '#2e3542',
+  bgPanel: '#161a20',
+
+  accent: '#7aa2c9',
+  successFg: '#93bdab',
+  warningFg: '#cfb36b',
+  warningBorder: '#6f5f3a',
+
+  accentBg: '#7aa2c9',
+  onAccentFg: '#161a20',
+
+  codeBg: '#12151a',
+  diffAddBg: '#1f3328',
+  diffRemoveBg: '#38262c',
+  diffAddSignFg: '#93bdab',
+  diffRemoveSignFg: '#d9838e',
+
+  syntax: {
+    keyword: '#a3a0c4',
+    string: '#8fbcae',
+    comment: '#66707e',
+    number: '#a89cc8',
+    function: '#8fa8c8',
+    type: '#8fadb8',
+    variable: '#d3dae6',
+    operator: '#95a0ae',
+    punctuation: '#78818e',
+    property: '#94b3c4',
+    constant: '#a89cc8',
+    tag: '#bf8d94',
+    attribute: '#8fadb8',
+  },
+};
+
+const black: Theme = {
+  name: 'black',
+
+  userFg: '#b8c2d8',
+  agentFg: '#a8c69b',
+  toolFg: '#d9a05b',
+  errorFg: '#e0808a',
+
+  statusIdle: '#a8c69b',
+  statusThinking: '#d9a05b',
+  statusTool: '#8fb0d8',
+  statusError: '#e0808a',
+
+  borderColor: '#2a2a2a',
+  mutedFg: '#6e7380',
+  headerFg: '#d6dae3',
+  inputFg: '#b8c2d8',
+  bgSelected: '#1a1a1a',
+  bgPanel: '#000000',
+
+  accent: '#d9a05b',
+  successFg: '#a8c69b',
+  warningFg: '#d8b45c',
+  warningBorder: '#7a6338',
+
+  accentBg: '#d9a05b',
+  onAccentFg: '#000000',
+
+  codeBg: '#0a0a0a',
+  diffAddBg: '#2c4534',
+  diffRemoveBg: '#4d2f34',
+  diffAddSignFg: '#a8c69b',
+  diffRemoveSignFg: '#e0808a',
+
+  syntax: {
+    keyword: '#b494bd',
+    string: '#a8c69b',
+    comment: '#6e7380',
+    number: '#d9a05b',
+    function: '#8fb0d8',
+    type: '#d3b887',
+    variable: '#d6dae3',
+    operator: '#9aa1ad',
+    punctuation: '#7d828e',
+    property: '#9db8c9',
+    constant: '#d9a05b',
+    tag: '#c58f92',
+    attribute: '#d3b887',
+  },
+};
+
 export const THEMES: Record<string, Theme> = {
   dark,
   light,
   warmDark,
   highContrast,
+  coolDark,
+  black,
 };
 
 export const DEFAULT_THEME = THEMES.dark;

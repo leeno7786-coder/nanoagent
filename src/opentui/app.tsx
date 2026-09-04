@@ -5,7 +5,6 @@ import { useKeyboard } from '@opentui/react';
 import type { CliRenderer } from '@opentui/core';
 import { AgentCore } from '../agent.js';
 import { loadConfig, saveConfigFile } from '../config/index.js';
-import { NANOAGENT_BANNER } from '../cli/help.js';
 import {
   saveSession,
   loadSessions,
@@ -156,17 +155,13 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       // Baseline status: was a snapshot of the workspace taken at
       // agent-init time? /rollback (no name) uses it.
       const hasBaseline = hasBaselineSnapshot(agent.cfg.workspace);
-      const baselineLine = hasBaseline
-        ? `baseline snapshot: \`<workspace>/.nanoagent/snapshots/init.json\` (use \`/rollback\` to revert)`
-        : `baseline snapshot: none (run the agent once to capture one, or \`/snapshot\` to start)`;
       agent.messages.push({
         id: 'welcome-banner',
         role: 'assistant',
         content:
-          `${NANOAGENT_BANNER}\nWelcome to **NanoAgent**!\n\n` +
-          `workspace: \`${agent.cfg.workspace}\`\n` +
-          `${baselineLine}\n\n` +
-          `Tools edit the workspace directly. Use \`/snapshot [name]\` to save a checkpoint, \`/rollback [name]\` to restore one, and \`/rollback\` (no name) to revert to the baseline. Type \`/help\` for commands or \`/config\` to manage settings.`,
+          `⚡ **NanoAgent** — Tiny Models, Scalable Intelligence\n\n` +
+          `workspace: \`${agent.cfg.workspace}\` · ${hasBaseline ? 'baseline snapshot ready (`/rollback` to revert)' : 'no baseline snapshot yet (`/snapshot` to start)'}\n\n` +
+          `Tools edit the workspace directly. Type \`/help\` for commands or \`/config\` for settings.`,
         timestamp: Date.now(),
       });
       syncFromAgent(agent);
