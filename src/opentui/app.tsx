@@ -19,6 +19,7 @@ import { ErrorBoundary } from './error-boundary.js';
 import { HelpOverlay, HistoryOverlay } from './overlays.js';
 import { SkillsOverlay } from './skills-overlay.js';
 import { ConnectOverlay } from './connect-overlay.js';
+import { CommandPalette } from './command-palette.js';
 import { SettingsOverlay } from './settings-overlay.js';
 import { StatusBar } from './status-bar.js';
 import { TodoSidebar } from './todo-sidebar.js';
@@ -691,9 +692,104 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
   const handleCloseTodos = useCallback(() => setShowTodos(false), []);
 
+  /**
+   * ctrl+p command palette actions. Each mirrors an existing shortcut/handler;
+   * the palette closes after running, except 'theme' which stays open so
+   * repeated Enter presses cycle through themes live.
+   */
+  const handlePaletteAction = useCallback(
+    (id: string) => {
+      const st = store.getState();
+      const agent = agentRef.current;
+      switch (id) {
+        case 'theme':
+          st.cycleTheme(Object.keys(THEMES), THEMES);
+          return; // palette stays open for live theme cycling
+        case 'settings':
+          st.setOverlay('settings');
+          return;
+        case 'connect':
+          st.setOverlay('connect');
+          return;
+        case 'help':
+          st.setOverlay('help');
+          return;
+        case 'history':
+          st.setSessions(loadSessions());
+          st.setOverlay('history');
+          return;
+        case 'skills':
+          st.setOverlay('skills');
+          return;
+        case 'clear':
+          if (agent) {
+            // Mirror F2: ContextManager holds its own copy of history.
+            agent.messages = agent.messages.filter((m) => m.role === 'system');
+            agent.contextManager.clear();
+            const baseMsg = agent.messages.find((m) => m.id === 'system-base');
+            if (baseMsg) agent.contextManager.setMessages([baseMsg]);
+            agent.todos = [];
+            st.setMessages([...agent.messages]);
+            st.setTodos([]);
+            st.setToolResults([]);
+          }
+          break;
+        case 'compact':
+          void handleSubmit('/compact');
+          break;
+        case 'export':
+          void handleSubmit('/export');
+          break;
+        case 'todo':
+          st.toggleShowTodos();
+          break;
+        case 'save':
+          handleSave();
+          break;
+        case 'mouse': {
+          const next = !st.mouseEnabled;
+          renderer.useMouse = next;
+          st.setMouseEnabled(next);
+          break;
+        }
+        case 'permissions': {
+          const nextMode = st.cyclePermissionMode();
+          const pm = agent?.securityManager?.permissionManager;
+          if (pm) pm.setMode(nextMode);
+          if (agent?.cfg) agent.cfg.permissionMode = nextMode;
+          break;
+        }
+        case 'exit':
+          if (agent) {
+            autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
+            agent
+              .shutdown()
+              .catch(() => {})
+              .finally(() => process.exit(0));
+          } else {
+            process.exit(0);
+          }
+          return;
+      }
+      st.setOverlay(null);
+    },
+    [handleSave, handleSubmit, renderer, store]
+  );
+
   // Keyboard shortcuts
   useKeyboard((keyEvent) => {
     const st = store.getState();
+
+    // ctrl+p toggles the command palette (works even to close it while open).
+    if (keyEvent.ctrl && (keyEvent.name === 'p' || keyEvent.name === 'P')) {
+      if (st.overlay === 'palette') {
+        st.setOverlay(null);
+      } else if (!st.overlay) {
+        st.setOverlay('palette');
+      }
+      keyEvent.preventDefault?.();
+      return;
+    }
 
     if (keyEvent.ctrl && (keyEvent.name === 'c' || keyEvent.name === 'C')) {
       const sel = renderer.getSelection?.();
@@ -1030,6 +1126,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           mcpToolCount={agentRef.current?.mcpManager?.totalTools ?? 0}
           workspace={agentRef.current?.cfg.workspace || process.cwd()}
         />
+
+        {overlay === 'palette' && (
+          <CommandPalette theme={theme} onAction={handlePaletteAction} onClose={closeOverlay} />
+        )}
       </box>
     </ErrorBoundary>
   );

@@ -133,7 +133,7 @@ export function StatusBar({
       <text fg={theme.mutedFg}>
         {' '}
         {s.label}
-        {toolLabel} · F1 help · ^D abort
+        {toolLabel} · F1 help · ctrl+p commands · ^D abort
       </text>
       {!mouseEnabled && <text fg={theme.warningFg}> [MOUSE OFF]</text>}
     </box>
