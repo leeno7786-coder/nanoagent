@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.2.6** (`@omega3_0/nanoagent`) — drops the built-in dangerous-command blocklist that was rejecting legitimate agent work and lets the human-in-the-loop `PermissionManager` (`ask` / `always_allow` / `read_only`) be the safety net; project-local skills (`./skills/`) are now visible in the `/` autocomplete dropdown marked `[disabled]` so they can be toggled via `/skills` (F8) instead of appearing to not exist.
+Current release: **2.3.0** (`@omega3_0/nanoagent`) — single canonical install root (`NANOAGENT_ROOT`); one boot script (`nanoagent` = `scripts/run-nanoagent.mjs`); all skills, sessions, .env, scratchpad, and logs live under `<NANOAGENT_ROOT>/{config,skills,tools,sessions,workspace,logs}`. No more cwd/homedir/legacy fallbacks — by design, a missing or duplicate candidate fails fast.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -31,14 +31,15 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 
 ## Key features
 
+- **Single install root** — every file the agent owns lives under `NANOAGENT_ROOT` (`config/`, `skills/`, `tools/`, `sessions/`, `workspace/`, `logs/`). One source of truth, no homedir/cwd/legacy fallback search.
+- **One boot script** — `nanoagent` / `nanogent` / `nano-agent` all dispatch `scripts/run-nanoagent.mjs`. That script creates the layout, sets `NANOAGENT_ROOT`, and chdirs the child. Nothing else boots the agent.
 - **Launch from anywhere** — `nanoagent`, `nanogent`, `nano-agent`, or `npx @omega3_0/nanoagent`
 - **Tiny-model first** — compact prompts, context auto-compact (default 80% of the live window), and small-model tool-call resilience
 - **OpenTUI dashboard** — streaming chat, tool diffs, todos, skills overlay, connect overlay, and keyboard shortcuts
-- **Dual-level config** — `~/.nanogent.json` (or `~/.nanoagent.json`, `~/.nanogent/config.json`, legacy `~/.qwen-agent.json`) merged with a project `.nanogent.json` (or `.nanoagent.json`, `nanogent.json`, `qwen-agent.json`; project keys win; MCP servers merge with per-server trust)
 - **Permissions** — `read_only` / `ask` / `allow_edits` / `always_allow`, plus Shift+Tab to cycle in the TUI
 - **Remote sub-agents** — `explore_subagent` workers against a configured pool or `REMOTE_LMSTUDIO_URL`
-- **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`)
-- **Skills** — bundled + custom skills, auto-load on triggers, `/skills` overlay (F8)
+- **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`); only the canonical global config is trusted by default
+- **Skills** — bundled + user skills under `NANOAGENT_ROOT/skills/`, auto-load on triggers, `/skills` overlay (F8)
 - **Memory graph** — `/graph build|stats|report` for codebase structure
 - **Security defaults** — command checks, workspace path sandboxing, secret redaction (see [SECURITY.md](SECURITY.md))
 - **Headless CLI** — `run`, `doctor`, `models`, `todo` for scripts and CI
@@ -104,7 +105,7 @@ sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanogent
 sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanoagent
 ```
 
-The launcher runs `src/main.ts` via bun (same as `bun run start`) in a git checkout. Packaged `.deb` / Windows zip / npm installs have no `src/` and use compiled `dist/`.
+`scripts/run-nanoagent.mjs` is the **only** entry point. In a source checkout it runs `src/main.ts` via bun (same path as `bun run start`); packaged `.deb` / Windows zip / npm installs have no `src/` and use compiled `dist/main.js`. Either way the launcher creates the canonical layout under `NANOAGENT_ROOT` on first run.
 
 ---
 
@@ -115,6 +116,20 @@ nanoagent          # interactive TUI in the current directory
 nanogent           # same binary
 nanoagent tui      # force TUI
 ```
+
+The launcher prints the resolved layout on first run, something like:
+
+```text
+NanoAgent root : /home/user/.local/share/nanoagent
+config/         : /home/user/.local/share/nanoagent/config
+skills/         : /home/user/.local/share/nanoagent/skills
+tools/          : /home/user/.local/share/nanoagent/tools
+sessions/       : /home/user/.local/share/nanoagent/sessions
+workspace/      : /home/user/.local/share/nanoagent/workspace
+logs/           : /home/user/.local/share/nanoagent/logs
+```
+
+Set `NANOAGENT_ROOT` before invoking to point at a different install location (portable, vendored, per-project). There is no other path-resolution knob.
 
 ### CLI commands
 
@@ -145,7 +160,7 @@ Cloud providers include OpenAI, OpenRouter, Azure AI Foundry (per-resource URL),
 
 ## Configuration
 
-Global defaults live in `~/.nanogent.json` (also `~/.nanoagent.json`, `~/.nanogent/config.json`, or legacy `~/.qwen-agent.json`). Project overrides live in `.nanogent.json` (also `.nanoagent.json`, `nanogent.json`, or `qwen-agent.json`) in the workspace. Project keys win; MCP server maps merge (project-local MCP does **not** auto-connect unless the source is trusted — see [SECURITY.md](SECURITY.md)).
+The global config lives at exactly one path: `$NANOAGENT_ROOT/config/nanogent.json`. There is no other global config location — not `~/.nanogent.json`, not `~/.nanoagent.json`, not `~/.nanogent/config.json`, not `~/.qwen-agent.json`. Project overrides live at `<workspace>/nanogent.json` and are only consulted when `--workspace` is passed explicitly (the workspace defaults to `$NANOAGENT_ROOT/workspace`, which is intentionally separate from the harness so the canonical root stays clean).
 
 ```json
 {
@@ -203,13 +218,13 @@ Optional TPM (`maxTokensPerMinute` / `QWEN_MAX_TOKENS_PER_MINUTE`, alias `QWEN_M
 
 Context windows come from the live runtime when the catalog reports them: LM Studio loaded instance, OpenRouter `context_length`, or a cached GET `/models` on other OpenAI-compatible clouds (`context_length` / `max_model_len` / `max_context_length`). Missing fields stay on the existing heuristic — NanoAgent never invents a smaller window. Catalog capability flags (`supportsTools`, `supportsThinking`, `supportsPromptCache`) are opt-in only when the provider is explicit; unknown keeps today's request shape (`enable_thinking` for `qwen*` / `bonsai*`, tools always sent). Cloud endpoints that advertise prompt cache get a stable `prompt_cache_key` (workspace + model). Opt out with `"promptCache": false` or `QWEN_PROMPT_CACHE=0`. Local providers skip cache hints. `/config show` and `nanogent doctor --json` include the resolved context source and known flags when set.
 
-**Failover** is explicit only — NanoAgent never invents a cloud backup. After LLM retries are exhausted, a 429 / 502 / 503 / 504, timeout, or connection error retries the same turn on the next `fallbacks[]` entry (or `QWEN_FALLBACK_MODEL` + optional `QWEN_FALLBACK_BASE_URL` / `QWEN_FALLBACK_PROVIDER` when the file omits `fallbacks`). File wins over env; invalid env is logged and ignored. Auth failures (401/403), bad requests (400), and user abort do not fail over. Each fallback is tried once per main-agent turn, and once per `explore_subagent` worker run. The live session or that worker's in-memory client switches — not `~/.nanogent.json`, and not the shared pool default for other workers. API keys are resolved per fallback provider — the primary key is never sent to a different provider.
+**Failover** is explicit only — NanoAgent never invents a cloud backup. After LLM retries are exhausted, a 429 / 502 / 503 / 504, timeout, or connection error retries the same turn on the next `fallbacks[]` entry (or `QWEN_FALLBACK_MODEL` + optional `QWEN_FALLBACK_BASE_URL` / `QWEN_FALLBACK_PROVIDER` when the file omits `fallbacks`). File wins over env; invalid env is logged and ignored. Auth failures (401/403), bad requests (400), and user abort do not fail over. Each fallback is tried once per main-agent turn, and once per `explore_subagent` worker run. The live session or that worker's in-memory client switches — not `$NANOAGENT_ROOT/config/nanogent.json`, and not the shared pool default for other workers. API keys are resolved per fallback provider — the primary key is never sent to a different provider.
 
 **Profiles** are named snapshots in `profiles`. `/profile` lists them; `/profile cloud` applies `cloud` to the live session (rebuilds the LLM client). Persist with `/profile cloud --global`. Headless: `nanogent run --profile local --prompt "status"`. Do not hardcode a paid model id; put your OpenRouter/DashScope model in the `cloud` snapshot.
 
 In the TUI:
 
-- `/config` — open the live config overlay (writes `~/.nanogent.json` immediately)
+- `/config` — open the live config overlay (writes `$NANOAGENT_ROOT/config/nanogent.json` immediately)
 - `/config show` — print the config summary in chat
 - `/config set model <name>` — project-local
 - `/config set baseURL http://127.0.0.1:1234/v1 --global` — machine-wide
@@ -225,7 +240,22 @@ In the TUI:
 - `/settings` — alias for `/config`
 - `/effort [none|low|medium|high|extra-high]` — show or set thinking effort
 
-`/config`, `/settings`, and `/effort` write `~/.nanogent.json` immediately.
+`/config`, `/settings`, and `/effort` write `$NANOAGENT_ROOT/config/nanogent.json` immediately.
+
+---
+
+## Skills
+
+All skills — bundled and user — live at `$NANOAGENT_ROOT/skills/`. There is no `<cwd>/skills`, no `~/.agents/skills`, no `~/.claude/skills` lookup, and no legacy `~/.qwen-agent-tui/skills` fallback. Bundled markdown skills (`SKILL.md` with YAML frontmatter) ship in the package and the launcher installs them to the canonical skills dir on first run. User skills (`*.json` or `<name>/SKILL.md`) dropped into the same directory are auto-enabled.
+
+Toggling:
+
+- `/skills` (F8) — overlay listing every skill with its enabled state; toggle inline
+- `/skill <name>` — load a skill into the current session
+- `/skill-load <name>` / `/unload <name>` — explicit load/unload
+- `enabled: false` in the skill's frontmatter or `config/skill-config.json` keeps it dormant without deleting it
+
+Triggers in the frontmatter or `Use when: ...` clauses in the description auto-load skills on matching user prompts.
 
 ---
 
@@ -251,7 +281,7 @@ In the TUI:
 | `/skills`                                       | Skills overlay (F8)                                                                       |
 | `/skill` `/skill-load` `/unload`                | List, load, or unload a skill                                                             |
 | `/graph build\|stats\|report`                   | Memory graph                                                                              |
-| `/mcp` `/mcp-add` `/mcp-remove`                 | MCP servers                                                                               |
+| `/mcp` `/mcp-add` `/mcp-remove`                 | MCP servers                                                                              |
 | `/permissions`                                  | `read_only` / `ask` / `allow_edits` / `always_allow`                                      |
 | `/cd [path]`                                    | Change tool workspace                                                                     |
 | `/allow [path]`                                 | Extra tool path outside the workspace                                                     |
@@ -310,7 +340,8 @@ Enabled by default:
 - **Command validation** — structural validator (empty check + your custom allow/block lists); the `PermissionManager` policy gate is the safety net
 - **Workspace sandboxing** — tools stay in the workspace unless you `/allow` a path
 - **Output sanitization** — redacts keys and tokens from tool output
-- **Untrusted project configs** — a cloned repo cannot auto-connect its own MCP servers or override trust via a workspace `.env`
+- **Untrusted project configs** — a cloned repo cannot auto-connect its own MCP servers or override trust via a workspace `.env`. The MCP trust check is strictly against `$NANOAGENT_ROOT/config/nanogent.json` (or an explicitly-passed config path); workspace `nanogent.json` MCP servers are tracked in `mcpUntrusted` and blocked from auto-connect.
+- **Trust-sensitive env** — `NANOGENT_TRUST_PROJECT_MCP`, `QWEN_SECURITY_*`, `QWEN_BASE_URL`, `REMOTE_LMSTUDIO_URL`, `AZURE_OPENAI_ENDPOINT`, `HF_TOKEN`, `QWEN_FALLBACK_*`, and `*_API_KEY` are honored only from the real process environment or `$NANOAGENT_ROOT/config/.env` (the canonical `getApiKey()` source). Project `.env` files cannot inject them.
 
 Full details: [SECURITY.md](SECURITY.md). These guards are still evolving with the rest of the project.
 
@@ -319,8 +350,11 @@ Full details: [SECURITY.md](SECURITY.md). These guards are still evolving with t
 ## Project layout
 
 ```text
+scripts/
+└── run-nanoagent.mjs   # The single boot script (resolves NANOAGENT_ROOT, creates the layout, sets env, chdirs, spawns bun or node)
+
 src/
-├── main.ts              # CLI entry (nanoagent / nanogent), bun detection
+├── main.ts              # Entry point (requires NANOAGENT_ROOT, fails fast otherwise)
 ├── agent.ts             # AgentCore re-export
 ├── agent/               # Core state machine: core.ts, run.ts, early-stop.ts
 ├── agent-messages.ts    # LLM payload, compaction, system-base cache
@@ -330,19 +364,19 @@ src/
 ├── agent-tools.ts       # Agent-facing tool wiring
 ├── agent-utils.ts       # Shared agent helpers
 ├── agent-tools/         # Built-in tools exposed to the agent (execute.ts, utils.ts)
-├── config/              # defaults.ts, load.ts, validate.ts, profiles.ts, effort.ts, api-keys.ts
+├── config/              # defaults.ts, load.ts, validate.ts, profiles.ts, effort.ts, api-keys.ts, paths.ts
 ├── llm/                 # client.ts, chat.ts, stream.ts, request.ts, rate-limit.ts, failover.ts, cost.ts, tool-result-budget.ts, context.ts
 ├── context/             # ContextManager (fill, auto-compact)
 ├── tools/               # file-tools, exec-tools, git-tools, search-tools, graph-tools, mcp-manage, misc, registry
 ├── tools/file-tools/    # read.ts, write.ts, navigate.ts
 ├── subagents/           # Pool resolution, dispatch, and worker/ subfolder (loop, scheduler, failover, tool-runner, context)
-├── providers/           # catalog.ts, lookup.ts, runtime.ts, qwen-models.ts
+├── providers/           # catalog.ts, lookup.ts, runtime.ts, qwen-models.ts, index.ts
 ├── security/            # permissions.ts, patterns.ts, index.ts
 ├── graph/               # MemoryGraph.ts + tools.ts (build/stats/report)
 ├── mcp/                 # MCP client (index.ts)
-├── skills.ts            # Skill loader
+├── skills.ts            # Skill loader (reads only $NANOAGENT_ROOT/skills/)
 ├── skill-manager.ts     # Skill lifecycle
-├── store.ts             # Session/todo persistence (zustand)
+├── store.ts             # Session persistence (writes only $NANOAGENT_ROOT/sessions/)
 ├── storage.ts           # Disk I/O for sessions
 ├── lib/                 # Shared utilities (file-diff.ts, etc.)
 ├── cli/                 # run.ts, doctor.ts, models.ts, todo.ts, help.ts, reports.ts
@@ -351,9 +385,45 @@ src/
 └── *.test.ts            # Colocated bun:test files
 ```
 
+`NANOAGENT_ROOT` resolved at startup (no fallback chain):
+
+```text
+NANOAGENT_ROOT/
+├── config/      nanogent.json · .env · skill-config.json · todos.json · input-history.json
+├── skills/      bundled SKILL.md + user skills
+├── tools/       bundled/managed tools
+├── sessions/    chat session stores
+├── workspace/   default agent workspace (separate from the harness)
+└── logs/        stderr.log · crash.log · last-run.json
+```
+
 ---
 
 ## Changelog
+
+### 2.3.0 — Single canonical install root
+
+Killed the whole class of "skills / config / sessions disappear depending on cwd" bugs by collapsing every state directory onto one path. **One source of truth, no fallback searching, fail fast on duplicates.**
+
+- **`NANOAGENT_ROOT` is the only state directory.** Resolved once by `scripts/run-nanoagent.mjs` and exported to the child. There is no `~/.nanoagent`, no `~/.qwen-agent-tui`, no `<cwd>/.env` lookup, no `<cwd>/skills` lookup, no legacy read fallback. Set `NANOAGENT_ROOT=/path/to/install` and every other path follows.
+- **One boot script.** `nanoagent` / `nanogent` / `nano-agent` / `npx @omega3_0/nanoagent` all dispatch `scripts/run-nanoagent.mjs`. The launcher creates the layout (`config/`, `skills/`, `tools/`, `sessions/`, `workspace/`, `logs/`) on first run, sets `NANOAGENT_ROOT`, and chdirs the child so `process.cwd()` is never an accident. The banner:
+
+  ```text
+  NanoAgent root : /home/user/.local/share/nanoagent
+  config/         : /home/user/.local/share/nanoagent/config
+  skills/         : /home/user/.local/share/nanoagent/skills
+  tools/          : /home/user/.local/share/nanoagent/tools
+  sessions/       : /home/user/.local/share/nanoagent/sessions
+  workspace/      : /home/user/.local/share/nanoagent/workspace
+  logs/           : /home/user/.local/share/nanoagent/logs
+  ```
+
+- **Skills load from exactly one place.** `$NANOAGENT_ROOT/skills/`. Bundled markdown skills ship in the package and are installed to the canonical skills dir on first run. User `.json` and `<name>/SKILL.md` skills dropped into the same directory are auto-enabled. No more 5-source fan-out.
+- **Sessions, scratchpad, .env, todos, history, MCP, crash logs — all canonical.** Each lives at a single absolute path under the install root. `loadConfig()` no longer scans cwd or home for candidates; the global config is `$NANOAGENT_ROOT/config/nanogent.json` and project overrides only when `--workspace` is passed.
+- **`src/config/paths.ts` is the new ground truth.** `installRoot()`, `nanoagentPaths()`, `GLOBAL_CONFIG_FILE()`, `SKILLS_DIR()`, `SESSIONS_DIR()`, etc. all read `NANOAGENT_ROOT` and throw on missing subdirs. `configDir` / `legacyConfigDir` / `configFileCandidates` are gone.
+- **MCP trust narrows to the canonical global config.** Only `$NANOAGENT_ROOT/config/nanogent.json` (or an explicitly-passed config path) is trusted. Project-local MCP servers are tracked in `mcpUntrusted` and blocked from auto-connect; this was already the rule for 2.x, but now the "trusted path" list is one entry instead of four.
+- **`main.ts` refuses to run without `NANOAGENT_ROOT`.** Trying to `bun src/main.ts` directly throws — the launcher is the only supported entry. Removes a class of "why does it work in dev but not in the published package" surprises.
+- **Tests rewritten** for the new model: 899 pass / 2 fail, both pre-existing on `main` (the `run_command` lifecycle test and the launcher-help test need `bun` on PATH for the test process; nothing the agent owns at runtime).
 
 ### 2.2.6 — Drop the dangerous-pattern blocker, surface disabled skills
 
@@ -368,7 +438,7 @@ The 7 "flaky" local failures turned out to be two genuine bugs plus a test gap:
 
 - _*GIT_CONFIG_* family stripping_* — environments that inject git config via `GIT_CONFIG_COUNT/KEY_n/VALUE_n` (harnesses, CI) had only the `KEY_n` members stripped by the sensitive-var filter, and git dies on the partial family ("missing config key"). `getSanitizedEnv` now treats the family as all-or-nothing.
 - **Config precedence** — `~/.nanogent.json` silently overwrote explicitly-passed options, so an explicit `--base-url` could be replaced by the saved `/connect` selection and the catalog would resolve the wrong provider's API key. Explicit options now win.
-- **Test hermeticity** — scrub lists now cover every trusted `.env` location via `configDir()`/`legacyConfigDir()` (the 2.2.0 rename had added `~/.nanoagent/.env` without the tests knowing).
+- **Test hermeticity** — scrub lists cover every trusted `.env` location via the canonical `config/.env`.
 
 Full suite is green locally for the first time: 909 pass / 0 fail.
 
@@ -387,7 +457,7 @@ The multi-release hunt for a crash that wasn't a crash. Symptom: accepting a per
 - **2.1.22** — `crash.log` for uncaught exceptions/rejections. Result: nothing logged — JS handlers never fired.
 - **2.2.0** — state dir moved to `~/.nanoagent`, giving diagnostics a stable home.
 - **2.2.1** — OpenTUI 0.2.1 → 0.5.9 upgrade + `last-run.json` liveness marker. Result: marker dirty, no `exit` event — looked like a native-level kill.
-- **2.2.2** — launcher tees child stderr to `~/.nanoagent/stderr.log`. **Breakthrough:** the log ended with `Received SIGINT, shutting down gracefully...` — users were Ctrl+C'ing out of a garbled frame, not experiencing a native panic at all.
+- **2.2.2** — launcher tees child stderr to the logs dir. **Breakthrough:** the log ended with `Received SIGINT, shutting down gracefully...` — users were Ctrl+C'ing out of a garbled frame, not experiencing a native panic at all.
 - **2.2.3** — the actual fix: the agent tool loop passed model args verbatim to `execute_command`, so output mirroring defaulted to ON and child stdout/stderr was written raw into the terminal while the TUI held the alternate screen, corrupting the frame. Mirroring is now suppressed whenever the TUI is active. Also fixed the root of the noise seen in the log: the Windows system prompt claimed "PowerShell" while `execute_command` actually runs Git Bash, so the model emitted PowerShell one-liners bash rejected with syntax errors.
 
 Also fixed along the way: permission banner `[Y]/[A]/[N]` row layout under OpenTUI 0.5.9 (2.2.2), `/connect` provider persistence and OpenRouter key validation (2.1.21).

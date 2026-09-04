@@ -49,7 +49,7 @@ describe('isUsableApiKey', () => {
 
 describe('getApiKey', () => {
   it('ignores a process env value that is only mask bullets', () => {
-    // Unique name so a real OPENROUTER_API_KEY in ~/.qwen-agent-tui/.env
+    // Unique name so a real OPENROUTER_API_KEY in canonical config/.env
     // cannot leak into the assertion.
     setEnv('NANOAGENT_TEST_MASK_KEY', POISONED);
     expect(getApiKey('NANOAGENT_TEST_MASK_KEY')).toBeUndefined();

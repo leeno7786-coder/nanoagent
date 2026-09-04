@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useKeyboard } from '@opentui/react';
 import type { CliRenderer } from '@opentui/core';
 import { AgentCore } from '../agent.js';
-import { loadConfig, saveConfigFile } from '../config.js';
+import { loadConfig, saveConfigFile } from '../config/index.js';
 import { NANOAGENT_BANNER } from '../cli/help.js';
 import {
   saveSession,
@@ -25,8 +25,8 @@ import { StatusBar } from './status-bar.js';
 import { TodoSidebar } from './todo-sidebar.js';
 import { THEMES, DEFAULT_THEME } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
-import { getProviderBaseURL } from '../providers.js';
-import { handleSlashCommand, checkAndAutoCompact } from './slash-commands.js';
+import { getProviderBaseURL } from '../providers/index.js';
+import { handleSlashCommand, checkAndAutoCompact } from './slash-commands/index.js';
 import { parseBangCommand, runBangCommand, recordBangExchange } from './bang-command.js';
 import { useAppStore } from './app-store.js';
 import { useClipboardPaste } from './use-clipboard-paste.js';

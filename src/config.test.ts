@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { applySubAgentDefaults, MODELS } from './config.js';
+import { applySubAgentDefaults, MODELS } from './config/index.js';
 import type { Config } from './types.js';
 
 describe('config.ts - Configuration Management', () => {
@@ -47,19 +47,19 @@ describe('config.ts - Configuration Management', () => {
   });
 
   describe('loadConfig workspace isolation & scratchpad', () => {
-    it('should default workspace to process.cwd() when invoked without explicit workspace override', () => {
+    it('defaults workspace to <NANOAGENT_ROOT>/workspace when no explicit override is supplied', () => {
       const { loadConfig } = require('./config.js');
       const cfg = loadConfig();
-      expect(cfg.workspace).toBe(process.cwd());
+      const { nanoagentPaths } = require('./config/paths.js');
+      expect(cfg.workspace).toBe(nanoagentPaths().workspaceDir);
     });
 
-    it('should ensure .nanoagent/scratchpad exists in workspace', () => {
+    it('ensures the canonical scratchpad exists under the install root', () => {
       const { existsSync } = require('fs');
-      const { join } = require('path');
       const { loadConfig } = require('./config.js');
-      const cfg = loadConfig();
-      const scratchDir = join(cfg.workspace, '.nanoagent', 'scratchpad');
-      expect(existsSync(scratchDir)).toBe(true);
+      const { installPath } = require('./config/paths.js');
+      loadConfig();
+      expect(existsSync(installPath('scratchpad'))).toBe(true);
     });
   });
 });

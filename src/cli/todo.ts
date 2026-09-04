@@ -22,17 +22,20 @@ interface TodoItem {
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { configDir, legacyConfigDir } from '../config/paths.js';
+import { TODO_FILE, nanoagentPaths } from '../config/paths.js';
 
-const DATA_DIR = configDir();
-export const TODO_STORAGE_PATH = join(DATA_DIR, 'todos.json');
-const LEGACY_TODO_STORAGE_PATH = join(legacyConfigDir(), 'todos.json');
-const STORAGE_FILE_PATH = TODO_STORAGE_PATH;
+/** Lazy accessor: resolves against the current NANOAGENT_ROOT at call time. */
+export function TODO_STORAGE_PATH(): string {
+  return TODO_FILE();
+}
+
+function storagePath(): string {
+  return TODO_STORAGE_PATH();
+}
 
 function loadTodos(): TodoItem[] {
   try {
-    // Read the new location first; fall back to the legacy pre-rename file.
-    const path = existsSync(STORAGE_FILE_PATH) ? STORAGE_FILE_PATH : LEGACY_TODO_STORAGE_PATH;
+    const path = storagePath();
     if (!existsSync(path)) return [];
     const content = readFileSync(path, 'utf-8');
     if (!content.trim()) return [];
@@ -44,8 +47,10 @@ function loadTodos(): TodoItem[] {
 
 function saveTodos(todos: TodoItem[]) {
   try {
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(STORAGE_FILE_PATH, JSON.stringify(todos, null, 2), 'utf-8');
+    const path = storagePath();
+    const dir = nanoagentPaths().configDir;
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(path, JSON.stringify(todos, null, 2), 'utf-8');
   } catch {
     /* ignore */
   }

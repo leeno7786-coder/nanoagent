@@ -1,9 +1,8 @@
-import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync } from 'fs';
-import { homedir } from 'os';
-import { join, resolve } from 'path';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { resolve } from 'path';
 import { config as dotenvConfig } from 'dotenv';
 import { logError, logWarn } from '../log.js';
-import { configDir, configFileCandidates, legacyConfigDir } from './paths.js';
+import { ENV_FILE, nanoagentPaths } from './paths.js';
 
 /** TUI mask character previously written back as the stored key. */
 const API_KEY_MASK = '\u2022';
@@ -22,27 +21,16 @@ export function isUsableApiKey(value: string | undefined | null): value is strin
 }
 
 function ensureEnvFile(): string {
-  const envDir = configDir();
-  const envPath = join(envDir, '.env');
+  const envDir = nanoagentPaths().configDir;
+  const envPath = ENV_FILE();
   if (!existsSync(envDir)) {
     try {
       mkdirSync(envDir, { recursive: true });
     } catch (err) {
-      logWarn('Warning: failed to create env directory:', err);
+      logWarn('Warning: failed to create config dir:', err);
     }
   }
   if (!existsSync(envPath)) {
-    // One-time migration: carry the legacy pre-rename .env over so saved keys
-    // move to ~/.nanoagent instead of being stranded in ~/.qwen-agent-tui.
-    const legacyPath = join(legacyConfigDir(), '.env');
-    if (existsSync(legacyPath)) {
-      try {
-        copyFileSync(legacyPath, envPath);
-        return envPath;
-      } catch (err) {
-        logWarn('Warning: failed to migrate legacy .env:', err);
-      }
-    }
     try {
       writeFileSync(envPath, '# NanoAgent Environment Variables\n', 'utf-8');
     } catch (err) {
@@ -98,21 +86,20 @@ export function getApiKey(envVarName: string): string | undefined {
     return fromEnv.trim();
   }
   // Trust model: API keys are only honored from the real process environment
-  // (checked above) or trusted home-dir .env files. The workspace .env is
-  // UNTRUSTED (any cloned repo can plant one) and must never supply keys.
-  const candidates = [...configFileCandidates('.env'), join(homedir(), '.env')];
-  for (const envPath of candidates) {
-    if (existsSync(envPath)) {
-      try {
-        const content = readFileSync(envPath, 'utf-8');
-        const match = content.match(new RegExp(`^${envVarName}=(.+)$`, 'm'));
-        const value = match?.[1]?.trim();
-        if (isUsableApiKey(value)) {
-          return value;
-        }
-      } catch {
-        /* ignore */
+  // (checked above) or the canonical config/.env file. Workspace .env files
+  // are UNTRUSTED — any cloned repo can plant one — and must never supply
+  // keys. There is no other read source.
+  const envPath = ENV_FILE();
+  if (existsSync(envPath)) {
+    try {
+      const content = readFileSync(envPath, 'utf-8');
+      const match = content.match(new RegExp(`^${envVarName}=(.+)$`, 'm'));
+      const value = match?.[1]?.trim();
+      if (isUsableApiKey(value)) {
+        return value;
       }
+    } catch {
+      /* ignore */
     }
   }
   return undefined;
@@ -141,10 +128,7 @@ export function removeApiKeyFromEnv(envVarName: string): boolean {
     return false;
   };
   try {
-    // Scrub both the current and the legacy pre-rename locations.
-    const removedCurrent = removeFrom(ensureEnvFile());
-    const removedLegacy = removeFrom(join(legacyConfigDir(), '.env'));
-    return removedCurrent || removedLegacy;
+    return removeFrom(ensureEnvFile());
   } catch (error) {
     logError('Error removing API key:', error);
     return false;

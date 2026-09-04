@@ -159,7 +159,6 @@ function renderLinesSafely(text: string, maxLines = 40, fgColor: string, prefix 
   ];
 }
 
-const syntaxStyle = getSyntaxStyle();
 const ARG_BEARING = new Set([
   '/auto',
   '/cd',
@@ -179,14 +178,22 @@ const ARG_BEARING = new Set([
   '/skill',
   '/skills',
 ]);
-const DIFF_PROPS = {
-  view: 'unified' as const,
-  syntaxStyle,
-  addedBg: '#2d4a3e',
-  removedBg: '#4a2d2d',
-  addedSignColor: '#9ece6a',
-  removedSignColor: '#f7768e',
-};
+
+/** Diff renderable props derived from the active theme's diff tokens. */
+function diffRenderProps(theme: Theme) {
+  return {
+    view: 'unified' as const,
+    syntaxStyle: getSyntaxStyle(theme),
+    showLineNumbers: true,
+    lineNumberFg: theme.mutedFg,
+    addedBg: theme.diffAddBg,
+    removedBg: theme.diffRemoveBg,
+    addedLineNumberBg: theme.diffAddBg,
+    removedLineNumberBg: theme.diffRemoveBg,
+    addedSignColor: theme.diffAddSignFg,
+    removedSignColor: theme.diffRemoveSignFg,
+  };
+}
 
 /** Compact duration ("12s", "340ms"). */
 function formatDuration(ms: number): string {
@@ -545,20 +552,29 @@ export function ChatScreen({
   );
 }
 
+/**
+ * Quiet one-liner tool rows: a muted glyph prefix, a muted action label,
+ * the target tinted with the accent colour, and muted metadata trailing.
+ * Failed rows flip to the error colour. Edits render their diff as a
+ * full-width tinted block on the code background band.
+ */
 function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: Theme }) {
-  const color = block.ok ? theme.headerFg : theme.errorFg;
-  const dimColor = block.ok ? theme.mutedFg : theme.errorFg;
+  const ok = block.ok;
+  const glyphFg = ok ? theme.mutedFg : theme.errorFg;
+  const labelFg = ok ? theme.mutedFg : theme.errorFg;
+  const targetFg = ok ? theme.toolFg : theme.errorFg;
   const duration = block.durationMs != null ? `  ${formatDuration(block.durationMs)}` : '';
 
   if (block.kind === 'command') {
     return (
       <box flexDirection="column" marginY={0}>
-        <text fg={color}>
-          $ {block.target}
-          {duration}
-        </text>
+        <box flexDirection="row">
+          <text fg={ok ? theme.successFg : theme.errorFg}>{'$ '}</text>
+          <text fg={ok ? theme.headerFg : theme.errorFg}>{block.target}</text>
+          {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
+        </box>
         {block.summary && block.summary !== '(no output)' && (
-          <text fg={dimColor}> ⎿ {block.summary}</text>
+          <text fg={theme.mutedFg}> ⎿ {block.summary}</text>
         )}
         {block.previewLines?.length
           ? linePreview(block.previewLines, 6, theme.mutedFg, theme, '  ')
@@ -572,14 +588,18 @@ function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: T
     const maxDiffLines = 26;
     return (
       <box flexDirection="column" marginY={0}>
-        <text fg={color}>
-          Edited {block.target}
-          {block.summary && block.summary !== 'ok' ? `  ${block.summary}` : ''}
-          {duration}
-        </text>
+        <box flexDirection="row">
+          <text fg={glyphFg}>{'← '}</text>
+          <text fg={labelFg}>Edit</text>
+          <text fg={targetFg}>{` ${block.target}`}</text>
+          {block.summary && block.summary !== 'ok' ? (
+            <text fg={theme.mutedFg}>{`  ${block.summary}`}</text>
+          ) : null}
+          {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
+        </box>
         {diffLines.length > 0 ? (
-          <box flexDirection="column" marginLeft={2} marginTop={0}>
-            <diff diff={diffLines.slice(0, maxDiffLines).join('\n')} {...DIFF_PROPS} />
+          <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
+            <diff diff={diffLines.slice(0, maxDiffLines).join('\n')} {...diffRenderProps(theme)} />
             {diffLines.length > maxDiffLines && (
               <text fg={theme.mutedFg}>… {diffLines.length - maxDiffLines} diff lines hidden</text>
             )}
@@ -594,11 +614,15 @@ function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: T
   if (block.kind === 'read' || block.kind === 'search' || block.kind === 'list') {
     return (
       <box flexDirection="column" marginY={0}>
-        <text fg={color}>
-          {block.action} {block.target}
-          {block.summary && block.summary !== 'ok' ? ` · ${block.summary}` : ''}
-          {duration}
-        </text>
+        <box flexDirection="row">
+          <text fg={glyphFg}>{'→ '}</text>
+          <text fg={labelFg}>{block.action}</text>
+          <text fg={targetFg}>{` ${block.target}`}</text>
+          {block.summary && block.summary !== 'ok' ? (
+            <text fg={theme.mutedFg}>{` · ${block.summary}`}</text>
+          ) : null}
+          {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
+        </box>
         {block.previewLines?.length
           ? linePreview(block.previewLines, 4, theme.mutedFg, theme, '  ')
           : null}
@@ -608,14 +632,18 @@ function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: T
 
   return (
     <box flexDirection="column" marginY={0}>
-      <text fg={color}>
-        {block.action} {block.target}
-        {block.summary && block.summary !== 'ok' ? ` · ${block.summary}` : ''}
-        {duration}
-      </text>
+      <box flexDirection="row">
+        <text fg={glyphFg}>{'→ '}</text>
+        <text fg={labelFg}>{block.action}</text>
+        <text fg={targetFg}>{` ${block.target}`}</text>
+        {block.summary && block.summary !== 'ok' ? (
+          <text fg={theme.mutedFg}>{` · ${block.summary}`}</text>
+        ) : null}
+        {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
+      </box>
       {block.diff ? (
-        <box flexDirection="column" marginLeft={2} marginTop={0}>
-          <diff diff={block.diff} {...DIFF_PROPS} />
+        <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
+          <diff diff={block.diff} {...diffRenderProps(theme)} />
         </box>
       ) : block.previewLines?.length ? (
         linePreview(block.previewLines, 6, theme.mutedFg, theme, '  ')
@@ -1003,18 +1031,29 @@ function AssistantMessageView({
           }
           if (seg.lang === 'diff') {
             return (
-              <box key={si} flexDirection="column" marginY={1}>
-                <diff diff={sanitizedCode[si] ?? ''} {...DIFF_PROPS} />
+              <box
+                key={si}
+                flexDirection="column"
+                marginY={1}
+                backgroundColor={theme.codeBg}
+              >
+                <diff diff={sanitizedCode[si] ?? ''} {...diffRenderProps(theme)} />
               </box>
             );
           }
           return (
-            <box key={si} flexDirection="column" marginY={1}>
+            <box
+              key={si}
+              flexDirection="column"
+              marginY={1}
+              backgroundColor={theme.codeBg}
+              paddingX={1}
+            >
               {seg.lang && <text fg={theme.mutedFg}>{seg.lang}</text>}
               <code
                 content={sanitizedCode[si] ?? ''}
                 filetype={seg.lang || 'text'}
-                syntaxStyle={syntaxStyle}
+                syntaxStyle={getSyntaxStyle(theme)}
               />
             </box>
           );

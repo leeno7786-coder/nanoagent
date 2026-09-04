@@ -1,5 +1,5 @@
 import type { Config, ModelInfo } from './types.js';
-import { isLocalProvider, isSmallModel } from './llm.js';
+import { isLocalProvider, isSmallModel } from './llm/index.js';
 import { logWarn } from './log.js';
 import { parseOpenRouterModelPricing } from './llm/cost.js';
 

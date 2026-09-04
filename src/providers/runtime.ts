@@ -5,7 +5,7 @@ import {
   parseOpenAICompatModelList,
   parseParamBillionsFromModelId,
 } from '../model-runtime.js';
-import { isLocalProvider } from '../llm.js';
+import { isLocalProvider } from '../llm/index.js';
 import { logError, logInfo } from '../log.js';
 import { isUsableApiKey } from '../config/api-keys.js';
 

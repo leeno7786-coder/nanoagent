@@ -11,8 +11,8 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { configDir } from './config/paths.js';
+import { dirname } from 'path';
+import { CRASH_LOG, LAST_RUN_FILE } from './config/paths.js';
 
 let tuiActive = false;
 
@@ -25,9 +25,9 @@ export function isTuiActive(): boolean {
   return tuiActive;
 }
 
-/** Default crash log location (trusted home-dir config folder). */
+/** Default crash log location: <NANOAGENT_ROOT>/logs/crash.log. */
 export function crashLogPath(): string {
-  return join(configDir(), 'crash.log');
+  return CRASH_LOG();
 }
 
 const CRASH_LOG_MAX_BYTES = 256 * 1024;
@@ -61,7 +61,7 @@ export interface RunMarker {
 }
 
 export function runMarkerPath(): string {
-  return join(configDir(), 'last-run.json');
+  return LAST_RUN_FILE();
 }
 
 /**

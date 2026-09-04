@@ -1,5 +1,5 @@
 import type { AgentCore } from './core.js';
-import { chat, streamChat, isEndpointRateLimited } from '../llm.js';
+import { chat, streamChat, isEndpointRateLimited } from '../llm/index.js';
 import { switchSessionToFallback } from '../llm/failover.js';
 import { groupToolsForParallelExecution } from '../tools/index.js';
 import { SkillManager } from '../skill-manager.js';
@@ -671,7 +671,7 @@ export async function agentRun(
 
         // C4 recovery: rebuild SDK client on sticky 5xx before surfacing error.
         if (status === 500 || status === 502 || status === 503 || status === 504) {
-          const { createClient } = await import('../llm.js');
+          const { createClient } = await import('../llm/index.js');
           agent.client = createClient(agent.cfg);
         }
 
@@ -768,7 +768,7 @@ export async function agentRun(
         }
 
         if (status === 500 || status === 502 || status === 503 || status === 504) {
-          const { createClient } = await import('../llm.js');
+          const { createClient } = await import('../llm/index.js');
           agent.client = createClient(agent.cfg);
         }
 

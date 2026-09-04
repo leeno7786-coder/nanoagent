@@ -9,7 +9,7 @@ import {
   getModelCompactionSettings,
   DEFAULT_COMPACT_THRESHOLD,
   DEFAULT_SUMMARY_RESERVED_PERCENT,
-} from '../llm.js';
+} from '../llm/index.js';
 import type { Config, Message } from '../types.js';
 import { logWarn } from '../log.js';
 

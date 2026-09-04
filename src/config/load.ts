@@ -1,9 +1,8 @@
 import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync } from 'fs';
-import { homedir } from 'os';
-import { join, resolve } from 'path';
+import { resolve, join } from 'path';
 import { config as dotenvConfig } from 'dotenv';
 import type { Config, FallbackEndpoint } from '../types.js';
-import { isSmallModel } from '../llm.js';
+import { isSmallModel } from '../llm/index.js';
 import { logError, logWarn } from '../log.js';
 import { getDefault, sanitizeBaseURL, MODELS } from './defaults.js';
 import { validateConfig } from './validate.js';
@@ -14,14 +13,19 @@ import {
 } from '../providers/lookup.js';
 import { parseFallbacksConfig } from '../llm/failover.js';
 import { applyEffortFromEnvAndDefault, parseEffort } from './effort.js';
+import {
+  ENV_FILE,
+  GLOBAL_CONFIG_FILE,
+  WORKSPACE_DIR,
+  SCRATCHPAD_DIR_FOR,
+  nanoagentPaths,
+} from './paths.js';
 
 /**
  * Trust-sensitive environment variables. Workspace/project .env files are
  * UNTRUSTED — any cloned repo can plant one — so these variables are only
  * honored when they come from the real environment (process launch) or the
- * trusted home-dir .env (~/.nanoagent/.env, legacy ~/.qwen-agent-tui/.env).
- * They cover the MCP trust override, security toggles, the API endpoint, and
- * API-key overrides.
+ * canonical config/.env (which the launcher writes via /connect).
  */
 const TRUST_SENSITIVE_ENV_VARS = new Set([
   'NANOGENT_TRUST_PROJECT_MCP',
@@ -61,27 +65,18 @@ export function getRealEnv(key: string): string | undefined {
   return REAL_ENV[key] ?? process.env[key];
 }
 
-function getHomedir(): string {
-  return process.env.HOME || process.env.USERPROFILE || homedir();
-}
-
 function loadEnv(workspace: string) {
-  // Trusted home-dir .env first (user-managed; where saveApiKeyToEnv writes).
-  // New ~/.nanoagent location first, then the legacy ~/.qwen-agent-tui
-  // fallback — dotenv never overrides, so the first file loaded wins.
-  const trustedPaths = [
-    join(getHomedir(), '.nanoagent', '.env'),
-    join(getHomedir(), '.qwen-agent-tui', '.env'),
-  ];
-  for (const trustedPath of trustedPaths) {
-    if (existsSync(trustedPath)) {
-      dotenvConfig({ path: resolve(trustedPath), quiet: true });
-    }
+  // Trusted canonical .env first (user-managed; where saveApiKeyToEnv writes).
+  // This is the ONLY trusted .env. There is no fallback to ~/.nanoagent/.env
+  // or ~/.qwen-agent-tui/.env — those locations no longer exist.
+  const trustedPath = ENV_FILE();
+  if (existsSync(trustedPath)) {
+    dotenvConfig({ path: resolve(trustedPath), quiet: true });
   }
   // Snapshot before merging UNTRUSTED workspace .env files. dotenv never
   // overrides existing keys, so anything already set here is trusted.
   const trustedEnv = { ...process.env };
-  const untrusted = [join(process.cwd(), '.env'), join(workspace, '.env')];
+  const untrusted = [join(workspace, '.env')];
   for (const p of untrusted) {
     if (existsSync(p)) {
       dotenvConfig({ path: resolve(p), quiet: true });
@@ -232,13 +227,12 @@ function normalizeProfiles(cfg: Config): void {
 }
 
 export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
-  const invocationCwd = process.cwd();
   const explicitWorkspace =
     (typeof pathOrConfig === 'object' && pathOrConfig?.workspace) || process.env.QWEN_WORKSPACE;
 
   const cfg: Config = {
     ...getDefault(),
-    workspace: explicitWorkspace ? resolve(explicitWorkspace) : invocationCwd,
+    workspace: explicitWorkspace ? resolve(explicitWorkspace) : WORKSPACE_DIR(),
   };
 
   let explicitConfig: Record<string, unknown> | undefined;
@@ -254,21 +248,15 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   // A string argument is only a config path if it points at an existing FILE;
   // passing the workspace directory here must not mask the real candidates.
   const configPath = asConfigFile(typeof pathOrConfig === 'string' ? pathOrConfig : undefined);
-  const projectCandidates = [
-    join(invocationCwd, '.nanoagent.json'),
-    join(invocationCwd, 'nanoagent.json'),
-    join(invocationCwd, '.nanogent.json'),
-    join(invocationCwd, 'nanogent.json'),
-    join(invocationCwd, 'qwen-agent.json'),
-    join(invocationCwd, '.qwen-agent.json'),
-  ];
-  const userHome = getHomedir();
-  const homeCandidates = [
-    join(userHome, '.nanoagent.json'),
-    join(userHome, '.nanogent.json'),
-    join(userHome, '.nanogent', 'config.json'),
-    join(userHome, '.qwen-agent.json'),
-  ];
+  // Global config lives at exactly one path: <installRoot>/config/nanogent.json.
+  // No cwd/homedir/legacy candidates — those were the source of the
+  // "config disappears depending on where you launch from" bug.
+  const globalConfigPath = GLOBAL_CONFIG_FILE();
+  // Workspace-local override, only when an explicit --workspace was supplied.
+  // The workspace is ALWAYS explicit now; we don't autodetect from cwd.
+  const workspaceLocalPath = explicitWorkspace
+    ? join(resolve(explicitWorkspace), 'nanogent.json')
+    : undefined;
 
   const readConfigFile = (p: string): Record<string, unknown> | undefined => {
     try {
@@ -292,65 +280,39 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
       cfg.configPathExplicit = true;
     }
   } else {
-    // Dual-level configuration: the global (home-dir) config is the base and
-    // the project config overrides it. Previously the project config fully
-    // shadowed the global one — silently dropping the user's global model,
-    // subagent, and MCP settings in any repo with its own config file.
-    const sameFile = (a: string, b: string) => {
-      const ra = resolve(a).replace(/\\/g, '/');
-      const rb = resolve(b).replace(/\\/g, '/');
-      return process.platform === 'win32' ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
-    };
-    const isGlobalConfigPath = (p: string) => homeCandidates.some((h) => sameFile(h, p));
-
-    // First candidate that exists AND parses wins; a corrupt file warns and
-    // falls through to the next candidate instead of masking it.
-    const loadFirst = (candidates: string[], skip?: string) => {
-      for (const p of candidates) {
-        if (!existsSync(p)) continue;
-        if (skip && sameFile(p, skip)) continue;
-        const parsed = readConfigFile(p);
-        if (parsed) return { path: p, parsed };
+    // Global config first.
+    if (existsSync(globalConfigPath)) {
+      const parsed = readConfigFile(globalConfigPath);
+      if (parsed) {
+        // A global config must not pin the workspace.
+        if (!explicitWorkspace) delete parsed.workspace;
+        Object.assign(cfg, parsed);
+        cfg.configFilePath = globalConfigPath;
       }
-      return undefined;
-    };
-
-    const home = loadFirst(homeCandidates);
-    if (home) {
-      // A global config must not pin the workspace.
-      if (!explicitWorkspace) delete home.parsed.workspace;
-      Object.assign(cfg, home.parsed);
-      cfg.configFilePath = home.path;
     }
-
-    const project = loadFirst(projectCandidates, home?.path);
-    if (project) {
-      const parsed = project.parsed;
-      // MCP servers need per-server trust tracking: global servers stay
-      // trusted, project servers are blocked from auto-connecting. Merge
-      // the maps instead of letting Object.assign replace the global one.
-      if (parsed.mcp && typeof parsed.mcp === 'object') {
-        const projectMcp = parsed.mcp as NonNullable<Config['mcp']>;
-        const globalMcp = cfg.mcp ?? {};
-        cfg.mcp = { ...globalMcp, ...projectMcp };
-        // Running from the home dir makes a "project" file global.
-        if (!isGlobalConfigPath(project.path)) {
+    // Optional workspace-local override (only when --workspace was passed).
+    if (workspaceLocalPath && existsSync(workspaceLocalPath)) {
+      const parsed = readConfigFile(workspaceLocalPath);
+      if (parsed) {
+        // Workspace-local MCP servers are UNTRUSTED — the trust guard in
+        // agent-lifecycle.ts reads mcpUntrusted and refuses to auto-connect.
+        if (parsed.mcp && typeof parsed.mcp === 'object') {
+          const projectMcp = parsed.mcp as NonNullable<Config['mcp']>;
+          const globalMcp = cfg.mcp ?? {};
+          cfg.mcp = { ...globalMcp, ...projectMcp };
           cfg.mcpUntrusted = [
             ...new Set([...(cfg.mcpUntrusted ?? []), ...Object.keys(projectMcp)]),
           ];
+          delete parsed.mcp;
         }
-        delete parsed.mcp;
+        Object.assign(cfg, parsed);
+        cfg.configFilePath = workspaceLocalPath;
       }
-      Object.assign(cfg, parsed);
-      cfg.configFilePath = project.path;
     }
   }
 
-  if (!explicitWorkspace && (!cfg.workspace || cfg.workspace === homedir())) {
-    cfg.workspace = invocationCwd;
-  } else {
-    cfg.workspace = resolve(cfg.workspace);
-  }
+  if (cfg.workspace) cfg.workspace = resolve(cfg.workspace);
+  else cfg.workspace = WORKSPACE_DIR();
 
   // Explicit programmatic/CLI options beat any config FILE values. The early
   // assign above seeds workspace resolution; the home/project merges must not
@@ -362,7 +324,10 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     Object.assign(cfg, rest);
   }
 
-  const scratchDir = join(cfg.workspace, '.nanoagent', 'scratchpad');
+  // Scratchpad lives under the canonical install root — there is exactly
+  // one. Per-workspace scratchpads were the source of "files appear in the
+  // wrong place depending on cwd" bugs.
+  const scratchDir = SCRATCHPAD_DIR_FOR();
   if (!existsSync(scratchDir)) {
     try {
       mkdirSync(scratchDir, { recursive: true });
@@ -648,8 +613,24 @@ export function saveConfigFile(
   scope: 'global' | 'local' = 'global',
   workspace?: string
 ): { targetPath: string; config: Config } {
-  const targetDir = scope === 'local' ? workspace || process.cwd() : homedir();
-  const targetPath = join(targetDir, '.nanogent.json');
+  let targetPath: string;
+  if (scope === 'local') {
+    // A workspace-local override MUST have an explicit workspace.
+    if (!workspace) {
+      throw new Error(
+        '[nanoagent] saveConfigFile(scope="local") requires an explicit workspace; ' +
+          'no implicit cwd derivation.'
+      );
+    }
+    const dir = resolve(workspace);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    targetPath = join(dir, 'nanogent.json');
+  } else {
+    // Global writes go to the single canonical config path. Always.
+    targetPath = GLOBAL_CONFIG_FILE();
+    const dir = nanoagentPaths().configDir;
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  }
 
   let currentData: Record<string, unknown> = {};
   if (existsSync(targetPath)) {

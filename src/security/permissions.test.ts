@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { PermissionManager } from './permissions';
+import { PermissionManager } from './permissions.js';
 
 describe('PermissionManager', () => {
   let pm: PermissionManager;

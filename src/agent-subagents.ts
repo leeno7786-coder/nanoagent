@@ -12,7 +12,7 @@
  * references these delegates. Do not extend; prefer the execute.ts path.
  */
 import type { ToolExecutionHooks, SubAgentProgressEvent } from './tools/index.js';
-import { exploreWithSubAgent, formatSubAgentResults, type SubAgentResult } from './subagents.js';
+import { exploreWithSubAgent, formatSubAgentResults, type SubAgentResult } from './subagents/index.js';
 import type { Message } from './types.js';
 import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';
@@ -139,7 +139,7 @@ export function spawnBackgroundSubAgent(
       }
       // Enrich only the worker task with shared context (workspace root +
       // listing). The model sees it; the TUI stream shows `handle.prompt`.
-      const { enrichTaskWithContext } = await import('./subagents.js');
+      const { enrichTaskWithContext } = await import('./subagents/index.js');
       const task = await enrichTaskWithContext(prompt, agent.cfg, focusPath);
       handle.result = await exploreWithSubAgent(
         agent.cfg,

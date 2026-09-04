@@ -58,8 +58,8 @@ describe('logCrash', () => {
     expect(() => logCrash('uncaughtException', new Error('y'), '\0invalid')).not.toThrow();
   });
 
-  it('exposes the default path under the home config dir', () => {
-    expect(crashLogPath()).toContain('.nanoagent');
+  it('exposes the default path under NANOAGENT_ROOT/logs', () => {
+    expect(crashLogPath()).toContain('logs');
     expect(crashLogPath()).toContain('crash.log');
   });
 });
@@ -105,8 +105,8 @@ describe('beginRunMarker', () => {
     expect(() => beginRunMarker('\0invalid', false)).not.toThrow();
   });
 
-  it('exposes the default marker path under the home config dir', () => {
-    expect(runMarkerPath()).toContain('.nanoagent');
+  it('exposes the default marker path under NANOAGENT_ROOT/logs', () => {
+    expect(runMarkerPath()).toContain('logs');
     expect(runMarkerPath()).toContain('last-run.json');
   });
 });

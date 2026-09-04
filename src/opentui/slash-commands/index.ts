@@ -1,5 +1,5 @@
 import { loadSkills, getSkill, getSkillCommands } from '../../skills.js';
-import { loadConfig, saveConfigFile, applyModelProfile, formatProfileList } from '../../config.js';
+import { loadConfig, saveConfigFile, applyModelProfile, formatProfileList } from '../../config/index.js';
 import { parseEffort, formatEffortAllowed, DEFAULT_EFFORT } from '../../config/effort.js';
 import {
   getDoctorReport,

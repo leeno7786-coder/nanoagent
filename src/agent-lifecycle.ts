@@ -4,7 +4,7 @@
  * function takes the agent instance as its first parameter; the class keeps
  * thin delegate methods so the public API is unchanged.
  */
-import { createClient, isLocalProvider } from './llm.js';
+import { createClient, isLocalProvider } from './llm/index.js';
 import { createToolCacheManager, registerExternalTools, subAgentAvailable } from './tools/index.js';
 import { detectContext } from './context.js';
 import { SkillManager } from './skill-manager.js';
@@ -15,7 +15,7 @@ import {
   isSmallModelFromConfig,
   resetCatalogCapabilitiesForModelChange,
 } from './model-runtime.js';
-import { loadConfig, applySubAgentDefaults } from './config.js';
+import { loadConfig, applySubAgentDefaults } from './config/index.js';
 import { getRealEnv } from './config/load.js';
 import type { Config } from './types.js';
 import { autoSaveSession } from './store.js';
@@ -24,7 +24,7 @@ import { now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
 import { refreshSystemPrompt } from './agent-messages.js';
 import { logError, logWarn } from './log.js';
-import { homedir } from 'os';
+import { GLOBAL_CONFIG_FILE } from './config/paths.js';
 
 /** Normalize a path for comparison (forward slashes, lowercase on Windows). */
 function normPath(s: string): string {
@@ -34,10 +34,9 @@ function normPath(s: string): string {
 
 /**
  * Trust classification for MCP auto-connect. Trusted = an explicitly-passed
- * config path, or one of the exact global config filenames in the home
- * directory (mirrors the home candidates in config/load.ts). A bare home-dir
- * prefix match would treat any repo cloned under ~/ as trusted — defeating
- * the guard, since projects usually live inside the home directory.
+ * config path, or the canonical global config file under NANOAGENT_ROOT.
+ * Nothing in the home directory or cwd is trusted by default — the only
+ * place MCP servers auto-connect from is the install root's global config.
  */
 export function isTrustedMcpConfigSource(
   source: string | undefined,
@@ -45,14 +44,7 @@ export function isTrustedMcpConfigSource(
 ): boolean {
   if (!source) return false;
   if (explicitPath) return true;
-  const home = normPath(homedir());
-  const globalConfigs = [
-    `${home}/.nanoagent.json`,
-    `${home}/.nanogent.json`,
-    `${home}/.nanogent/config.json`,
-    `${home}/.qwen-agent.json`,
-  ];
-  return globalConfigs.includes(normPath(source));
+  return normPath(source) === normPath(GLOBAL_CONFIG_FILE());
 }
 
 /**

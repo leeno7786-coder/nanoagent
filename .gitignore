@@ -48,6 +48,14 @@ skills/test-*.json
 # Isolated git worktrees (feature checkouts)
 .worktrees/
 
+# Runtime data written by the agent — never source-controlled.
+# Bundled skills/ stay; sessions/, scratchpad/, logs/, config/ data
+# are all generated at runtime under NANOAGENT_ROOT and are not
+# intended to live in the source tree.
+sessions/
+scratchpad/
+logs/
+
 # pack output / scratch
 /*.tgz
 
@@ -57,3 +65,7 @@ skills/test-*.json
 .win-stage/
 .win-cache/
 dist-packages/
+
+# Local snapshot / reference (created by prior debug sessions, not part of the package)
+_repro/
+_local_pack/

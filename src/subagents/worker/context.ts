@@ -1,4 +1,4 @@
-import { createClient } from '../../llm.js';
+import { createClient } from '../../llm/index.js';
 import { resolveRateLimitsForBaseURL } from '../../providers/lookup.js';
 import { createSecurityManager, type SecurityManager } from '../../security/index.js';
 import { createToolCacheManager, type ToolCacheManager } from '../../tools/cache.js';

@@ -12,5 +12,18 @@ export {
   getRemoteProviders,
   providerRequiresAuth,
   getApiKeyEnvVar,
+  getApiKeyEnvVars,
+  getProviderForBaseURL,
+  resolveApiKeyFromEnv,
+  getProviderDefaultHeaders,
+  resolveRateLimitsForBaseURL,
+  sortProvidersForConnect,
+  CUSTOM_MODEL_ID,
+  CUSTOM_MODEL,
 } from './lookup.js';
-export { fetchLocalModels, checkRuntimeHealth, fetchOpenRouterModels } from './runtime.js';
+export {
+  fetchLocalModels,
+  checkRuntimeHealth,
+  fetchOpenRouterModels,
+  fetchRemoteModels,
+} from './runtime.js';

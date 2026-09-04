@@ -1,11 +1,16 @@
 /**
- * Tests for code-review fixes in src/config/load.ts:
+ * Tests for code-review fixes in src/config/load.ts, adapted to the single
+ * canonical install root model:
  *  1. Workspace .env must not inject trust-sensitive variables
  *     (QWEN_SECURITY_*, NANOGENT_TRUST_PROJECT_MCP, QWEN_BASE_URL, *_API_KEY).
  *  2. A directory passed as "config path" must not mask real config
  *     candidates; a corrupt higher-precedence file must not mask a valid
  *     lower-precedence one.
  *  5. QWEN_WORKSPACE is resolved to an absolute path.
+ *
+ * In the new model there is exactly ONE config file: <NANOAGENT_ROOT>/config/
+ * nanogent.json. Workspace overrides live at <explicit-workspace>/nanogent.json
+ * when --workspace is supplied. No ~/.nanoagent/.env, no ~/.qwen-agent-tui/.env.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
@@ -13,34 +18,41 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, renameSync }
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { loadConfig, getRealEnv } from './config/load.js';
-import { configDir, legacyConfigDir } from './config/paths.js';
+import {
+  ENV_FILE,
+  GLOBAL_CONFIG_FILE,
+  __resetPathsCacheForTests,
+  nanoagentPaths,
+} from './config/paths.js';
 
 let tmp: string;
+let root: string;
+const PRELOAD_ROOT = process.env.NANOAGENT_ROOT;
 const origCwd = process.cwd();
 const savedEnv: Record<string, string | undefined> = {};
 
-// Trusted home-dir .env files are honored BY DESIGN (that's where saved keys
-// live) — so these tests must move them aside to stay hermetic on machines
-// where the user has real keys/endpoints saved. Paths come from paths.ts so
-// the list tracks renames (2.2.0 added ~/.nanoagent/.env).
-const TRUSTED_ENV_FILES = [join(configDir(), '.env'), join(legacyConfigDir(), '.env')];
-let envFileBackups: (string | null)[] = [];
-
-function backupTrustedEnvFiles() {
-  envFileBackups = TRUSTED_ENV_FILES.map((p) => {
-    if (!existsSync(p)) return null;
-    const backup = p + '.testbackup';
-    renameSync(p, backup);
-    return backup;
-  });
+function setupRoot() {
+  root = mkdtempSync(join(tmpdir(), 'nanoagent-root-'));
+  for (const sub of ['config', 'skills', 'tools', 'sessions', 'workspace', 'logs']) {
+    mkdirSync(join(root, sub), { recursive: true });
+  }
+  process.env.NANOAGENT_ROOT = root;
+  __resetPathsCacheForTests();
 }
 
-function restoreTrustedEnvFiles() {
-  TRUSTED_ENV_FILES.forEach((p, i) => {
-    const backup = envFileBackups[i];
-    if (backup && existsSync(backup)) renameSync(backup, p);
-  });
-  envFileBackups = [];
+function backupEnvFile() {
+  const envPath = ENV_FILE();
+  if (existsSync(envPath)) {
+    const backup = envPath + '.testbackup';
+    renameSync(envPath, backup);
+    return backup;
+  }
+  return null;
+}
+
+function restoreEnvFile(backup: string | null) {
+  const envPath = ENV_FILE();
+  if (backup && existsSync(backup)) renameSync(backup, envPath);
 }
 
 function saveEnv(...keys: string[]) {
@@ -53,16 +65,22 @@ function restoreEnv() {
   }
 }
 
+let envFileBackup: string | null;
+
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'nanogent-cfg-'));
-  backupTrustedEnvFiles();
+  setupRoot();
+  envFileBackup = backupEnvFile();
 });
 
 afterEach(() => {
   process.chdir(origCwd);
   restoreEnv();
-  restoreTrustedEnvFiles();
-  rmSync(tmp, { recursive: true, force: true });
+  restoreEnvFile(envFileBackup);
+  if (root) rmSync(root, { recursive: true, force: true });
+  if (tmp) rmSync(tmp, { recursive: true, force: true });
+  process.env.NANOAGENT_ROOT = PRELOAD_ROOT;
+  __resetPathsCacheForTests();
 });
 
 describe('fix 1: workspace .env cannot inject trust-sensitive variables', () => {
@@ -84,7 +102,6 @@ describe('fix 1: workspace .env cannot inject trust-sensitive variables', () => 
     const cfg = loadConfig({ workspace: tmp });
 
     expect(cfg.securityEnabled).not.toBe(false);
-    // Scrubbed from process.env so no other code path can honor them either
     expect(process.env.QWEN_SECURITY_ENABLED).toBeUndefined();
     expect(process.env.NANOGENT_TRUST_PROJECT_MCP).toBeUndefined();
     expect(process.env.ZZ_TEST_INJECT_API_KEY).toBeUndefined();
@@ -130,8 +147,6 @@ describe('fix 1: workspace .env cannot inject trust-sensitive variables', () => 
   });
 
   it('ignores REMOTE_LMSTUDIO_URL planted in a workspace .env', () => {
-    // Sub-agent prompts carry workspace code, so redirecting the sub-agent
-    // endpoint is the same exfiltration class as QWEN_BASE_URL.
     saveEnv('REMOTE_LMSTUDIO_URL');
     delete process.env.REMOTE_LMSTUDIO_URL;
 
@@ -159,25 +174,23 @@ describe('fix 1: workspace .env cannot inject trust-sensitive variables', () => 
 
 describe('fix 2: config candidate handling', () => {
   it('treats a directory string arg as "no config path" instead of breaking the scan', () => {
-    // Passing the workspace DIRECTORY used to throw EISDIR inside the
-    // candidate loop and `break`, silently skipping all real config files.
     const cfg = loadConfig(tmp);
     expect(cfg).toBeDefined();
-    expect(cfg.workspace).toBe(origCwd);
+    // No --workspace + a directory arg means workspace stays at the canonical
+    // default; the directory is NOT silently treated as the workspace.
+    expect(cfg.workspace).toBe(nanoagentPaths().workspaceDir);
     if (cfg.configFilePath) {
       expect(cfg.configFilePath).not.toBe(tmp);
     }
   });
 
-  it('continues to lower-precedence candidates when a higher-precedence file is corrupt', () => {
-    writeFileSync(join(tmp, '.nanoagent.json'), '{ not valid json !!!');
-    writeFileSync(join(tmp, '.nanogent.json'), JSON.stringify({ temperature: 0.77 }));
-    mkdirSync(join(tmp, '.nanoagent', 'scratchpad'), { recursive: true });
-
+  it('continues when the global config file is corrupt', () => {
+    writeFileSync(GLOBAL_CONFIG_FILE(), '{ not valid json !!!');
+    writeFileSync(join(tmp, 'nanogent.json'), JSON.stringify({ temperature: 0.77 }));
     process.chdir(tmp);
-    const cfg = loadConfig();
+    const cfg = loadConfig({ workspace: tmp });
     expect(cfg.temperature).toBe(0.77);
-    expect(cfg.configFilePath).toBe(join(tmp, '.nanogent.json'));
+    expect(cfg.configFilePath).toBe(join(tmp, 'nanogent.json'));
   });
 
   it('marks an explicitly-passed config path as trusted', () => {
@@ -191,48 +204,31 @@ describe('fix 2: config candidate handling', () => {
 });
 
 describe('MCP config trust classification', () => {
-  it('trusts only the exact global config paths or an explicit path', async () => {
+  it('trusts only the canonical global config or an explicit path', async () => {
     const { isTrustedMcpConfigSource } = await import('./agent-lifecycle.js');
-    const { homedir } = await import('os');
-    const realHome = homedir();
 
-    // A repo cloned ANYWHERE under ~/ is still a project config (untrusted) —
-    // the old bare startsWith(homedir()) check treated it as global.
-    expect(
-      isTrustedMcpConfigSource(join(realHome, 'projects', 'evil-repo', '.nanogent.json'), false)
-    ).toBe(false);
-    // Sibling directory sharing a prefix with home is not trusted either.
-    expect(isTrustedMcpConfigSource(realHome + '2/.nanogent.json', false)).toBe(false);
-    // The exact global config filenames are trusted.
-    expect(isTrustedMcpConfigSource(join(realHome, '.nanogent.json'), false)).toBe(true);
-    expect(isTrustedMcpConfigSource(join(realHome, '.nanoagent.json'), false)).toBe(true);
-    expect(isTrustedMcpConfigSource(join(realHome, '.nanogent', 'config.json'), false)).toBe(true);
-    expect(isTrustedMcpConfigSource(join(realHome, '.qwen-agent.json'), false)).toBe(true);
+    // Anything outside the canonical global config is untrusted unless
+    // explicitly passed. Repo configs are NOT trusted by default.
+    expect(isTrustedMcpConfigSource(join(tmp, 'evil-repo', 'nanogent.json'), false)).toBe(false);
+    expect(isTrustedMcpConfigSource(join(root, 'skills', 'fake.json'), false)).toBe(false);
+
+    // The single canonical global config IS trusted.
+    expect(isTrustedMcpConfigSource(GLOBAL_CONFIG_FILE(), false)).toBe(true);
+
     // Explicit paths are trusted regardless of location.
     expect(isTrustedMcpConfigSource(join(tmp, 'my-config.json'), true)).toBe(true);
-    // No source at all → nothing to trust.
     expect(isTrustedMcpConfigSource(undefined, false)).toBe(false);
   });
 });
 
-describe('dual-level config: global base + project override', () => {
-  it('merges global and project configs, tracking untrusted project MCP servers', () => {
-    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'QWEN_MODEL', 'QWEN_BASE_URL');
-    const fakeHome = join(tmp, 'home');
-    const proj = join(tmp, 'proj');
-    mkdirSync(fakeHome, { recursive: true });
-    mkdirSync(proj, { recursive: true });
-    process.env.USERPROFILE = fakeHome;
-    process.env.HOME = fakeHome;
-    delete process.env.HOMEDRIVE;
-    delete process.env.HOMEPATH;
-    // Env overrides apply AFTER file configs by design — clear them so the
-    // assertions observe the file merge, not the environment.
+describe('dual-level config: global base + explicit workspace override', () => {
+  it('merges global and workspace configs, tracking untrusted workspace MCP servers', () => {
+    saveEnv('QWEN_MODEL', 'QWEN_BASE_URL');
     delete process.env.QWEN_MODEL;
     delete process.env.QWEN_BASE_URL;
 
     writeFileSync(
-      join(fakeHome, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         temperature: 0.11,
         model: 'global-model',
@@ -240,45 +236,33 @@ describe('dual-level config: global base + project override', () => {
       })
     );
     writeFileSync(
-      join(proj, '.nanogent.json'),
+      join(tmp, 'nanogent.json'),
       JSON.stringify({
         temperature: 0.77,
         mcp: { projSrv: { type: 'remote', url: 'https://proj.example/sse' } },
       })
     );
 
-    process.chdir(proj);
-    const cfg = loadConfig();
+    const cfg = loadConfig({ workspace: tmp });
 
-    // Project overrides shared keys, global base survives for the rest
+    // Workspace overrides shared keys, global base survives for the rest
     expect(cfg.temperature).toBe(0.77);
     expect(cfg.model).toBe('global-model');
-    expect(cfg.configFilePath).toBe(join(proj, '.nanogent.json'));
+    expect(cfg.configFilePath).toBe(join(tmp, 'nanogent.json'));
 
-    // MCP maps merge; project servers are tracked as untrusted
+    // MCP maps merge; workspace servers are tracked as untrusted
     expect(Object.keys(cfg.mcp ?? {}).sort()).toEqual(['globalSrv', 'projSrv']);
     expect(cfg.mcpUntrusted).toEqual(['projSrv']);
   });
 
-  it('project config without MCP keeps global MCP servers trusted', () => {
-    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH');
-    const fakeHome = join(tmp, 'home');
-    const proj = join(tmp, 'proj');
-    mkdirSync(fakeHome, { recursive: true });
-    mkdirSync(proj, { recursive: true });
-    process.env.USERPROFILE = fakeHome;
-    process.env.HOME = fakeHome;
-    delete process.env.HOMEDRIVE;
-    delete process.env.HOMEPATH;
-
+  it('workspace config without MCP keeps global MCP servers trusted', () => {
     writeFileSync(
-      join(fakeHome, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({ mcp: { globalSrv: { type: 'remote', url: 'https://global.example/sse' } } })
     );
-    writeFileSync(join(proj, '.nanogent.json'), JSON.stringify({ temperature: 0.5 }));
+    writeFileSync(join(tmp, 'nanogent.json'), JSON.stringify({ temperature: 0.5 }));
 
-    process.chdir(proj);
-    const cfg = loadConfig();
+    const cfg = loadConfig({ workspace: tmp });
 
     expect(Object.keys(cfg.mcp ?? {})).toEqual(['globalSrv']);
     expect(cfg.mcpUntrusted ?? []).toEqual([]);
@@ -293,46 +277,28 @@ describe('catalog-driven API key lookup', () => {
     delete process.env.OPENAI_API_KEY;
 
     writeFileSync(
-      join(tmp, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
         model: 'qwen-plus',
       })
     );
-    process.chdir(tmp);
     const cfg = loadConfig();
     expect(cfg.apiKey).toBe('sk-dash-from-env');
   });
 
-  it('restores a persisted /connect selection with the key from the trusted home .env', () => {
-    saveEnv(
-      'USERPROFILE',
-      'HOME',
-      'HOMEDRIVE',
-      'HOMEPATH',
-      'OPENROUTER_API_KEY',
-      'QWEN_BASE_URL',
-      'OPENAI_API_KEY',
-      'QWEN_MODEL'
-    );
-    const fakeHome = join(tmp, 'home-or');
-    const proj = join(tmp, 'proj-or');
-    mkdirSync(join(fakeHome, '.nanoagent'), { recursive: true });
-    mkdirSync(proj, { recursive: true });
-    process.env.USERPROFILE = fakeHome;
-    process.env.HOME = fakeHome;
-    delete process.env.HOMEDRIVE;
-    delete process.env.HOMEPATH;
+  it('restores a persisted /connect selection with the key from the canonical .env', () => {
+    saveEnv('OPENROUTER_API_KEY', 'QWEN_BASE_URL', 'OPENAI_API_KEY', 'QWEN_MODEL');
     delete process.env.OPENROUTER_API_KEY;
     delete process.env.QWEN_BASE_URL;
     delete process.env.OPENAI_API_KEY;
     delete process.env.QWEN_MODEL;
 
-    // What /connect persists: the key goes to the trusted home .env, the
-    // provider/model/baseURL selection goes to ~/.nanogent.json.
-    writeFileSync(join(fakeHome, '.nanoagent', '.env'), 'OPENROUTER_API_KEY=sk-or-persisted\n');
+    // What /connect persists: key goes to canonical config/.env, selection
+    // goes to canonical config/nanogent.json.
+    writeFileSync(ENV_FILE(), 'OPENROUTER_API_KEY=sk-or-persisted\n');
     writeFileSync(
-      join(fakeHome, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         provider: 'openrouter',
         model: 'minimax/minimax-m3:free',
@@ -340,77 +306,30 @@ describe('catalog-driven API key lookup', () => {
       })
     );
 
-    process.chdir(proj);
     const cfg = loadConfig();
     expect(cfg.provider).toBe('openrouter');
     expect(cfg.model).toBe('minimax/minimax-m3:free');
     expect(cfg.baseURL).toBe('https://openrouter.ai/api/v1');
     expect(cfg.apiKey).toBe('sk-or-persisted');
   });
-
-  it('still resolves keys saved in the legacy ~/.qwen-agent-tui/.env', () => {
-    saveEnv(
-      'USERPROFILE',
-      'HOME',
-      'HOMEDRIVE',
-      'HOMEPATH',
-      'OPENROUTER_API_KEY',
-      'QWEN_BASE_URL',
-      'OPENAI_API_KEY',
-      'QWEN_MODEL'
-    );
-    const fakeHome = join(tmp, 'home-legacy');
-    const proj = join(tmp, 'proj-legacy');
-    mkdirSync(join(fakeHome, '.qwen-agent-tui'), { recursive: true });
-    mkdirSync(proj, { recursive: true });
-    process.env.USERPROFILE = fakeHome;
-    process.env.HOME = fakeHome;
-    delete process.env.HOMEDRIVE;
-    delete process.env.HOMEPATH;
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.QWEN_BASE_URL;
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.QWEN_MODEL;
-
-    // Only the legacy pre-rename .env exists — no ~/.nanoagent yet.
-    writeFileSync(join(fakeHome, '.qwen-agent-tui', '.env'), 'OPENROUTER_API_KEY=sk-or-legacy\n');
-    writeFileSync(
-      join(fakeHome, '.nanogent.json'),
-      JSON.stringify({
-        provider: 'openrouter',
-        model: 'minimax/minimax-m3:free',
-        baseURL: 'https://openrouter.ai/api/v1',
-      })
-    );
-
-    process.chdir(proj);
-    const cfg = loadConfig();
-    expect(cfg.apiKey).toBe('sk-or-legacy');
-  });
 });
 
 describe('cloud rate-limit defaults', () => {
   it('applies OpenRouter catalog RPM when config and env omit it', () => {
-    saveEnv(
-      'QWEN_MAX_REQUESTS_PER_MINUTE',
-      'QWEN_MAX_RPM',
-      'QWEN_MAX_CONCURRENT_LLM',
-      'QWEN_BASE_URL'
-    );
+    saveEnv('QWEN_MAX_REQUESTS_PER_MINUTE', 'QWEN_MAX_RPM', 'QWEN_MAX_CONCURRENT_LLM', 'QWEN_BASE_URL');
     delete process.env.QWEN_MAX_REQUESTS_PER_MINUTE;
     delete process.env.QWEN_MAX_RPM;
     delete process.env.QWEN_MAX_CONCURRENT_LLM;
     delete process.env.QWEN_BASE_URL;
 
     writeFileSync(
-      join(tmp, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         baseURL: 'https://openrouter.ai/api/v1',
         model: 'openrouter/free',
       })
     );
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    const cfg = loadConfig();
     expect(cfg.maxRequestsPerMinute).toBe(20);
     expect(cfg.maxConcurrentLlmRequests).toBe(2);
   });
@@ -422,7 +341,7 @@ describe('cloud rate-limit defaults', () => {
     delete process.env.QWEN_MAX_RPM;
 
     writeFileSync(
-      join(tmp, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         baseURL: 'https://openrouter.ai/api/v1',
         model: 'openrouter/free',
@@ -430,19 +349,18 @@ describe('cloud rate-limit defaults', () => {
         maxConcurrentLlmRequests: 2,
       })
     );
-    process.chdir(tmp);
-    const fromFile = loadConfig({ workspace: tmp });
+    const fromFile = loadConfig();
     expect(fromFile.maxRequestsPerMinute).toBe(20);
     expect(fromFile.maxConcurrentLlmRequests).toBe(2);
 
     writeFileSync(
-      join(tmp, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         baseURL: 'https://openrouter.ai/api/v1',
         model: 'openrouter/free',
       })
     );
-    const fromEnv = loadConfig({ workspace: tmp });
+    const fromEnv = loadConfig();
     expect(fromEnv.maxRequestsPerMinute).toBe(9);
     expect(fromEnv.maxConcurrentLlmRequests).toBe(3);
   });
@@ -470,14 +388,13 @@ describe('token and cost controls', () => {
     process.env.QWEN_COMPLETION_PRICE_PER_MILLION = '0.6';
 
     writeFileSync(
-      join(tmp, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         baseURL: 'https://openrouter.ai/api/v1',
         model: 'openrouter/free',
       })
     );
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    const cfg = loadConfig();
     expect(cfg.maxTokensPerMinute).toBe(200000);
     expect(cfg.maxToolResultTokens).toBe(4000);
     expect(cfg.promptPricePerMillion).toBe(0.15);
@@ -497,7 +414,7 @@ describe('token and cost controls', () => {
     process.env.QWEN_COMPLETION_PRICE_PER_MILLION = '8';
 
     writeFileSync(
-      join(tmp, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         baseURL: 'https://openrouter.ai/api/v1',
         model: 'openrouter/free',
@@ -507,8 +424,7 @@ describe('token and cost controls', () => {
         completionPricePerMillion: 0.6,
       })
     );
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    const cfg = loadConfig();
     expect(cfg.maxTokensPerMinute).toBe(200000);
     expect(cfg.maxToolResultTokens).toBe(8000);
     expect(cfg.promptPricePerMillion).toBe(0.15);
@@ -521,14 +437,13 @@ describe('token and cost controls', () => {
     process.env.QWEN_MAX_TOOL_RESULT_TOKENS = '-5';
 
     writeFileSync(
-      join(tmp, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         baseURL: 'https://openrouter.ai/api/v1',
         model: 'openrouter/free',
       })
     );
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    const cfg = loadConfig();
     expect(cfg.maxTokensPerMinute).toBeUndefined();
     expect(cfg.maxToolResultTokens).toBeUndefined();
   });
@@ -546,20 +461,9 @@ describe('fix 5: QWEN_WORKSPACE is resolved', () => {
 });
 
 describe('fallbacks and profiles from config/env', () => {
-  function isolateHome() {
-    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH');
-    const fakeHome = join(tmp, 'home');
-    mkdirSync(fakeHome, { recursive: true });
-    process.env.USERPROFILE = fakeHome;
-    process.env.HOME = fakeHome;
-    delete process.env.HOMEDRIVE;
-    delete process.env.HOMEPATH;
-  }
-
   it('loads fallbacks from the config file', () => {
-    isolateHome();
     writeFileSync(
-      join(tmp, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         fallbacks: [
           {
@@ -573,21 +477,18 @@ describe('fallbacks and profiles from config/env', () => {
         },
       })
     );
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    const cfg = loadConfig();
     expect(cfg.fallbacks?.[0]?.model).toBe('openrouter/free');
     expect(cfg.profiles?.local?.model).toBe('qwen3.5-4b');
   });
 
   it('uses env fallbacks when the file omits them', () => {
-    isolateHome();
     saveEnv('QWEN_FALLBACK_MODEL', 'QWEN_FALLBACK_BASE_URL', 'QWEN_FALLBACK_PROVIDER');
     process.env.QWEN_FALLBACK_MODEL = 'openrouter/free';
     process.env.QWEN_FALLBACK_BASE_URL = 'https://openrouter.ai/api/v1';
     process.env.QWEN_FALLBACK_PROVIDER = 'openrouter';
-    writeFileSync(join(tmp, '.nanogent.json'), JSON.stringify({ model: 'local-4b' }));
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    writeFileSync(GLOBAL_CONFIG_FILE(), JSON.stringify({ model: 'local-4b' }));
+    const cfg = loadConfig();
     expect(cfg.fallbacks).toEqual([
       {
         model: 'openrouter/free',
@@ -598,108 +499,96 @@ describe('fallbacks and profiles from config/env', () => {
   });
 
   it('lets file fallbacks win over env', () => {
-    isolateHome();
     saveEnv('QWEN_FALLBACK_MODEL', 'QWEN_FALLBACK_BASE_URL');
     process.env.QWEN_FALLBACK_MODEL = 'from-env';
     process.env.QWEN_FALLBACK_BASE_URL = 'https://openrouter.ai/api/v1';
     writeFileSync(
-      join(tmp, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         fallbacks: [{ model: 'from-file', baseURL: 'http://127.0.0.1:1234/v1' }],
       })
     );
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    const cfg = loadConfig();
     expect(cfg.fallbacks?.[0]?.model).toBe('from-file');
   });
 
   it('does not apply invalid fallback env', () => {
-    isolateHome();
     saveEnv('QWEN_FALLBACK_MODEL', 'QWEN_FALLBACK_BASE_URL', 'QWEN_FALLBACK_PROVIDER');
     process.env.QWEN_FALLBACK_MODEL = 'ok-model';
     process.env.QWEN_FALLBACK_BASE_URL = 'not-a-url';
-    writeFileSync(join(tmp, '.nanogent.json'), JSON.stringify({ model: 'local-4b' }));
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    writeFileSync(GLOBAL_CONFIG_FILE(), JSON.stringify({ model: 'local-4b' }));
+    const cfg = loadConfig();
     expect(cfg.fallbacks).toBeUndefined();
   });
 });
 
 describe('promptCache from config/env', () => {
-  function isolateHome() {
-    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH');
-    const fakeHome = join(tmp, 'home');
-    mkdirSync(fakeHome, { recursive: true });
-    process.env.USERPROFILE = fakeHome;
-    process.env.HOME = fakeHome;
-    delete process.env.HOMEDRIVE;
-    delete process.env.HOMEPATH;
-  }
-
   it('applies QWEN_PROMPT_CACHE=0 when the file omits promptCache', () => {
-    isolateHome();
     saveEnv('QWEN_PROMPT_CACHE');
     process.env.QWEN_PROMPT_CACHE = '0';
-    writeFileSync(join(tmp, '.nanogent.json'), JSON.stringify({ model: 'local-4b' }));
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    writeFileSync(GLOBAL_CONFIG_FILE(), JSON.stringify({ model: 'local-4b' }));
+    const cfg = loadConfig();
     expect(cfg.promptCache).toBe(false);
   });
 
   it('lets file promptCache win over env', () => {
-    isolateHome();
     saveEnv('QWEN_PROMPT_CACHE');
     process.env.QWEN_PROMPT_CACHE = '0';
-    writeFileSync(join(tmp, '.nanogent.json'), JSON.stringify({ promptCache: true }));
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    writeFileSync(GLOBAL_CONFIG_FILE(), JSON.stringify({ promptCache: true }));
+    const cfg = loadConfig();
     expect(cfg.promptCache).toBe(true);
   });
 });
 
 describe('explicit options beat config files', () => {
-  function isolateHome() {
-    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH');
-    const fakeHome = join(tmp, 'home');
-    mkdirSync(fakeHome, { recursive: true });
-    process.env.USERPROFILE = fakeHome;
-    process.env.HOME = fakeHome;
-    delete process.env.HOMEDRIVE;
-    delete process.env.HOMEPATH;
-    return fakeHome;
-  }
-
-  it('an explicitly-passed baseURL/model is not clobbered by the home config', () => {
-    const fakeHome = isolateHome();
-    // The home config pins a different provider — this is what made the
-    // S-001 API-key isolation tests pick up a real OpenRouter key: the
-    // explicit baseURL lost to the home file, then the catalog resolved
-    // the key for the WRONG provider.
+  it('an explicitly-passed baseURL/model is not clobbered by the global config', () => {
     writeFileSync(
-      join(fakeHome, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({
         provider: 'openrouter',
         model: 'home-model',
         baseURL: 'https://openrouter.ai/api/v1',
       })
     );
-    process.chdir(tmp);
     const cfg = loadConfig({ baseURL: 'https://api.mistral.ai/v1', model: 'mistral-large-latest' });
     expect(cfg.baseURL).toBe('https://api.mistral.ai/v1');
     expect(cfg.model).toBe('mistral-large-latest');
-    // No key may be resolved for a provider that has none configured.
     expect(cfg.apiKey ?? null).toBe(null);
   });
 
-  it('home config still applies when no explicit option is passed', () => {
-    const fakeHome = isolateHome();
+  it('global config still applies when no explicit option is passed', () => {
     writeFileSync(
-      join(fakeHome, '.nanogent.json'),
+      GLOBAL_CONFIG_FILE(),
       JSON.stringify({ model: 'home-model', baseURL: 'https://openrouter.ai/api/v1' })
     );
-    process.chdir(tmp);
-    const cfg = loadConfig({ workspace: tmp });
+    const cfg = loadConfig();
     expect(cfg.model).toBe('home-model');
     expect(cfg.baseURL).toBe('https://openrouter.ai/api/v1');
+  });
+});
+
+describe('no implicit cwd/home config discovery', () => {
+  it('does not read a config file from the process cwd', () => {
+    const decoy = join(tmp, '.nanogent.json');
+    writeFileSync(decoy, JSON.stringify({ temperature: 0.99, model: 'cwd-model' }));
+    process.chdir(tmp);
+    const cfg = loadConfig();
+    // Cwd decoy must NOT have been loaded — only the canonical global config.
+    expect(cfg.temperature).not.toBe(0.99);
+    expect(cfg.model).not.toBe('cwd-model');
+  });
+
+  it('does not read a config file from the home directory', () => {
+    saveEnv('USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH');
+    const fakeHome = join(tmp, 'fake-home');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+    delete process.env.HOMEDRIVE;
+    delete process.env.HOMEPATH;
+
+    writeFileSync(join(fakeHome, '.nanogent.json'), JSON.stringify({ model: 'home-model' }));
+    const cfg = loadConfig();
+    expect(cfg.model).not.toBe('home-model');
   });
 });

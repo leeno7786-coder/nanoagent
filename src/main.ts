@@ -69,6 +69,16 @@ export function setupProcessHandlers(): void {
 async function main(): Promise<number> {
   setupProcessHandlers();
 
+  // NANOAGENT_ROOT must already be set in the environment. The single boot
+  // script is scripts/run-nanoagent.mjs (the `nanoagent` / `nanogent` bin);
+  // it owns root resolution and chdir. Refuse to run any other way.
+  if (!process.env.NANOAGENT_ROOT || process.env.NANOAGENT_ROOT.length === 0) {
+    throw new Error(
+      '[nanoagent] NANOAGENT_ROOT is not set. Launch via `nanoagent` (scripts/run-nanoagent.mjs); ' +
+        'it is the only supported boot script and it owns the canonical install root.'
+    );
+  }
+
   try {
     const argv = process.argv.slice(2);
 

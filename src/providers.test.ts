@@ -25,7 +25,7 @@ import {
   fetchRemoteModels,
   fetchOpenRouterModels,
   RUNTIME_PROVIDERS,
-} from './providers.js';
+} from './providers/index.js';
 
 describe('providers.ts - Provider Resolution', () => {
   describe('getProvider', () => {

@@ -1,12 +1,12 @@
 import type { Config, ModelInfo } from '../types.js';
-import { loadConfig, validateConfig } from '../config.js';
-import { checkRuntimeHealth, fetchLocalModels, RUNTIME_PROVIDERS } from '../providers.js';
+import { loadConfig, validateConfig } from '../config/index.js';
+import { checkRuntimeHealth, fetchLocalModels, RUNTIME_PROVIDERS } from '../providers/index.js';
 import {
   enrichConfigWithRuntime,
   isSmallModelFromConfig,
   modelIdsMatch,
 } from '../model-runtime.js';
-import { isLocalProvider } from '../llm.js';
+import { isLocalProvider } from '../llm/index.js';
 import { resolveToolResultTokenBudget } from '../llm/tool-result-budget.js';
 import { DEFAULT_EFFORT } from '../config/effort.js';
 

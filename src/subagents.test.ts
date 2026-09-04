@@ -11,7 +11,7 @@ import {
   MAX_CONCURRENT_SUBAGENTS,
   resolveSubAgentPool,
   type SubAgentResult,
-} from './subagents.js';
+} from './subagents/index.js';
 import {
   isSubAgentModelId,
   filterLoadedModels,

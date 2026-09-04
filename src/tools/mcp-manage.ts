@@ -1,9 +1,8 @@
 import { existsSync, readFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
 import type { McpServerConfig } from '../types.js';
 import { saveConfigFile } from '../config/load.js';
 import type { Tool } from './shared.js';
+import { GLOBAL_CONFIG_FILE } from '../config/paths.js';
 
 export interface ManageMcpArgs {
   action?: string;
@@ -20,7 +19,7 @@ export interface ManageMcpResult {
   servers?: Record<string, McpServerConfig>;
 }
 
-const GLOBAL_CONFIG_PATH = join(homedir(), '.nanogent.json');
+const GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_FILE();
 
 function readGlobalMcp(configPath: string): Record<string, McpServerConfig> {
   if (!existsSync(configPath)) return {};
@@ -107,13 +106,14 @@ export function applyMcpAction(
 }
 
 // SECURITY: manage_mcp edits ONLY the trusted global config
-// (~/.nanogent.json). It must never write MCP servers into a project-local
-// config — project configs are untrusted and their MCP servers are not
-// auto-connected (see the MCP trust guard in agent-lifecycle.ts).
+// (<NANOAGENT_ROOT>/config/nanogent.json). It must never write MCP servers
+// into a project-local config — project configs are untrusted and their MCP
+// servers are not auto-connected (see the MCP trust guard in
+// agent-lifecycle.ts).
 export const manageMcpTool: Tool = {
   name: 'manage_mcp',
   description:
-    "Add, remove, or list MCP servers in the trusted global config (~/.nanogent.json). add needs name + type ('local' with command[], or 'remote' with url); remove needs name; list takes no extra args.",
+    'Add, remove, or list MCP servers in the trusted global config (config/nanogent.json under NANOAGENT_ROOT). add needs name + type ("local" with command[], or "remote" with url); remove needs name; list takes no extra args.',
   parameters: {
     type: 'object',
     properties: {

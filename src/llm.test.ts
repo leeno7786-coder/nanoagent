@@ -5,7 +5,7 @@ import {
   shouldEnableThinking,
   effectiveContextSize,
   getModelCompactionSettings,
-} from './llm.js';
+} from './llm/index.js';
 
 const RUNTIME_128K = { contextLength: 128000 };
 

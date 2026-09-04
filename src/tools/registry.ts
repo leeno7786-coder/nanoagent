@@ -11,7 +11,7 @@ import {
   editFileLinesTool,
   listDirTool,
   statPathTool,
-} from './file-tools.js';
+} from './file-tools/index.js';
 import {
   mapProjectTreeTool,
   searchAndViewTool,

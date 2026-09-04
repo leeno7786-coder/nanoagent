@@ -85,7 +85,7 @@ export const exploreSubagentTool: Tool = {
         exploreWithSubAgent,
         formatSubAgentResults,
         enrichTaskWithContext,
-      } = await import('../subagents.js');
+      } = await import('../subagents/index.js');
       const pool = await resolveSubAgentPool(cfg!);
       if (!pool) {
         return JSON.stringify({

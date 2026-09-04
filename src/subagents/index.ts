@@ -3,7 +3,7 @@
  * Re-exports exactly what src/subagents.ts exported before the split.
  */
 export { resolveSubAgentPool } from './pool.js';
-export { exploreWithSubAgent, MAX_CONCURRENT_SUBAGENTS } from './worker.js';
+export { exploreWithSubAgent, MAX_CONCURRENT_SUBAGENTS } from './worker/index.js';
 export {
   buildSubAgentContext,
   enrichTaskWithContext,

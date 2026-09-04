@@ -4,13 +4,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { AgentCore } from '../agent.js';
 import type { Config, Message, Todo } from '../types.js';
 import { PermissionManager } from '../security/permissions.js';
-import { handleSlashCommand, type SlashCommandContext } from './slash-commands.js';
+import { handleSlashCommand, type SlashCommandContext } from './slash-commands/index.js';
 
 function makeConfig(ws: string): Config {
   return {
@@ -311,9 +311,9 @@ describe('handleSlashCommand', () => {
   it('/config set writes a local config file and confirms the update', async () => {
     await handleSlashCommand('/config set model new-model-1', h.ctx);
     expect(lastAssistantContent(h)).toContain('Updated `model`');
-    // the local workspace config file was written with the new value
-    const { readFileSync, existsSync } = await import('fs');
-    const localCfg = join(ws, '.nanogent.json');
+    // the local workspace config file was written with the new value.
+    // The canonical local filename is <workspace>/nanogent.json (no leading dot).
+    const localCfg = join(ws, 'nanogent.json');
     expect(existsSync(localCfg)).toBe(true);
     const written = JSON.parse(readFileSync(localCfg, 'utf-8'));
     expect(written.model).toBe('new-model-1');

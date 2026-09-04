@@ -17,8 +17,8 @@ import {
   sortProvidersForConnect,
   CUSTOM_MODEL_ID,
   CUSTOM_MODEL,
-} from '../providers.js';
-import { saveApiKeyToEnv, getApiKey, isUsableApiKey } from '../config.js';
+} from '../providers/index.js';
+import { saveApiKeyToEnv, getApiKey, isUsableApiKey } from '../config/index.js';
 import type { RuntimeProvider, ModelInfo } from '../types.js';
 import { useAppStore } from './app-store.js';
 import { sanitizePastedLine } from '../clipboard.js';

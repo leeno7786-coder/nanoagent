@@ -3,7 +3,7 @@
  * conversion, and context compaction). Each function takes the agent
  * instance as its first parameter.
  */
-import type { ChatMessage } from './llm.js';
+import type { ChatMessage } from './llm/index.js';
 import type { Message } from './types.js';
 import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';

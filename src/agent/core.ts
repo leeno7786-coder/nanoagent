@@ -1,10 +1,10 @@
-import { createClient } from '../llm.js';
-import type { ChatMessage } from '../llm.js';
+import { createClient } from '../llm/index.js';
+import type { ChatMessage } from '../llm/index.js';
 import { toOpenAI, ToolCacheManager, createToolCacheManager, getAllTools } from '../tools/index.js';
 import type { SubAgentProgressEvent } from '../tools/index.js';
 import { SkillManager } from '../skill-manager.js';
 import type { Config, Message, ToolResult, AgentState, Todo } from '../types.js';
-import { resolveSubAgentPool } from '../subagents.js';
+import { resolveSubAgentPool } from '../subagents/index.js';
 import { ContextManager, createContextManager } from '../context/manager.js';
 import {
   SecurityManager,
@@ -27,7 +27,7 @@ import {
   type BackgroundSubAgent,
   type SubAgentSnapshot,
 } from '../agent-subagents.js';
-import { executeToolDirect, executeToolSequential, executeToolsParallel } from '../agent-tools.js';
+import { executeToolDirect, executeToolSequential, executeToolsParallel } from '../agent-tools/index.js';
 import { addTodo, toggleTodo, removeTodo } from '../agent-todos.js';
 import {
   toChatMessages,

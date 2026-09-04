@@ -5,9 +5,35 @@
  * - stripEnvelope actually strips the storage envelope fields
  */
 
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync, mkdirSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { sanitizeSessionId, loadSession, deleteSession, buildConfigSnapshot } from './store.js';
+import { __resetPathsCacheForTests } from './config/paths.js';
 import type { Config } from './types.js';
+
+let tmpRoot: string;
+const PRELOAD_ROOT = process.env.NANOAGENT_ROOT;
+let priorRoot: string | undefined;
+
+beforeEach(() => {
+  tmpRoot = mkdtempSync(join(tmpdir(), 'nanoagent-store-'));
+  for (const sub of ['config', 'skills', 'tools', 'sessions', 'workspace', 'logs']) {
+    mkdirSync(join(tmpRoot, sub), { recursive: true });
+  }
+  priorRoot = process.env.NANOAGENT_ROOT;
+  process.env.NANOAGENT_ROOT = tmpRoot;
+  __resetPathsCacheForTests();
+});
+
+afterEach(() => {
+  rmSync(tmpRoot, { recursive: true, force: true });
+  // Restore the preload's root, not `priorRoot` (which is this test's own
+  // tmpRoot) — the preload is the one responsible for the canonical value.
+  process.env.NANOAGENT_ROOT = PRELOAD_ROOT;
+  __resetPathsCacheForTests();
+});
 
 describe('sanitizeSessionId', () => {
   it('strips path separators so ids cannot escape the sessions dir', () => {

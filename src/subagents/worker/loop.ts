@@ -1,5 +1,5 @@
-import { streamChat } from '../../llm.js';
-import type { ChatMessage } from '../../llm.js';
+import { streamChat } from '../../llm/index.js';
+import type { ChatMessage } from '../../llm/index.js';
 import { tools, toOpenAI } from '../../tools/index.js';
 import type { ToolExecutionHooks, SubAgentProgressEvent } from '../../tools/index.js';
 import type { SubAgentPoolConfig } from '../../types.js';

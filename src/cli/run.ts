@@ -1,7 +1,7 @@
 import { parseArgs } from 'util';
 import { resolve } from 'path';
 import { AgentCore } from '../agent.js';
-import { loadConfig, applyModelProfile } from '../config.js';
+import { loadConfig, applyModelProfile } from '../config/index.js';
 import { printRunHelp, cliError } from './help.js';
 import type { PermissionMode } from '../security/index.js';
 

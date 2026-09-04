@@ -2,7 +2,7 @@
 
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
-import { loadConfig, getApiKey } from '../config.js';
+import { loadConfig, getApiKey } from '../config/index.js';
 import { setTuiActive } from '../log.js';
 import { App } from './app.js';
 

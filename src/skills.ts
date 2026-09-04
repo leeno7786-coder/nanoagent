@@ -1,75 +1,24 @@
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync,
-} from 'fs';
-import { homedir } from 'os';
+import { existsSync, readdirSync, readFileSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join, basename, dirname, extname } from 'path';
-import { fileURLToPath } from 'url';
 import type { Skill, SkillCommand } from './types.js';
-import { configDir, legacyConfigDir } from './config/paths.js';
+import { SKILLS_DIR, SKILL_CONFIG_FILE } from './config/paths.js';
 
-const SKILL_DIRS = [
-  join(process.cwd(), 'skills'),
-  join(configDir(), 'skills'),
-  // Legacy pre-rename location, still honored as a read source.
-  join(legacyConfigDir(), 'skills'),
-  join(homedir(), '.agents', 'skills'),
-  join(homedir(), '.claude', 'skills'),
-];
+const TEMPLATE_DIR = join(dirname(import.meta.url.replace('file:///', '')), '..', 'skills', 'templates');
 
-const TEMPLATE_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  'skills',
-  'templates'
-);
-
-const SKILL_CONFIG_FILE = join(configDir(), 'skill-config.json');
-const LEGACY_SKILL_CONFIG_FILE = join(legacyConfigDir(), 'skill-config.json');
-
-// Resolved relative to this compiled module. Under a normal install the bin is
-// dist/main.js and this file compiles to dist/skills.js, so the package root
-// (containing /skills) is one level up from dist.
-const BUILTIN_SKILL_DIR = (() => {
-  const fromBin = dirname(dirname(fileURLToPath(import.meta.url)));
-  const candidate = join(fromBin, 'skills');
-  if (existsSync(candidate)) return candidate;
-  // Running from source tree where compiled output lives elsewhere.
-  return join(process.cwd(), 'skills');
-})();
-
-function ensureSkillDirs(): void {
-  for (const dir of SKILL_DIRS) {
-    if (!existsSync(dir)) {
-      try {
-        mkdirSync(dir, { recursive: true });
-      } catch {
-        /* dir may already exist */
-      }
-    }
-  }
+function ensureSkillDir(): void {
+  const dir = SKILLS_DIR();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
 // P1: Validate skill sourcePath against allowed paths
 export function isSkillPathAllowed(sourcePath: string, allowedPaths?: string[]): boolean {
-  if (!allowedPaths || allowedPaths.length === 0) {
-    // No restrictions configured, allow by default
-    return true;
-  }
+  if (!allowedPaths || allowedPaths.length === 0) return true;
 
   for (const allowedPath of allowedPaths) {
     try {
-      // Normalize paths for comparison
       const normalizedSource = sourcePath.replace(/\\/g, '/');
       const normalizedAllowed = allowedPath.replace(/\\/g, '/');
 
-      // Check if sourcePath starts with allowedPath
       if (
         normalizedSource.startsWith(normalizedAllowed + '/') ||
         normalizedSource === normalizedAllowed
@@ -77,7 +26,6 @@ export function isSkillPathAllowed(sourcePath: string, allowedPaths?: string[]):
         return true;
       }
     } catch {
-      // If comparison fails, continue to next allowed path
       continue;
     }
   }
@@ -98,10 +46,7 @@ function parseYamlFrontmatter(text: string): {
     [key: string]: unknown;
   } = {};
 
-  // Normalize line endings (handle both CRLF and LF)
   const normalizedText = text.replace(/\r\n/g, '\n');
-
-  // Match YAML frontmatter between --- delimiters
   const match = normalizedText.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
   if (!match) return result;
 
@@ -115,13 +60,11 @@ function parseYamlFrontmatter(text: string): {
   for (const raw of lines) {
     const line = raw;
 
-    // Handle block scalar indicator (|)
     if (isBlockValue && currentKey) {
       if (line.startsWith('  ') || line.startsWith('- ') || line.trim() === '') {
         blockValue.push(line);
         continue;
       } else {
-        // End of block value
         if (currentKey === 'description') {
           result.description = blockValue
             .map((l) => l.replace(/^ {2}/, ''))
@@ -156,7 +99,6 @@ function parseYamlFrontmatter(text: string): {
     } else if (key === 'description') {
       result.description = value;
     } else if (key === 'triggers') {
-      // Parse inline array: triggers: ["a", "b"]
       if (value.startsWith('[')) {
         try {
           result.triggers = JSON.parse(value.replace(/'/g, '"'));
@@ -164,7 +106,6 @@ function parseYamlFrontmatter(text: string): {
           /* not valid JSON, skip inline parse */
         }
       } else if (value === '') {
-        // Triggers as block list: triggers:\n  - item
         currentKey = 'triggers';
         isBlockValue = true;
         blockValue = [];
@@ -173,7 +114,6 @@ function parseYamlFrontmatter(text: string): {
     }
   }
 
-  // Handle trailing block value
   if (isBlockValue && currentKey) {
     if (currentKey === 'description') {
       result.description = blockValue
@@ -191,7 +131,6 @@ function parseYamlFrontmatter(text: string): {
 }
 
 function extractTriggersFromDescription(description: string): string[] {
-  // Extract WHEN: sections from description
   const whenMatch = description.match(/(?:WHEN|when|Use when):\s*(.*?)(?:\.\s|$)/);
   if (!whenMatch) return [];
 
@@ -206,16 +145,13 @@ function loadSkillFile(filePath: string): Skill | null {
     const ext = extname(filePath).toLowerCase();
 
     if (ext === '.md') {
-      // Parse SKILL.md with YAML frontmatter
       const content = readFileSync(filePath, 'utf-8');
       const frontmatter = parseYamlFrontmatter(content);
       if (!frontmatter.name) return null;
 
-      // Extract prompt body (everything after frontmatter) - handle both CRLF and LF
       const normalizedContent = content.replace(/\r\n/g, '\n');
       const prompt = normalizedContent.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '').trim();
 
-      // Extract triggers from frontmatter or description
       const triggers = frontmatter.triggers?.length
         ? frontmatter.triggers
         : extractTriggersFromDescription(frontmatter.description || '');
@@ -234,7 +170,6 @@ function loadSkillFile(filePath: string): Skill | null {
     }
 
     if (ext === '.json') {
-      // Legacy JSON skill support
       const skill: Skill = JSON.parse(readFileSync(filePath, 'utf-8'));
       if (!skill.name) {
         skill.name = basename(filePath, '.json');
@@ -243,7 +178,6 @@ function loadSkillFile(filePath: string): Skill | null {
       skill.sourcePath = filePath;
       if (skill.enabled === undefined) skill.enabled = true;
 
-      // Extract triggers from tags or longDescription
       if (!skill.triggers) {
         skill.triggers = skill.tags?.length
           ? skill.tags
@@ -268,7 +202,6 @@ function scanDirForSkills(dir: string): Map<string, Skill> {
 
   if (!existsSync(dir)) return map;
 
-  // Scan for SKILL.md files (in subdirectories)
   try {
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
@@ -281,13 +214,11 @@ function scanDirForSkills(dir: string): Map<string, Skill> {
       }
     }
 
-    // Also scan for direct .json files (legacy support)
     for (const entry of entries) {
       if (entry.isFile()) {
         const filePath = join(dir, entry.name);
         const ext = extname(entry.name).toLowerCase();
         if (ext !== '.json') continue;
-        // Skip if a corresponding SKILL.md subdirectory exists (SKILL.md takes priority)
         const jsonName = basename(entry.name, '.json');
         if (existsSync(join(dir, jsonName, 'SKILL.md'))) continue;
         const skill = loadSkillFile(filePath);
@@ -302,10 +233,6 @@ function scanDirForSkills(dir: string): Map<string, Skill> {
 }
 
 // --- Skills cache -------------------------------------------------------
-// loadSkills() used to rescan every skill directory on EVERY call (and it is
-// called on every user message). Cache the result keyed by a cheap
-// fingerprint of the scan inputs: each skills dir's entries + entry mtimes
-// (incl. SKILL.md files) and the user skill-config mtime. No deep hashing.
 let skillsCache: { key: string; map: Map<string, Skill> } | null = null;
 
 /** Force the next loadSkills() to rescan (called after skill mutations). */
@@ -313,21 +240,17 @@ export function invalidateSkillsCache(): void {
   skillsCache = null;
 }
 
-function fingerprintSkillsInputs(dirs: string[]): string {
+function fingerprintSkillsInputs(dir: string): string {
   const parts: string[] = [];
-  for (const dir of dirs) {
-    try {
-      if (!existsSync(dir)) {
-        parts.push(`${dir}:missing`);
-        continue;
-      }
+  try {
+    if (!existsSync(dir)) {
+      parts.push(`${dir}:missing`);
+    } else {
       const entries = readdirSync(dir).sort();
       const sigs = entries.map((name) => {
         try {
           const st = statSync(join(dir, name));
           let sig = `${name}:${st.mtimeMs}`;
-          // Skill bodies live in <dir>/<name>/SKILL.md — include its mtime
-          // so content edits invalidate the cache.
           if (st.isDirectory()) {
             const skillMd = join(dir, name, 'SKILL.md');
             if (existsSync(skillMd)) sig += `:${statSync(skillMd).mtimeMs}`;
@@ -338,13 +261,13 @@ function fingerprintSkillsInputs(dirs: string[]): string {
         }
       });
       parts.push(`${dir}[${sigs.join(',')}]`);
-    } catch {
-      parts.push(`${dir}:err`);
     }
+  } catch {
+    parts.push(`${dir}:err`);
   }
   try {
     parts.push(
-      `cfg:${existsSync(SKILL_CONFIG_FILE) ? statSync(SKILL_CONFIG_FILE).mtimeMs : 'none'}`
+      `cfg:${existsSync(SKILL_CONFIG_FILE()) ? statSync(SKILL_CONFIG_FILE()).mtimeMs : 'none'}`
     );
   } catch {
     parts.push('cfg:?');
@@ -352,45 +275,37 @@ function fingerprintSkillsInputs(dirs: string[]): string {
   return parts.join('|');
 }
 
+// statSync is required by fingerprintSkillsInputs; pulling it in here keeps
+// the module's fs imports minimal.
+import { statSync } from 'fs';
+
+/**
+ * Load every skill the agent owns.
+ *
+ * There is exactly one source of truth: `<NANOAGENT_ROOT>/skills/`. Bundled
+ * skills ship inside the package and are installed to that directory by the
+ * launcher on first run. User skills drop into the same directory. There is
+ * no <cwd>/skills, no ~/.nanoagent/skills, no ~/.qwen-agent-tui/skills, no
+ * ~/.agents/skills, no ~/.claude/skills — those were the source of the
+ * "skills disappear depending on cwd" bug.
+ */
 export function loadSkills(): Map<string, Skill> {
-  ensureSkillDirs();
+  ensureSkillDir();
+  const dir = SKILLS_DIR();
 
-  // Built-ins first so local/user skills can override
-  // Use process.cwd() + "skills" as the primary skills directory
-  const projectSkillsDir = join(process.cwd(), 'skills');
-  let allDirs = [projectSkillsDir, ...SKILL_DIRS];
-
-  // Fallback: If project skills directory doesn't exist, use BUILTIN_SKILL_DIR
-  if (!existsSync(projectSkillsDir)) {
-    allDirs = [BUILTIN_SKILL_DIR, ...SKILL_DIRS];
-  }
-
-  const cacheKey = fingerprintSkillsInputs(allDirs);
+  const cacheKey = fingerprintSkillsInputs(dir);
   if (skillsCache && skillsCache.key === cacheKey) {
-    // Shallow copy so callers can't mutate the cached map.
     return new Map(skillsCache.map);
   }
 
   const userPrefs = loadSkillConfig();
   const map = new Map<string, Skill>();
-
-  for (const dir of allDirs) {
-    if (!existsSync(dir)) continue;
-    // TRUST: skills loaded from the PROJECT-local skills dir (<cwd>/skills)
-    // ship with the repo and can inject prompts, so they default to DISABLED
-    // regardless of format (SKILL.md or legacy .json). Home-dir/user-scope
-    // and bundled skills keep their existing defaults. Users opt in
-    // explicitly (persisted in the user-level skill-config.json).
-    const isProjectLocal = dir === projectSkillsDir;
-    const dirSkills = scanDirForSkills(dir);
-    for (const [name, skill] of dirSkills) {
-      if (isProjectLocal) skill.enabled = false;
-      // Apply user preference from config
-      if (userPrefs[name] !== undefined) {
-        skill.enabled = userPrefs[name];
-      }
-      map.set(name, skill);
+  const dirSkills = scanDirForSkills(dir);
+  for (const [name, skill] of dirSkills) {
+    if (userPrefs[name] !== undefined) {
+      skill.enabled = userPrefs[name];
     }
+    map.set(name, skill);
   }
 
   skillsCache = { key: cacheKey, map };
@@ -401,12 +316,6 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/**
- * Match a trigger phrase against user text.
- * Multi-word phrases match when ALL significant words appear (order-
- * independent) — 'frontend design' matches 'design a frontend'. Single-word
- * triggers require a word-boundary match to avoid false positives.
- */
 function triggerMatches(trigger: string, lowerText: string): boolean {
   const words = trigger
     .toLowerCase()
@@ -426,9 +335,8 @@ export function matchSkillTriggers(text: string, skills: Map<string, Skill>): Sk
 
   for (const [name, skill] of skills) {
     if (seen.has(name)) continue;
-    if (skill.enabled) continue; // Don't auto-load already-enabled skills
+    if (skill.enabled) continue;
 
-    // Check triggers
     if (skill.triggers?.length) {
       for (const trigger of skill.triggers) {
         if (triggerMatches(trigger, lower)) {
@@ -493,9 +401,9 @@ export function getSkill(name: string): Skill | undefined {
 }
 
 export function saveSkill(skill: Skill): string {
-  ensureSkillDirs();
+  ensureSkillDir();
   const filename = `${skill.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
-  const path = join(SKILL_DIRS[0], filename);
+  const path = join(SKILLS_DIR(), filename);
 
   const fullSkill: Skill = {
     name: skill.name,
@@ -522,31 +430,28 @@ export function deleteSkill(name: string): boolean {
   const skill = skills.get(name) || skills.get(name.replace(/^skill:/, ''));
   if (!skill) return false;
 
-  for (const dir of [BUILTIN_SKILL_DIR, ...SKILL_DIRS]) {
-    if (!existsSync(dir)) continue;
-    if (skill.sourcePath) {
-      try {
+  const dir = SKILLS_DIR();
+  if (!existsSync(dir)) return false;
+  if (skill.sourcePath) {
+    try {
         const normSrc = skill.sourcePath.replace(/\\/g, '/');
-        // Trailing separator: a bare prefix match would also match sibling
-        // directories like 'skills-evil/' when dir is '.../skills'.
         const normDir = dir.replace(/\\/g, '/').replace(/\/?$/, '/');
-        if (!normSrc.startsWith(normDir)) continue;
+        if (!normSrc.startsWith(normDir)) return false;
         rmSync(skill.sourcePath, { force: true });
         invalidateSkillsCache();
         return true;
-      } catch {
-        /* skill not deletable */
-      }
-    }
-    const filename = `${skill.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
-    const path = join(dir, filename);
-    try {
-      rmSync(path, { force: true });
-      invalidateSkillsCache();
-      return true;
     } catch {
-      /* skill dir not writable */
+      /* skill not deletable */
     }
+  }
+  const filename = `${skill.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
+  const path = join(dir, filename);
+  try {
+    rmSync(path, { force: true });
+    invalidateSkillsCache();
+    return true;
+  } catch {
+    /* skill dir not writable */
   }
   return false;
 }
@@ -571,8 +476,7 @@ export function getSkillNames(): string[] {
 }
 
 function loadSkillConfig(): Record<string, boolean> {
-  // New location first, legacy pre-rename file as fallback.
-  const path = existsSync(SKILL_CONFIG_FILE) ? SKILL_CONFIG_FILE : LEGACY_SKILL_CONFIG_FILE;
+  const path = SKILL_CONFIG_FILE();
   if (!existsSync(path)) return {};
   try {
     const content = readFileSync(path, 'utf-8');
@@ -588,7 +492,7 @@ function loadSkillConfig(): Record<string, boolean> {
 
 export function saveSkillConfig(config: Record<string, boolean>): void {
   try {
-    writeFileSync(SKILL_CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+    writeFileSync(SKILL_CONFIG_FILE(), JSON.stringify(config, null, 2), 'utf-8');
   } catch {
     /* config file not writable */
   }
