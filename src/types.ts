@@ -46,7 +46,7 @@ export interface Config {
   maxIterations: number;
   /** Maximum consecutive tool execution rounds before pausing to confer with user. */
   maxToolRoundsBeforeCheckin?: number;
-  /** Max consecutive reasoning-only LLM responses before the run loop stops (default: 5). */
+  /** Max consecutive reasoning-only LLM responses before the run loop stops (default: 5, or 3 for small models). */
   maxReasoningOnlyRounds?: number;
   /** Working directory for file and shell operations. */
   workspace: string;

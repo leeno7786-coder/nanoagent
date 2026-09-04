@@ -13,6 +13,17 @@ import {
 } from '../llm/tool-result-budget.js';
 
 const DEFAULT_MAX_REASONING_ONLY = 5;
+/** Small models rarely recover from reasoning-only turns — stop them sooner. */
+const SMALL_MODEL_MAX_REASONING_ONLY = 3;
+/**
+ * Hidden nudge injected after a reasoning-only turn. Without it the retry
+ * re-sends identical history (reasoning-only turns are stripped from the
+ * payload), so small models deterministically regenerate the same analysis.
+ */
+const REASONING_ONLY_NUDGE =
+  'Your last reply contained only internal reasoning — no visible answer and no tool calls. ' +
+  'Respond now with normal message content: either make the tool calls needed to continue ' +
+  'the task, or write the actual answer. Do not repeat the analysis.';
 /** Only recover when the model barely started (≤ N tool rounds). */
 const EARLY_STOP_MAX_TOOL_ROUNDS = 2;
 /** Cap auto-continues per run so we never loop forever on check-ins. */
@@ -34,7 +45,9 @@ export async function agentRun(
       ? agent.cfg.maxReasoningOnlyRounds > 0
         ? agent.cfg.maxReasoningOnlyRounds
         : Infinity // explicit 0 = disable reasoning-only cap (never stop for reasoning-only)
-      : DEFAULT_MAX_REASONING_ONLY;
+      : agent._smallModel
+        ? SMALL_MODEL_MAX_REASONING_ONLY
+        : DEFAULT_MAX_REASONING_ONLY;
 
   // Auto-load skills matching user input triggers
   if (!userText.trim().startsWith('/')) {
@@ -271,6 +284,35 @@ export async function agentRun(
     agent.setState('thinking');
     agent.onUpdate?.();
     return true;
+  };
+
+  /**
+   * Reasoning-only turn (thinking but no visible content or tool calls).
+   * Nudges the model so the retry sees new context — re-sending identical
+   * history makes small models regenerate the same analysis forever.
+   */
+  const handleReasoningOnlyTurn = (): 'continue' | 'error' | 'stop' => {
+    reasoningOnlyStreak++;
+    if (reasoningOnlyStreak >= maxReasoningOnly) {
+      agent.addNoticeMessage(
+        `Model produced ${maxReasoningOnly} reasoning-only responses without tool calls. ` +
+          `Try rephrasing your request or switching to a model that supports tool calling.`
+      );
+      return 'error';
+    }
+    if (isEndpointRateLimited(agent.cfg.baseURL)) {
+      agent.addNoticeMessage(
+        'Model produced a reasoning-only response while the provider is rate-limited — stopping extra retries.'
+      );
+      return 'stop';
+    }
+    agent.addNoticeMessage(
+      `↻ Model produced thinking only — no reply or tool calls. Nudging it to respond (${reasoningOnlyStreak}/${maxReasoningOnly})…`
+    );
+    agent.addNudgeMessage(REASONING_ONLY_NUDGE);
+    agent.setState('thinking');
+    agent.onUpdate?.();
+    return 'continue';
   };
   while (true) {
     if (signal?.aborted) {
@@ -569,21 +611,9 @@ export async function agentRun(
           assistantMsg.content.trim() === '' &&
           assistantMsg.reasoningContent
         ) {
-          reasoningOnlyStreak++;
-          if (reasoningOnlyStreak >= maxReasoningOnly) {
-            agent.addNoticeMessage(
-              `Model produced ${maxReasoningOnly} reasoning-only responses without tool calls. ` +
-                `Try rephrasing your request or switching to a model that supports tool calling.`
-            );
-            agent.setState('error');
-            agent.onUpdate?.();
-            return;
-          }
-          if (isEndpointRateLimited(agent.cfg.baseURL)) {
-            agent.addNoticeMessage(
-              'Model produced a reasoning-only response while the provider is rate-limited — stopping extra retries.'
-            );
-            agent.setState('idle');
+          const action = handleReasoningOnlyTurn();
+          if (action !== 'continue') {
+            agent.setState(action === 'error' ? 'error' : 'idle');
             agent.onUpdate?.();
             return;
           }
@@ -861,21 +891,9 @@ export async function agentRun(
 
       if (!msg.tool_calls || msg.tool_calls.length === 0) {
         if (!msg.content && msg.reasoning_content) {
-          reasoningOnlyStreak++;
-          if (reasoningOnlyStreak >= maxReasoningOnly) {
-            agent.addNoticeMessage(
-              `Model produced ${maxReasoningOnly} reasoning-only responses without tool calls. ` +
-                `Try rephrasing your request or switching to a model that supports tool calling.`
-            );
-            agent.setState('error');
-            agent.onUpdate?.();
-            return;
-          }
-          if (isEndpointRateLimited(agent.cfg.baseURL)) {
-            agent.addNoticeMessage(
-              'Model produced a reasoning-only response while the provider is rate-limited — stopping extra retries.'
-            );
-            agent.setState('idle');
+          const action = handleReasoningOnlyTurn();
+          if (action !== 'continue') {
+            agent.setState(action === 'error' ? 'error' : 'idle');
             agent.onUpdate?.();
             return;
           }
