@@ -102,48 +102,40 @@ export function StatusBar({
   };
   const smallModelIndicator = isSmallModelFromConfig(runtimeCfg) ? ' [≤8B]' : '';
 
-  // One token story on the right: context fill · last turn ↑↓ · session Σ
-  // (never show session cumulative as if it were context fill)
+  // Single compact row: identity + model on the left, token story + state +
+  // key hints on the right (never show session cumulative as context fill).
   return (
-    <box flexDirection="column" height={2} flexShrink={0} backgroundColor={theme.bgPanel}>
-      <box flexDirection="row" paddingX={1} height={1}>
-        <text fg={theme.accent}>⚡</text>
-        <text fg={theme.headerFg}> NanoAgent</text>
-        {workspaceName && <text fg={theme.accent}> [{workspaceName}]</text>}
-        {busy && (
-          <text fg={theme.statusTool}>
-            {' '}
-            {spin}
-            {ctxIndicator || 'working…'}
-          </text>
-        )}
-        <box flexGrow={1} />
-        <text fg={theme.mutedFg}>
-          {displayModel}
-          {` · ${agentEffort}`}
-          {smallModelIndicator}
-          {!busy && ctxIndicator ? ` · ${ctxIndicator}` : ''}
+    <box flexDirection="row" paddingX={1} height={1} flexShrink={0} backgroundColor={theme.bgPanel}>
+      <text fg={theme.accent}>⚡</text>
+      <text fg={theme.headerFg}> NanoAgent</text>
+      {workspaceName && <text fg={theme.accent}> [{workspaceName}]</text>}
+      <text fg={theme.mutedFg}>
+        {' '}
+        · {displayModel} · {agentEffort}
+        {smallModelIndicator}
+      </text>
+      {busy && (
+        <text fg={theme.statusTool}>
+          {'  '}
+          {spin}
+          {ctxIndicator || 'working…'}
         </text>
-        {lastTokens && <text fg={theme.mutedFg}> · {lastTokens}</text>}
-        {sessionTokens && <text fg={theme.mutedFg}> · {sessionTokens}</text>}
-        {sessionCost && <text fg={theme.mutedFg}> · {sessionCost}</text>}
-        {mcpIndicator && <text fg={theme.mutedFg}>{mcpIndicator}</text>}
-        {elapsed && <text fg={theme.mutedFg}> · {elapsed}</text>}
-        <text fg={s.color}> ●</text>
-        <text fg={theme.mutedFg}>
-          {' '}
-          {s.label}
-          {toolLabel}
-        </text>
-        {todoCount > 0 && <text fg={theme.mutedFg}> · {todoCount}</text>}
-      </box>
-      <box flexDirection="row" paddingX={1} height={1} overflow="hidden">
-        <text fg={theme.mutedFg}>
-          F1 help · Shift+Tab perm · F3 auto · F4 todo · F9 theme · F10 exit · F7 mouse · ^D abort ·
-          !cmd
-        </text>
-        {!mouseEnabled && <text fg={theme.warningFg}> [MOUSE OFF]</text>}
-      </box>
+      )}
+      <box flexGrow={1} />
+      {!busy && ctxIndicator ? <text fg={theme.mutedFg}>{ctxIndicator} · </text> : null}
+      {lastTokens && <text fg={theme.mutedFg}>{lastTokens} · </text>}
+      {sessionTokens && <text fg={theme.mutedFg}>{sessionTokens} · </text>}
+      {sessionCost && <text fg={theme.mutedFg}>{sessionCost} · </text>}
+      {mcpIndicator && <text fg={theme.mutedFg}>{mcpIndicator.trim()} · </text>}
+      {elapsed && <text fg={theme.mutedFg}>{elapsed} · </text>}
+      {todoCount > 0 && <text fg={theme.mutedFg}>{todoCount} todo · </text>}
+      <text fg={s.color}>●</text>
+      <text fg={theme.mutedFg}>
+        {' '}
+        {s.label}
+        {toolLabel} · F1 help · ^D abort
+      </text>
+      {!mouseEnabled && <text fg={theme.warningFg}> [MOUSE OFF]</text>}
     </box>
   );
 }

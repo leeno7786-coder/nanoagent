@@ -270,16 +270,43 @@ export async function initAgent(agent: AgentCore) {
     logDebug('[init] baseline snapshot not taken:', (err as Error).message);
   }
 
-  // Populate activeSkills with enabled skills (always-active from config)
-  for (const [name, skill] of allSkills) {
+  rebuildSystemPrompt(agent, ctx, allSkills);
+
+  // Debug: log model detection info
+  if (process.env.QWEN_DEBUG_LLM) {
+    logError('[QWEN_DEBUG] agent init:', {
+      model: agent.cfg.model,
+      smallModelMode: agent.cfg.smallModelMode,
+      modelParamBillions: agent.cfg.modelParamBillions,
+      _smallModel: agent._smallModel,
+      promptPreview: (agent._systemPromptContent || '').slice(0, 100) + '...',
+    });
+  }
+}
+
+/**
+ * Rebuild and re-install the system-base prompt for
+ * `agent.cfg.workspace`. Also seeds the context manager with it and
+ * refreshes the cached `_systemPromptContent`. Called at init and on
+ * /cd so the model always sees a fresh "Workspace: <path>" line.
+ */
+export function rebuildSystemPrompt(
+  agent: AgentCore,
+  ctx?: ReturnType<typeof detectContext>,
+  allSkills?: Map<string, { name: string; description?: string; enabled?: boolean }>
+): void {
+  const detectedCtx = ctx ?? detectContext(agent.cfg.workspace);
+  const skills = allSkills ?? loadSkills();
+
+  for (const [name, skill] of skills) {
     if (skill.enabled === true || agent.cfg.systemPrompt?.includes(`skill:${name}`)) {
-      agent.skillManager.activeSkills.set(name, skill);
+      agent.skillManager.activeSkills.set(name, skill as never);
     }
   }
 
   const skillInfos =
-    allSkills.size > 0
-      ? Array.from(allSkills.values()).map((s) => ({
+    skills.size > 0
+      ? Array.from(skills.values()).map((s) => ({
           name: s.name,
           desc: (s.description || '').slice(0, 120),
         }))
@@ -287,8 +314,8 @@ export async function initAgent(agent: AgentCore) {
 
   let system = buildSystemPrompt(agent.cfg, {
     workspace: agent.cfg.workspace,
-    branch: ctx.isGit ? ctx.branch : undefined,
-    skillNames: allSkills.size > 0 ? Array.from(allSkills.keys()) : undefined,
+    branch: detectedCtx.isGit ? detectedCtx.branch : undefined,
+    skillNames: skills.size > 0 ? Array.from(skills.keys()) : undefined,
     skillInfos,
     allowedPaths: agent.cfg.allowedPaths,
   });
@@ -309,7 +336,7 @@ export async function initAgent(agent: AgentCore) {
         : isLocalProvider(subBase)
           ? 'Local'
           : 'Cloud';
-    system += `\nSub-agents: ${providerName} \`${agent.cfg.subAgentModel}\` â€” explore_subagent (emit up to 4 in one message for parallel dispatch). Give each a NARROW task with specific file paths. They batch-read files and report structured findings. Sub-agent dispatches are synchronous â€” when explore_subagent returns, the batch is done. Synthesize immediately.`;
+    system += `\nSub-agents: ${providerName} \`${agent.cfg.subAgentModel}\` â€" explore_subagent (emit up to 4 in one message for parallel dispatch). Give each a NARROW task with specific file paths. They batch-read files and report structured findings. Sub-agent dispatches are synchronous â€" when explore_subagent returns, the batch is done. Synthesize immediately.`;
   }
   if (agent.mcpManager.totalTools > 0) {
     const serverNames = agent.mcpStates
@@ -318,29 +345,80 @@ export async function initAgent(agent: AgentCore) {
       .join(', ');
     system += `\nMCP tools connected: ${serverNames}. MCP tool names are prefixed with "mcp_<server>_". MCP tools are auto-allowed (except in read_only); prefer them when they fit the task.`;
   }
-  agent.messages = [{ id: 'system-base', role: 'system', content: system, timestamp: now() }];
+
+  // Replace the system-base message in place so the new prompt is what
+  // the model sees on the next turn. Keep it at index 0; if it was
+  // compacted away, re-insert.
+  const baseMsg = {
+    id: 'system-base',
+    role: 'system' as const,
+    content: system,
+    timestamp: now(),
+  };
+  const existingIdx = agent.messages.findIndex((m) => m.id === 'system-base');
+  if (existingIdx === -1) {
+    agent.messages.unshift(baseMsg);
+  } else {
+    agent.messages[existingIdx] = baseMsg;
+  }
   syncTodoMessage(agent);
   agent.skillManager.syncSkillMessages(agent.messages, agent._smallModel);
 
-  // Seed the context manager with the system prompt (which includes active
-  // skill prompts) so token accounting and post-compaction sync keep it.
-  // Compaction preserves leading system messages.
-  const baseMsg = agent.messages.find((m) => m.id === 'system-base');
-  if (baseMsg) {
-    agent.contextManager.setMessages([baseMsg]);
+  const refreshed = agent.messages.find((m) => m.id === 'system-base');
+  if (refreshed) {
+    agent.contextManager.setMessages([refreshed]);
   }
   refreshSystemPrompt(agent);
+}
 
-  // Debug: log model detection info
-  if (process.env.QWEN_DEBUG_LLM) {
-    logError('[QWEN_DEBUG] agent init:', {
-      model: agent.cfg.model,
-      smallModelMode: agent.cfg.smallModelMode,
-      modelParamBillions: agent.cfg.modelParamBillions,
-      _smallModel: agent._smallModel,
-      promptPreview: system.substring(0, 100) + '...',
-    });
+/**
+ * Switch the agent's active workspace in one operation. Reconfigures
+ * cfg, refreshes the system prompt so the model sees the new path,
+ * (re-)takes a baseline snapshot for /rollback, clears the tool cache
+ * (entries from the old workspace are no longer relevant), and fires
+ * setState so the TUI re-renders the status bar.
+ */
+export async function changeAgentWorkspace(
+  agent: AgentCore,
+  nextWorkspace: string
+): Promise<{ ok: true; workspace: string } | { ok: false; error: string }> {
+  try {
+    const { existsSync, statSync } = await import('fs');
+    if (!existsSync(nextWorkspace)) {
+      return { ok: false, error: `Directory not found: ${nextWorkspace}` };
+    }
+    if (!statSync(nextWorkspace).isDirectory()) {
+      return { ok: false, error: `Not a directory: ${nextWorkspace}` };
+    }
+  } catch (e: unknown) {
+    return { ok: false, error: (e as { message?: string }).message ?? String(e) };
   }
+
+  // Update cfg (also clears cache, recreates security manager, etc).
+  await agent.reconfigure({ workspace: nextWorkspace });
+
+  // Baseline snapshot. Take one if missing, leave existing ones alone.
+  const { takeBaselineSnapshot, hasBaselineSnapshot } = await import('./snapshots.js');
+  try {
+    if (!hasBaselineSnapshot(nextWorkspace)) {
+      takeBaselineSnapshot(nextWorkspace);
+    }
+  } catch (err) {
+    logDebug('[cd] baseline snapshot not taken:', (err as Error).message);
+  }
+
+  // Wipe session-scoped state that was tied to the old workspace.
+  agent.todos = [];
+  agent.currentTool = undefined;
+  agent.toolCache?.clear();
+
+  // Refresh the system prompt so the model knows where it is now.
+  rebuildSystemPrompt(agent);
+
+  // Fire setState so the TUI re-renders (status bar, banner, etc).
+  agent.setState(agent.state);
+
+  return { ok: true, workspace: nextWorkspace };
 }
 
 /** Graceful shutdown: cancel sub-agents, disconnect MCP, save state. */

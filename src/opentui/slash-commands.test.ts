@@ -36,6 +36,9 @@ interface AgentStub {
     setMessages: ReturnType<typeof mock>;
     getStats: ReturnType<typeof mock>;
   };
+  toolCache: {
+    clear: ReturnType<typeof mock>;
+  };
 }
 
 function makeAgent(ws: string): AgentStub {
@@ -50,7 +53,13 @@ function makeAgent(ws: string): AgentStub {
   const reconfigureCalls: AgentStub['reconfigureCalls'] = [];
   const contextManager = {
     clear: mock(() => {}),
-    setMessages: mock(() => {}),
+    setMessages: mock((msgs: Message[]) => {
+      // Mirror the real behaviour: keep the context manager's payload
+      // in sync with agent.messages so /cd's system-prompt rebuild
+      // observes the new state.
+      messages.length = 0;
+      messages.push(...msgs);
+    }),
     getStats: mock(() => ({
       currentTokens: 1200,
       maxTokens: 262144,
@@ -63,6 +72,12 @@ function makeAgent(ws: string): AgentStub {
       apiPromptTokens: undefined,
     })),
   };
+  const toolCache = {
+    clear: mock(() => {}),
+    get: () => undefined,
+    set: () => {},
+    stopAllWatchers: () => {},
+  };
 
   const agent = {
     cfg,
@@ -74,8 +89,15 @@ function makeAgent(ws: string): AgentStub {
     mcpManager: { connectedCount: 0, totalTools: 0 },
     skillManager: {
       activeNames: () => [] as string[],
+      activeSkills: new Map<string, unknown>(),
       load: mock(() => true),
       unload: mock(() => true),
+      onPromptSync: (content: string) => {
+        // Match the real SkillManager behaviour: stash the rendered
+        // prompt for the context-manager to re-seed on demand.
+        agent._systemPromptContent = content;
+      },
+      syncSkillMessages: mock(() => {}),
     },
     securityManager: { permissionManager },
     totalUsage: { input_tokens: 12345, output_tokens: 678 },
@@ -97,10 +119,18 @@ function makeAgent(ws: string): AgentStub {
     compactContextIfNeeded: async () => false,
     forceCompactContext: mock(() => false),
     checkAndCompactContext: mock(() => false),
+    invalidateToolSchemaCache: mock(() => {}),
+    currentTool: undefined,
+    toolCache,
+    state: 'idle' as const,
+    setState(s: 'idle' | 'thinking' | 'executing_tool' | 'waiting_for_user' | 'reflecting' | 'error') {
+      (agent as { state: string }).state = s;
+    },
+    _systemPromptContent: '',
     onUpdate: undefined,
   } as unknown as AgentCore;
 
-  return { agent, messages, todos, permissionManager, runCalls, reconfigureCalls, contextManager };
+  return { agent, messages, todos, permissionManager, runCalls, reconfigureCalls, contextManager, toolCache };
 }
 
 interface CtxHarness {
@@ -215,15 +245,25 @@ describe('handleSlashCommand', () => {
     expect(lastAssistantContent(h)).toContain(ws);
   });
 
-  it('/cd <dir> changes workspace and clears todos', async () => {
+  it('/cd <dir> switches the workspace, rebuilds the prompt, and clears the cache', async () => {
     const target = mkdtempSync(join(tmpdir(), 'slash-cd-target-'));
     try {
       stub.todos.push({ id: 'x', text: 't', done: false, createdAt: 0 });
       await handleSlashCommand(`/cd "${target}"`, h.ctx);
+      // /cd now uses changeAgentWorkspace, which calls agent.reconfigure
+      // with the new workspace AND rebuilds the system prompt AND
+      // clears the tool cache. All three must happen for the model to
+      // actually be able to operate in the new directory.
       expect(stub.reconfigureCalls).toHaveLength(1);
       expect(stub.reconfigureCalls[0].workspace).toBe(target);
+      expect(stub.toolCache.clear).toHaveBeenCalled();
       expect(stub.agent.todos).toEqual([]);
-      expect(lastAssistantContent(h)).toContain('Workspace changed');
+      // The new system prompt is the one the model will see on the
+      // next turn — it must reflect the new workspace.
+      const baseMsg = stub.agent.messages.find((m) => m.id === 'system-base');
+      expect(baseMsg).toBeDefined();
+      expect((baseMsg as Message).content).toContain(target);
+      expect(lastAssistantContent(h)).toContain('Workspace changed to');
     } finally {
       rmSync(target, { recursive: true, force: true });
     }

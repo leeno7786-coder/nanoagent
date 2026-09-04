@@ -525,7 +525,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
         flexGrow={1}
         minHeight={0}
         overflow="hidden"
-        borderStyle="double"
+        borderStyle="single"
         borderColor={theme.borderColor}
         backgroundColor={theme.bgPanel}
       >
@@ -575,7 +575,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
         flexGrow={1}
         minHeight={0}
         overflow="hidden"
-        borderStyle="double"
+        borderStyle="single"
         borderColor={theme.borderColor}
         backgroundColor={theme.bgPanel}
       >
@@ -615,7 +615,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
         flexGrow={1}
         minHeight={0}
         overflow="hidden"
-        borderStyle="double"
+        borderStyle="single"
         borderColor={theme.borderColor}
         backgroundColor={theme.bgPanel}
       >
@@ -649,7 +649,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
         flexGrow={1}
         minHeight={0}
         overflow="hidden"
-        borderStyle="double"
+        borderStyle="single"
         borderColor={theme.borderColor}
         backgroundColor={theme.bgPanel}
       >
@@ -679,7 +679,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
         flexGrow={1}
         minHeight={0}
         overflow="hidden"
-        borderStyle="double"
+        borderStyle="single"
         borderColor={theme.borderColor}
         backgroundColor={theme.bgPanel}
       >
@@ -707,7 +707,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
       flexGrow={1}
       minHeight={0}
       overflow="hidden"
-      borderStyle="double"
+      borderStyle="single"
       borderColor={theme.borderColor}
       backgroundColor={theme.bgPanel}
     >
@@ -730,21 +730,21 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
               return (
                 <box key={provider.id} flexDirection="column" flexShrink={0}>
                   {showLocalHeader && (
-                    <text fg={theme.headerFg} id={`section-local`}>
+                    <text fg={theme.accent} id={`section-local`}>
                       Local
                     </text>
                   )}
                   {showCloudHeader && (
-                    <text fg={theme.headerFg} id={`section-cloud`} marginTop={i === 0 ? 0 : 1}>
+                    <text fg={theme.accent} id={`section-cloud`} marginTop={i === 0 ? 0 : 1}>
                       Cloud
                     </text>
                   )}
                   <text
                     id={`provider-${i}`}
-                    fg={isSel ? theme.headerFg : theme.mutedFg}
-                    bg={isSel ? theme.bgSelected : undefined}
+                    fg={isSel ? theme.onAccentFg : theme.mutedFg}
+                    bg={isSel ? theme.accentBg : undefined}
                   >
-                    {isSel ? '> ' : '  '}
+                    {'  '}
                     {provider.icon} {provider.name}
                   </text>
                 </box>
@@ -763,7 +763,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
           {selectedProvider ? (
             <>
               <box flexDirection="column" marginTop={1} flexShrink={0}>
-                <text fg={theme.userFg}>
+                <text fg={theme.accent}>
                   {selectedProvider.icon} {selectedProvider.name}
                 </text>
                 {selectedProvider.description && (
@@ -796,10 +796,10 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
                         <text
                           key={model.id}
                           id={`model-${i}`}
-                          fg={isSel ? theme.agentFg : theme.mutedFg}
-                          bg={isSel ? theme.bgSelected : undefined}
+                          fg={isSel ? theme.onAccentFg : theme.mutedFg}
+                          bg={isSel ? theme.accentBg : undefined}
                         >
-                          {isSel ? '> ' : '  '}
+                          {'  '}
                           {model.name}
                           {model.default ? ' [DEFAULT]' : ''}
                         </text>

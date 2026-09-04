@@ -33,6 +33,8 @@ interface ChatScreenProps {
   lastUsage?: TurnUsage;
   /** Context-window fill — never session Σ. */
   contextUsage?: ContextUsageSnapshot;
+  /** Tool workspace — tool rows render targets relative to it. */
+  workspace?: string;
   subAgents?: SubAgentSnapshot[];
   onSubmit: (text: string) => void;
   selectedMessageIndex?: number | null;
@@ -120,18 +122,62 @@ function segmentSourceLength(seg: CodeSegment): number {
   return 3 + (seg.lang?.length ?? 0) + 1 + seg.code.length + 3;
 }
 
-function renderLinesSafely(text: string, maxLines = 40, fgColor: string, prefix = '') {
+/** Matches inline `code` spans and **bold** in a single line of chat text. */
+const INLINE_MD = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+
+/**
+ * Renders one line of chat text with lightweight inline markdown:
+ * `code` spans in the syntax string colour, **bold** via <strong>.
+ */
+function renderInline(line: string, theme: Theme, keyPrefix: string) {
+  const parts = line.split(INLINE_MD);
+  if (parts.length === 1) return line || ' ';
+  return parts.map((part, i) => {
+    if (part.length > 2 && part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <span key={`${keyPrefix}-c${i}`} fg={theme.syntax.string}>
+          {part.slice(1, -1)}
+        </span>
+      );
+    }
+    if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={`${keyPrefix}-b${i}`}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
+function renderLinesSafely(
+  text: string,
+  maxLines = 40,
+  fgColor: string,
+  prefix = '',
+  theme?: Theme
+) {
   if (!text) return null;
   // Strip ANSI escapes/control chars — a raw ESC[2J from tool output would
   // wipe the whole TUI frame
   const allLines = sanitizeForTui(text).split('\n');
-  if (allLines.length <= maxLines) {
-    return allLines.map((line, idx) => (
-      <text key={idx} fg={fgColor}>
+  const renderLine = (line: string, key: string | number) => {
+    // Markdown headings: strip the #'s, render strong with accent colour.
+    const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (theme && heading) {
+      return (
+        <text key={key} fg={theme.accent}>
+          {prefix}
+          <strong>{heading[2]}</strong>
+        </text>
+      );
+    }
+    return (
+      <text key={key} fg={fgColor}>
         {prefix}
-        {line || ' '}
+        {theme ? renderInline(line, theme, String(key)) : line || ' '}
       </text>
-    ));
+    );
+  };
+  if (allLines.length <= maxLines) {
+    return allLines.map((line, idx) => renderLine(line, idx));
   }
   const headCount = 10;
   const tailCount = Math.max(1, maxLines - headCount - 1);
@@ -140,21 +186,11 @@ function renderLinesSafely(text: string, maxLines = 40, fgColor: string, prefix 
   const hiddenCount = allLines.length - headCount - tailCount;
 
   return [
-    ...head.map((line, idx) => (
-      <text key={`h-${idx}`} fg={fgColor}>
-        {prefix}
-        {line || ' '}
-      </text>
-    )),
+    ...head.map((line, idx) => renderLine(line, `h-${idx}`)),
     <text key="trunc" fg={fgColor}>
       {prefix}… [truncated {hiddenCount} lines]
     </text>,
-    ...tail.map((line, idx) => (
-      <text key={`t-${idx}`} fg={fgColor}>
-        {prefix}
-        {line || ' '}
-      </text>
-    )),
+    ...tail.map((line, idx) => renderLine(line, `t-${idx}`)),
   ];
 }
 
@@ -265,6 +301,7 @@ export function ChatScreen({
   subAgents = [],
   selectedMessageIndex = null,
   todos = [],
+  workspace,
 }: ChatScreenProps) {
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef<ScrollBoxRenderable>(null);
@@ -464,6 +501,7 @@ export function ChatScreen({
                   currentTool={currentTool}
                   elapsedMs={index === visibleMessages.length - 1 ? elapsedMs : undefined}
                   highlighted={isSelected}
+                  workspace={workspace}
                 />
               </box>
             </ErrorBoundary>
@@ -551,33 +589,63 @@ export function ChatScreen({
   );
 }
 
+/** Strip the workspace prefix so tool rows show short relative paths. */
+function relativizeTarget(target: string, workspace?: string): string {
+  if (!workspace) return target;
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+  const ws = norm(workspace);
+  const t = norm(target);
+  const cmp = (s: string) => (process.platform === 'win32' ? s.toLowerCase() : s);
+  if (ws && cmp(t).startsWith(cmp(ws) + '/')) return t.slice(ws.length + 1);
+  return target;
+}
+
+/** The summary already shows the first output line — don't repeat it in the preview. */
+function dedupePreview(summary: string, lines?: string[]): string[] | undefined {
+  if (!lines?.length || !summary) return lines;
+  const first = lines[0].trim();
+  const sum = summary.trim().replace(/…$/, '');
+  if (first === summary.trim() || (sum.length > 0 && first.startsWith(sum))) {
+    return lines.slice(1);
+  }
+  return lines;
+}
+
 /**
  * Quiet one-liner tool rows: a muted glyph prefix, a muted action label,
  * the target tinted with the accent colour, and muted metadata trailing.
  * Failed rows flip to the error colour. Edits render their diff as a
  * full-width tinted block on the code background band.
  */
-function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: Theme }) {
+function ToolActivityBlock({
+  block,
+  theme,
+  workspace,
+}: {
+  block: ToolDisplayBlock;
+  theme: Theme;
+  workspace?: string;
+}) {
   const ok = block.ok;
   const glyphFg = ok ? theme.mutedFg : theme.errorFg;
   const labelFg = ok ? theme.mutedFg : theme.errorFg;
   const targetFg = ok ? theme.toolFg : theme.errorFg;
+  const target = relativizeTarget(block.target, workspace);
   const duration = block.durationMs != null ? `  ${formatDuration(block.durationMs)}` : '';
 
   if (block.kind === 'command') {
+    const previews = dedupePreview(block.summary, block.previewLines);
     return (
       <box flexDirection="column" marginY={0}>
         <box flexDirection="row">
           <text fg={ok ? theme.successFg : theme.errorFg}>{'$ '}</text>
-          <text fg={ok ? theme.headerFg : theme.errorFg}>{block.target}</text>
+          <text fg={ok ? theme.headerFg : theme.errorFg}>{target}</text>
           {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
         </box>
         {block.summary && block.summary !== '(no output)' && (
           <text fg={theme.mutedFg}> └ {block.summary}</text>
         )}
-        {block.previewLines?.length
-          ? linePreview(block.previewLines, 6, theme.mutedFg, theme, '  ')
-          : null}
+        {previews?.length ? linePreview(previews, 6, theme.mutedFg, theme, '  ') : null}
       </box>
     );
   }
@@ -590,7 +658,7 @@ function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: T
         <box flexDirection="row">
           <text fg={glyphFg}>{'← '}</text>
           <text fg={labelFg}>Edit</text>
-          <text fg={targetFg}>{` ${block.target}`}</text>
+          <text fg={targetFg}>{` ${target}`}</text>
           {block.summary && block.summary !== 'ok' ? (
             <text fg={theme.mutedFg}>{`  ${block.summary}`}</text>
           ) : null}
@@ -616,7 +684,7 @@ function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: T
         <box flexDirection="row">
           <text fg={glyphFg}>{'→ '}</text>
           <text fg={labelFg}>{block.action}</text>
-          <text fg={targetFg}>{` ${block.target}`}</text>
+          <text fg={targetFg}>{` ${target}`}</text>
           {block.summary && block.summary !== 'ok' ? (
             <text fg={theme.mutedFg}>{` · ${block.summary}`}</text>
           ) : null}
@@ -629,12 +697,13 @@ function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: T
     );
   }
 
+  const previews = dedupePreview(block.summary, block.previewLines);
   return (
     <box flexDirection="column" marginY={0}>
       <box flexDirection="row">
         <text fg={glyphFg}>{'→ '}</text>
         <text fg={labelFg}>{block.action}</text>
-        <text fg={targetFg}>{` ${block.target}`}</text>
+        <text fg={targetFg}>{` ${target}`}</text>
         {block.summary && block.summary !== 'ok' ? (
           <text fg={theme.mutedFg}>{` · ${block.summary}`}</text>
         ) : null}
@@ -644,8 +713,8 @@ function ToolActivityBlock({ block, theme }: { block: ToolDisplayBlock; theme: T
         <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
           <diff diff={block.diff} {...diffRenderProps(theme)} />
         </box>
-      ) : block.previewLines?.length ? (
-        linePreview(block.previewLines, 6, theme.mutedFg, theme, '  ')
+      ) : previews?.length ? (
+        linePreview(previews, 6, theme.mutedFg, theme, '  ')
       ) : null}
     </box>
   );
@@ -827,11 +896,12 @@ function SubAgentPanel({
 function renderToolCall(
   tc: ToolCall,
   toolInfoByCallId: Map<string, { content: string; duration?: number }>,
-  theme: Theme
+  theme: Theme,
+  workspace?: string
 ) {
   const info = toolInfoByCallId.get(tc.id);
   const block = buildToolDisplayBlock(tc.name, tc.arguments, info?.content ?? '', info?.duration);
-  return <ToolActivityBlock key={tc.id} block={block} theme={theme} />;
+  return <ToolActivityBlock key={tc.id} block={block} theme={theme} workspace={workspace} />;
 }
 
 type MessageItemProps = {
@@ -847,6 +917,8 @@ type MessageItemProps = {
   /** Ticking clock for spinners — only passed to the in-flight tail message. */
   elapsedMs?: number;
   highlighted?: boolean;
+  /** Tool workspace — used to render targets as short relative paths. */
+  workspace?: string;
 };
 
 /**
@@ -894,7 +966,7 @@ const MessageItem = memo(
           <text fg={theme.userFg} bg={highlighted ? theme.bgSelected : undefined}>
             ▸ You
           </text>
-          {renderLinesSafely(message.content, 40, theme.headerFg)}
+          {renderLinesSafely(message.content, 40, theme.headerFg, '', theme)}
         </box>
       );
     }
@@ -908,7 +980,8 @@ const MessageItem = memo(
       prev.highlighted !== next.highlighted ||
       prev.lastUsage !== next.lastUsage ||
       prev.currentTool !== next.currentTool ||
-      prev.elapsedMs !== next.elapsedMs
+      prev.elapsedMs !== next.elapsedMs ||
+      prev.workspace !== next.workspace
     ) {
       return false;
     }
@@ -945,6 +1018,7 @@ function AssistantMessageView({
   state,
   currentTool,
   elapsedMs,
+  workspace,
 }: MessageItemProps) {
   const displayContent = message.content || '';
   // Memoized: incremental parse reuses stable segments across stream
@@ -1023,7 +1097,7 @@ function AssistantMessageView({
           if (seg.type === 'text') {
             return (
               <box key={si} flexDirection="column">
-                {renderLinesSafely(seg.text, 60, theme.headerFg)}
+                {renderLinesSafely(seg.text, 60, theme.headerFg, '', theme)}
               </box>
             );
           }
@@ -1059,7 +1133,7 @@ function AssistantMessageView({
 
       {toolCalls
         .filter((tc) => tc.name !== 'explore_subagent')
-        .map((tc) => renderToolCall(tc, toolInfoByCallId, theme))}
+        .map((tc) => renderToolCall(tc, toolInfoByCallId, theme, workspace))}
 
       {message.role === 'assistant' &&
         state === 'executing_tool' &&

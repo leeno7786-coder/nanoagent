@@ -959,23 +959,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   return (
     <ErrorBoundary theme={theme}>
       <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
-        <StatusBar
-          state={state}
-          model={agentRef.current?.cfg.model || ''}
-          modelRuntime={agentRef.current?.cfg}
-          todoCount={todos.length}
-          currentTool={currentTool}
-          lastUsage={lastUsage}
-          totalUsage={totalUsage}
-          sessionCostUsd={totalCostUsd}
-          contextUsage={contextUsage}
-          elapsedMs={elapsedMs}
-          theme={theme}
-          mouseEnabled={mouseEnabled}
-          mcpToolCount={agentRef.current?.mcpManager?.totalTools ?? 0}
-          workspace={agentRef.current?.cfg.workspace || process.cwd()}
-        />
-
         <box flexDirection="row" flexGrow={1} minHeight={0} overflow="hidden">
           {showTodos && (
             <TodoSidebar
@@ -1031,9 +1014,27 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               onSubmit={handleSubmit}
               selectedMessageIndex={selectedMessageIndex}
               todos={todos}
+              workspace={agentRef.current?.cfg.workspace || process.cwd()}
             />
           </box>
         </box>
+
+        <StatusBar
+          state={state}
+          model={agentRef.current?.cfg.model || ''}
+          modelRuntime={agentRef.current?.cfg}
+          todoCount={todos.length}
+          currentTool={currentTool}
+          lastUsage={lastUsage}
+          totalUsage={totalUsage}
+          sessionCostUsd={totalCostUsd}
+          contextUsage={contextUsage}
+          elapsedMs={elapsedMs}
+          theme={theme}
+          mouseEnabled={mouseEnabled}
+          mcpToolCount={agentRef.current?.mcpManager?.totalTools ?? 0}
+          workspace={agentRef.current?.cfg.workspace || process.cwd()}
+        />
       </box>
     </ErrorBoundary>
   );

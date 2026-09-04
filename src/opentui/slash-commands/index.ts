@@ -184,35 +184,30 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
         return;
       }
 
-      const changeWorkspaceTool = tools.find((t) => t.name === 'change_workspace');
-      if (!changeWorkspaceTool) {
-        pushAssistant(agent, `change_workspace tool not found`, setMessages);
-        return;
+      // Resolve relative paths against the current workspace, then
+      // hand off to the canonical workspace-change helper. The helper
+      // does the full sequence: reconfigure cfg, rebuild the system
+      // prompt, take a baseline snapshot, clear the tool cache, clear
+      // todos, and fire setState so the TUI re-renders. Without that
+      // chain, /cd's effects are invisible: the model still has the
+      // old path in its system prompt, the status bar shows the old
+      // directory, and the next tool call may run against the stale
+      // workspace.
+      const { resolve: resolvePath } = await import('path');
+      const next = resolvePath(agent.cfg.workspace, target);
+      const { changeAgentWorkspace } = await import('../../agent-lifecycle.js');
+      const result = await changeAgentWorkspace(agent, next);
+      if (result.ok) {
+        pushAssistant(
+          agent,
+          `Workspace changed to ${result.workspace}\n` +
+            `baseline snapshot: \`${result.workspace}/.nanoagent/snapshots/init.json\` (use \`/rollback\` to revert)`,
+          setMessages
+        );
+      } else {
+        pushAssistant(agent, `Failed to change workspace: ${result.error}`, setMessages);
       }
-      const toolResult = agent.cfg.allowedPaths?.length
-        ? changeWorkspaceTool.execute({ path: target }, agent.cfg.workspace, agent.cfg)
-        : changeWorkspaceTool.execute({ path: target }, agent.cfg.workspace);
-
-      try {
-        const result = JSON.parse(toolResult);
-        if (result.ok && result.workspace) {
-          void agent.reconfigure({ workspace: result.workspace });
-          agent.todos = [];
-          setTodos([]);
-          pushAssistant(agent, `Workspace changed to ${result.workspace}`, setMessages);
-          return;
-        } else {
-          pushAssistant(
-            agent,
-            `Failed to change workspace: ${result.error || 'Unknown error'}`,
-            setMessages
-          );
-          return;
-        }
-      } catch {
-        pushAssistant(agent, `Failed to parse workspace change result: ${toolResult}`, setMessages);
-        return;
-      }
+      return;
     }
     case 'theme': {
       const tname = args.trim() || '';
