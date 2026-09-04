@@ -236,17 +236,17 @@ export async function executeToolSequential(
   output = agent.securityManager.sanitizeOutput(output, agent.cfg.apiKey ?? undefined);
   const duration = performance.now() - start;
 
-      if (!wasCached && tool) {
-        try {
-          const args = parseToolArgs(tc);
-          const resultObj = JSON.parse(output);
-          if (resultObj && typeof resultObj === 'object' && resultObj.ok === true) {
-            agent.toolCache.set(tc.name, args, agent.cfg.workspace, output, duration, true);
-          }
-        } catch (e) {
-          logDebug('Tool output not cached due to invalid format:', e);
-        }
+  if (!wasCached && tool) {
+    try {
+      const args = parseToolArgs(tc);
+      const resultObj = JSON.parse(output);
+      if (resultObj && typeof resultObj === 'object' && resultObj.ok === true) {
+        agent.toolCache.set(tc.name, args, agent.cfg.workspace, output, duration, true);
       }
+    } catch (e) {
+      logDebug('Tool output not cached due to invalid format:', e);
+    }
+  }
 
   // Route through addToolMessage so the ContextManager token cache stays in
   // sync — a raw push bypasses compaction accounting and leaves dangling

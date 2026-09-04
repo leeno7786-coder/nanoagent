@@ -19,7 +19,8 @@ export interface ManageMcpResult {
   servers?: Record<string, McpServerConfig>;
 }
 
-const GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_FILE();
+// Resolved lazily — a top-level GLOBAL_CONFIG_FILE() call throws at import
+// time when NANOAGENT_ROOT is unset, breaking `--help` outside the launcher.
 
 function readGlobalMcp(configPath: string): Record<string, McpServerConfig> {
   if (!existsSync(configPath)) return {};
@@ -131,13 +132,14 @@ export const manageMcpTool: Tool = {
   },
   execute: (args: ManageMcpArgs) => {
     try {
-      const current = readGlobalMcp(GLOBAL_CONFIG_PATH);
+      const configPath = GLOBAL_CONFIG_FILE();
+      const current = readGlobalMcp(configPath);
       const { mcp, result } = applyMcpAction(current, args);
       if (!result.ok || args.action === 'list') {
         return JSON.stringify(result);
       }
       saveConfigFile({ mcp });
-      return JSON.stringify({ ...result, configPath: GLOBAL_CONFIG_PATH });
+      return JSON.stringify({ ...result, configPath });
     } catch (e: unknown) {
       const err = e as { message?: string } | undefined;
       return JSON.stringify({ ok: false, error: err?.message || String(e) });

@@ -122,7 +122,12 @@ export function StatusBar({
 
   // '⚡' is a wide glyph (2 cells); paddingX=1 on each side.
   const leftWidth =
-    2 + 10 + (workspaceName ? workspaceName.length + 3 : 0) + 3 + displayModel.length + effortPart.length;
+    2 +
+    10 +
+    (workspaceName ? workspaceName.length + 3 : 0) +
+    3 +
+    displayModel.length +
+    effortPart.length;
   const stateLabel = `${s.label}${toolLabel}`;
   const tailWidth = 1 + 1 + stateLabel.length + 3 + hints.length; // ● + space + label + ' · ' + hints
 

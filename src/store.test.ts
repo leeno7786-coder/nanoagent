@@ -15,14 +15,12 @@ import type { Config } from './types.js';
 
 let tmpRoot: string;
 const PRELOAD_ROOT = process.env.NANOAGENT_ROOT;
-let priorRoot: string | undefined;
 
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), 'nanoagent-store-'));
   for (const sub of ['config', 'skills', 'tools', 'sessions', 'workspace', 'logs']) {
     mkdirSync(join(tmpRoot, sub), { recursive: true });
   }
-  priorRoot = process.env.NANOAGENT_ROOT;
   process.env.NANOAGENT_ROOT = tmpRoot;
   __resetPathsCacheForTests();
 });

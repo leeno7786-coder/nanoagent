@@ -14,11 +14,7 @@ import type { Theme } from './theme.js';
 import { buildToolDisplayBlock, type ToolDisplayBlock } from './tool-display.js';
 import { ErrorBoundary } from './error-boundary.js';
 import { useAppStore } from './app-store.js';
-import {
-  formatBusyContext,
-  type ContextUsageSnapshot,
-  type TurnUsage,
-} from './token-display.js';
+import { formatBusyContext, type ContextUsageSnapshot, type TurnUsage } from './token-display.js';
 
 interface ChatScreenProps {
   theme: Theme;
@@ -1103,12 +1099,7 @@ function AssistantMessageView({
           }
           if (seg.lang === 'diff') {
             return (
-              <box
-                key={si}
-                flexDirection="column"
-                marginY={1}
-                backgroundColor={theme.codeBg}
-              >
+              <box key={si} flexDirection="column" marginY={1} backgroundColor={theme.codeBg}>
                 <diff diff={sanitizedCode[si] ?? ''} {...diffRenderProps(theme)} />
               </box>
             );

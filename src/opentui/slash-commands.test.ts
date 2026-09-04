@@ -123,14 +123,25 @@ function makeAgent(ws: string): AgentStub {
     currentTool: undefined,
     toolCache,
     state: 'idle' as const,
-    setState(s: 'idle' | 'thinking' | 'executing_tool' | 'waiting_for_user' | 'reflecting' | 'error') {
+    setState(
+      s: 'idle' | 'thinking' | 'executing_tool' | 'waiting_for_user' | 'reflecting' | 'error'
+    ) {
       (agent as { state: string }).state = s;
     },
     _systemPromptContent: '',
     onUpdate: undefined,
   } as unknown as AgentCore;
 
-  return { agent, messages, todos, permissionManager, runCalls, reconfigureCalls, contextManager, toolCache };
+  return {
+    agent,
+    messages,
+    todos,
+    permissionManager,
+    runCalls,
+    reconfigureCalls,
+    contextManager,
+    toolCache,
+  };
 }
 
 interface CtxHarness {

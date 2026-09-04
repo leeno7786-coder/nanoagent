@@ -211,7 +211,10 @@ export function takeBaselineSnapshot(workspace: string): SnapshotInfo {
  * snapshot so deletions compose correctly) and removes any file
  * currently on disk that wasn't in the merged state.
  */
-export function restoreSnapshot(workspace: string, name: string): {
+export function restoreSnapshot(
+  workspace: string,
+  name: string
+): {
   applied: number;
   removed: number;
   snapshotPath: string;

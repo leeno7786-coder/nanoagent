@@ -316,7 +316,12 @@ describe('catalog-driven API key lookup', () => {
 
 describe('cloud rate-limit defaults', () => {
   it('applies OpenRouter catalog RPM when config and env omit it', () => {
-    saveEnv('QWEN_MAX_REQUESTS_PER_MINUTE', 'QWEN_MAX_RPM', 'QWEN_MAX_CONCURRENT_LLM', 'QWEN_BASE_URL');
+    saveEnv(
+      'QWEN_MAX_REQUESTS_PER_MINUTE',
+      'QWEN_MAX_RPM',
+      'QWEN_MAX_CONCURRENT_LLM',
+      'QWEN_BASE_URL'
+    );
     delete process.env.QWEN_MAX_REQUESTS_PER_MINUTE;
     delete process.env.QWEN_MAX_RPM;
     delete process.env.QWEN_MAX_CONCURRENT_LLM;

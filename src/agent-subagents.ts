@@ -12,7 +12,11 @@
  * references these delegates. Do not extend; prefer the execute.ts path.
  */
 import type { ToolExecutionHooks, SubAgentProgressEvent } from './tools/index.js';
-import { exploreWithSubAgent, formatSubAgentResults, type SubAgentResult } from './subagents/index.js';
+import {
+  exploreWithSubAgent,
+  formatSubAgentResults,
+  type SubAgentResult,
+} from './subagents/index.js';
 import type { Message } from './types.js';
 import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';

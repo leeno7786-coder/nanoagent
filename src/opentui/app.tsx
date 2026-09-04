@@ -1115,9 +1115,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           workspace={agentRef.current?.cfg.workspace || process.cwd()}
         />
 
-        {overlay === 'palette' && (
-          <CommandPalette theme={theme} onAction={handlePaletteAction} onClose={closeOverlay} />
-        )}
+        {overlay === 'palette' && <CommandPalette theme={theme} onAction={handlePaletteAction} />}
       </box>
     </ErrorBoundary>
   );

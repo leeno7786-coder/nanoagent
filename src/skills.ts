@@ -3,7 +3,12 @@ import { join, basename, dirname, extname } from 'path';
 import type { Skill, SkillCommand } from './types.js';
 import { SKILLS_DIR, SKILL_CONFIG_FILE } from './config/paths.js';
 
-const TEMPLATE_DIR = join(dirname(import.meta.url.replace('file:///', '')), '..', 'skills', 'templates');
+const TEMPLATE_DIR = join(
+  dirname(import.meta.url.replace('file:///', '')),
+  '..',
+  'skills',
+  'templates'
+);
 
 function ensureSkillDir(): void {
   const dir = SKILLS_DIR();
@@ -434,12 +439,12 @@ export function deleteSkill(name: string): boolean {
   if (!existsSync(dir)) return false;
   if (skill.sourcePath) {
     try {
-        const normSrc = skill.sourcePath.replace(/\\/g, '/');
-        const normDir = dir.replace(/\\/g, '/').replace(/\/?$/, '/');
-        if (!normSrc.startsWith(normDir)) return false;
-        rmSync(skill.sourcePath, { force: true });
-        invalidateSkillsCache();
-        return true;
+      const normSrc = skill.sourcePath.replace(/\\/g, '/');
+      const normDir = dir.replace(/\\/g, '/').replace(/\/?$/, '/');
+      if (!normSrc.startsWith(normDir)) return false;
+      rmSync(skill.sourcePath, { force: true });
+      invalidateSkillsCache();
+      return true;
     } catch {
       /* skill not deletable */
     }

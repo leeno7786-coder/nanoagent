@@ -172,6 +172,13 @@ describe('tools', () => {
   });
 
   it('run_command runs lint/format/build lifecycle hooks', async () => {
+    // The bun.lock below routes run_command to `bun run build`; skip when no
+    // bun runtime is on PATH (e.g. bare Windows dev boxes).
+    try {
+      execSync('bun --version', { stdio: 'ignore' });
+    } catch {
+      return;
+    }
     const pkg = {
       name: 'test-pkg',
       scripts: {

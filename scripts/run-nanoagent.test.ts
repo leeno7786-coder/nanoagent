@@ -105,7 +105,11 @@ describe('findBundledBun', () => {
 
 describe('nanoagent launcher process', () => {
   it('runs the same --help as bun run start (src/main.ts)', async () => {
-    const bunHelp = Bun.spawn(['bun', join(repoRoot, 'src', 'main.ts'), '--help'], {
+    // Prefer the bundled @oven runtime; fall back to PATH bun (CI).
+    const bunExe = findBundledBun(repoRoot) ?? 'bun';
+    const probe = spawnSync(bunExe, ['--version'], { encoding: 'utf8', timeout: 10_000 });
+    if (probe.status !== 0) return; // no bun runtime available on this host
+    const bunHelp = Bun.spawn([bunExe, join(repoRoot, 'src', 'main.ts'), '--help'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });

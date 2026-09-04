@@ -279,12 +279,7 @@ export function CommandDropdown({
             overflow="hidden"
             backgroundColor={isSel ? theme.accentBg : undefined}
           >
-            <text
-              id={itemId(item.commandIndex ?? 0)}
-              fg={fg}
-              flexShrink={0}
-              wrapMode="none"
-            >
+            <text id={itemId(item.commandIndex ?? 0)} fg={fg} flexShrink={0} wrapMode="none">
               {`  ${item.name.padEnd(pad, ' ')}`}
             </text>
             <text fg={metaFg} flexShrink={1} wrapMode="none" truncate>

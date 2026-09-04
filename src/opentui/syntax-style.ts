@@ -13,13 +13,19 @@ function buildTokenStyles(theme: Theme): ThemeTokenStyle[] {
     { scope: ['keyword'], style: { foreground: s.keyword } },
     { scope: ['string', 'string.special'], style: { foreground: s.string } },
     { scope: ['number', 'boolean', 'float'], style: { foreground: s.number } },
-    { scope: ['function', 'function.call', 'function.method', 'method'], style: { foreground: s.function } },
+    {
+      scope: ['function', 'function.call', 'function.method', 'method'],
+      style: { foreground: s.function },
+    },
     { scope: ['type', 'type.builtin', 'constructor'], style: { foreground: s.type } },
     { scope: ['variable', 'variable.parameter'], style: { foreground: s.variable } },
     { scope: ['variable.member', 'property', 'field'], style: { foreground: s.property } },
     { scope: ['operator'], style: { foreground: s.operator } },
     { scope: ['punctuation'], style: { foreground: s.punctuation } },
-    { scope: ['constant', 'constant.builtin', 'variable.builtin'], style: { foreground: s.constant } },
+    {
+      scope: ['constant', 'constant.builtin', 'variable.builtin'],
+      style: { foreground: s.constant },
+    },
     { scope: ['tag'], style: { foreground: s.tag } },
     { scope: ['attribute', 'label'], style: { foreground: s.attribute } },
   ];

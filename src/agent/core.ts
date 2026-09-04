@@ -27,7 +27,11 @@ import {
   type BackgroundSubAgent,
   type SubAgentSnapshot,
 } from '../agent-subagents.js';
-import { executeToolDirect, executeToolSequential, executeToolsParallel } from '../agent-tools/index.js';
+import {
+  executeToolDirect,
+  executeToolSequential,
+  executeToolsParallel,
+} from '../agent-tools/index.js';
 import { addTodo, toggleTodo, removeTodo } from '../agent-todos.js';
 import {
   toChatMessages,

@@ -41,7 +41,14 @@ describe('theme.ts', () => {
   ];
 
   it('should contain the expected built-in themes', () => {
-    expect(Object.keys(THEMES).sort()).toEqual(['black', 'coolDark', 'dark', 'highContrast', 'light', 'warmDark']);
+    expect(Object.keys(THEMES).sort()).toEqual([
+      'black',
+      'coolDark',
+      'dark',
+      'highContrast',
+      'light',
+      'warmDark',
+    ]);
   });
 
   it('should have all required color fields on every theme', () => {

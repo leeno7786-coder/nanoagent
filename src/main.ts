@@ -69,6 +69,16 @@ export function setupProcessHandlers(): void {
 async function main(): Promise<number> {
   setupProcessHandlers();
 
+  const argv = process.argv.slice(2);
+  const [cmd] = argv;
+
+  // Help must work without the launcher so `bun src/main.ts --help` and the
+  // packaged boot script print the same thing.
+  if (cmd === '--help' || cmd === '-h') {
+    printRootHelp();
+    return 0;
+  }
+
   // NANOAGENT_ROOT must already be set in the environment. The single boot
   // script is scripts/run-nanoagent.mjs (the `nanoagent` / `nanogent` bin);
   // it owns root resolution and chdir. Refuse to run any other way.
@@ -80,8 +90,6 @@ async function main(): Promise<number> {
   }
 
   try {
-    const argv = process.argv.slice(2);
-
     const isTui = argv.length === 0 || argv[0] === 'tui';
     if (isTui && typeof (globalThis as Record<string, unknown>).Bun === 'undefined') {
       const { spawnSync } = await import('child_process');
@@ -132,13 +140,6 @@ async function main(): Promise<number> {
     if (argv.length === 0) {
       const { runTui } = await import('./opentui/index.js');
       await runTui();
-      return 0;
-    }
-
-    const [cmd] = argv;
-
-    if (cmd === '--help' || cmd === '-h') {
-      printRootHelp();
       return 0;
     }
 

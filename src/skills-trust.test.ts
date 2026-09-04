@@ -13,15 +13,11 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { loadSkills, invalidateSkillsCache } from './skills.js';
-import {
-  SKILLS_DIR,
-  __resetPathsCacheForTests,
-} from './config/paths.js';
+import { SKILLS_DIR, __resetPathsCacheForTests } from './config/paths.js';
 
 let tmpRoot: string;
 let skillsDir: string;
 const PRELOAD_ROOT = process.env.NANOAGENT_ROOT;
-let priorRoot: string | undefined;
 
 function writeJsonSkill(file: string, name: string, prompt: string) {
   writeFileSync(join(skillsDir, file), JSON.stringify({ name, prompt, description: '' }));
@@ -32,7 +28,6 @@ beforeEach(() => {
   for (const sub of ['config', 'skills', 'tools', 'sessions', 'workspace', 'logs']) {
     mkdirSync(join(tmpRoot, sub), { recursive: true });
   }
-  priorRoot = process.env.NANOAGENT_ROOT;
   process.env.NANOAGENT_ROOT = tmpRoot;
   __resetPathsCacheForTests();
   invalidateSkillsCache();

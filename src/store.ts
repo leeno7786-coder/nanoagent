@@ -48,10 +48,15 @@ export function buildConfigSnapshot(cfg: Config): Partial<Config> {
   };
 }
 
-const SESSION_DIR = SESSIONS_DIR();
+// Resolved lazily — a top-level SESSIONS_DIR() call throws at import time
+// when NANOAGENT_ROOT is unset, breaking `--help` outside the launcher.
+function sessionDir(): string {
+  return SESSIONS_DIR();
+}
 
 function ensureDir() {
-  if (!existsSync(SESSION_DIR)) mkdirSync(SESSION_DIR, { recursive: true });
+  const dir = sessionDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
 function hashWorkspace(ws: string): string {
@@ -63,7 +68,7 @@ function hashWorkspace(ws: string): string {
 }
 
 function sessionStore(id: string): VersionedStore<Session> {
-  return new VersionedStore<Session>(join(SESSION_DIR, `${id}.json`), {
+  return new VersionedStore<Session>(join(sessionDir(), `${id}.json`), {
     currentVersion: SESSION_VERSION,
     backupCount: 3,
   });
@@ -135,7 +140,7 @@ export function deleteSession(id: string): void {
   ensureDir();
   const safeId = sanitizeSessionId(id);
   if (!safeId) return;
-  const path = join(SESSION_DIR, `${safeId}.json`);
+  const path = join(sessionDir(), `${safeId}.json`);
   if (existsSync(path)) {
     rmSync(path);
   }
@@ -162,7 +167,7 @@ export function renameSession(oldId: string, newId: string): boolean {
   if (!safeOldId || !safeNewId) {
     return false;
   }
-  const oldPath = join(SESSION_DIR, `${safeOldId}.json`);
+  const oldPath = join(sessionDir(), `${safeOldId}.json`);
   if (!existsSync(oldPath)) {
     return false;
   }
@@ -186,7 +191,7 @@ export function renameSession(oldId: string, newId: string): boolean {
 export function listSessions(): string[] {
   ensureDir();
   try {
-    return readdirSync(SESSION_DIR)
+    return readdirSync(sessionDir())
       .filter((f) => f.endsWith('.json') && !f.endsWith('.bak'))
       .map((f) => f.replace('.json', ''));
   } catch {

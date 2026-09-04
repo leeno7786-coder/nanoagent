@@ -1,5 +1,10 @@
 import { loadSkills, getSkill, getSkillCommands } from '../../skills.js';
-import { loadConfig, saveConfigFile, applyModelProfile, formatProfileList } from '../../config/index.js';
+import {
+  loadConfig,
+  saveConfigFile,
+  applyModelProfile,
+  formatProfileList,
+} from '../../config/index.js';
 import { parseEffort, formatEffortAllowed, DEFAULT_EFFORT } from '../../config/effort.js';
 import {
   getDoctorReport,
@@ -7,7 +12,6 @@ import {
   getModelsList,
   formatModelsList,
 } from '../../cli/reports.js';
-import { tools } from '../../tools/index.js';
 import {
   autoSaveSession,
   loadSessions,
@@ -660,8 +664,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
         return;
       }
       const lines = snaps.map(
-        (s) =>
-          `  • \`${s.name}\`  ·  ${s.filesChanged} files  ·  ${s.createdAt}`
+        (s) => `  • \`${s.name}\`  ·  ${s.filesChanged} files  ·  ${s.createdAt}`
       );
       pushAssistant(
         agent,

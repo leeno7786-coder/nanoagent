@@ -71,7 +71,10 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
         {' '}
         /connect Connect provider — browse runtimes, enter API keys, select models
       </text>
-      <text fg={theme.headerFg}> /usage Session tokens + estimated USD (when prices are known)</text>
+      <text fg={theme.headerFg}>
+        {' '}
+        /usage Session tokens + estimated USD (when prices are known)
+      </text>
       <text fg={theme.headerFg}> /doctor Health check (config + LM Studio / local runtimes)</text>
       <text fg={theme.headerFg}> /models List local models, context, load state</text>
       <text fg={theme.headerFg}> /graph [sub] Memory graph — build|stats|report</text>
@@ -121,7 +124,10 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.mutedFg}> Works like a normal terminal window — mouse capture stays off</text>
       <text fg={theme.mutedFg}> Drag-select text, then Ctrl+Shift+C to copy</text>
       <text fg={theme.mutedFg}> Right-click, Ctrl+Shift+V, or Ctrl+V to paste into the input</text>
-      <text fg={theme.mutedFg}> Multi-line paste keeps line breaks in chat; key fields collapse to one line</text>
+      <text fg={theme.mutedFg}>
+        {' '}
+        Multi-line paste keeps line breaks in chat; key fields collapse to one line
+      </text>
     </scrollbox>
   );
 }

@@ -34,10 +34,9 @@ export const PALETTE_ACTIONS: PaletteAction[] = [
 interface CommandPaletteProps {
   theme: Theme;
   onAction: (id: string) => void;
-  onClose: () => void;
 }
 
-export function CommandPalette({ theme, onAction, onClose }: CommandPaletteProps) {
+export function CommandPalette({ theme, onAction }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
 

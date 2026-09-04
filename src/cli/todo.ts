@@ -21,7 +21,6 @@ interface TodoItem {
 }
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { TODO_FILE, nanoagentPaths } from '../config/paths.js';
 
 /** Lazy accessor: resolves against the current NANOAGENT_ROOT at call time. */
