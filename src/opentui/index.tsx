@@ -46,10 +46,12 @@ export async function runTui() {
     return;
   }
 
-  // Mouse capture is ON so the chat scrollbox gets wheel scrolling. Copy still
-  // works like a normal window: Shift+drag bypasses app capture for native
-  // selection, and right-click / Ctrl+V paste is handled app-side via
-  // clipboard tools (see use-clipboard-paste.ts).
-  const appRenderer = await createCliRenderer({ useMouse: true });
+  // Mouse capture is ON so the chat scrollbox gets wheel scrolling — but
+  // movement tracking stays OFF: mode-1003 motion reports flood stdin on
+  // Windows Terminal and can starve the key parser (dead chat input). Wheel
+  // and click events don't need movement tracking. Copy still works like a
+  // normal window: Shift+drag bypasses app capture for native selection, and
+  // right-click / Ctrl+V paste is handled app-side (see use-clipboard-paste.ts).
+  const appRenderer = await createCliRenderer({ useMouse: true, enableMouseMovement: false });
   createRoot(appRenderer).render(<App renderer={appRenderer} />);
 }
