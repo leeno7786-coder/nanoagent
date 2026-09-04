@@ -253,18 +253,21 @@ export async function initAgent(agent: AgentCore) {
     agent._systemPromptContent = content;
   };
 
-  // Lazy-init the per-workspace working tree. The first tool call lands
-  // here; subsequent tool calls reuse the tree. The tree is a copy of
-  // cfg.workspace, so edits never touch the source until the user runs
-  // /rollback.
-  const { ensureWorkingTree } = await import('./working-tree.js');
+  // Capture a baseline snapshot of the workspace at agent-init time. The
+  // baseline lives at <workspace>/.nanoagent/snapshots/init.json and is
+  // what /rollback (no name) restores. Tools edit the workspace directly;
+  // the snapshot is the rollback machinery.
+  const { takeBaselineSnapshot, hasBaselineSnapshot } = await import('./snapshots.js');
   try {
-    ensureWorkingTree(agent.cfg.workspace);
+    if (hasBaselineSnapshot(agent.cfg.workspace)) {
+      logDebug('[init] baseline snapshot already present, not overwriting');
+    } else {
+      takeBaselineSnapshot(agent.cfg.workspace);
+    }
   } catch (err) {
-    // The source path may not exist yet (e.g. first-run against an empty
-    // cwd). That's fine — tools just operate on the workspace as-is until
-    // the source is populated. Don't fail the whole agent init for this.
-    logDebug('[init] working tree not initialised:', (err as Error).message);
+    // The workspace path may not exist yet (e.g. first-run against an
+    // empty cwd). That's fine — /rollback will just report no baseline.
+    logDebug('[init] baseline snapshot not taken:', (err as Error).message);
   }
 
   // Populate activeSkills with enabled skills (always-active from config)

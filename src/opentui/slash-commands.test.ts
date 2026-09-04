@@ -443,22 +443,23 @@ describe('handleSlashCommand', () => {
   });
 });
 
-describe('working-tree slash commands', () => {
+describe('snapshot / rollback slash commands', () => {
   let ws: string;
   let projectDir: string;
   let stub: AgentStub;
   let h: CtxHarness;
 
   beforeEach(() => {
-    // Use a project subdir inside the workspace so the launcher-style
-    // copy (source → <workspace>/.nanoagent/working-tree/) doesn't try to
-    // recurse into itself. The agent's cfg.workspace points at the
-    // project, the working tree lives at projectDir/.nanoagent/...
-    ws = mkdtempSync(join(tmpdir(), 'slash-wt-'));
+    // Tools edit the user's project directly. We seed a baseline snapshot
+    // manually so the rollback tests can run without booting the full
+    // agent lifecycle.
+    ws = mkdtempSync(join(tmpdir(), 'slash-snap-'));
     projectDir = join(ws, 'project');
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(join(projectDir, 'index.ts'), 'export const x = 1;\n');
     writeFileSync(join(projectDir, 'README.md'), '# proj\n');
+    const { takeBaselineSnapshot } = require('../snapshots.js');
+    takeBaselineSnapshot(projectDir);
     stub = makeAgent(projectDir);
     h = makeCtx(stub, projectDir);
   });
@@ -467,9 +468,7 @@ describe('working-tree slash commands', () => {
     rmSync(ws, { recursive: true, force: true });
   });
 
-  it('/snapshot saves the current working-tree state and reports files', async () => {
-    const { initWorkingTree } = await import('../working-tree.js');
-    initWorkingTree(projectDir, projectDir);
+  it('/snapshot saves the current workspace state and reports files', async () => {
     await handleSlashCommand('/snapshot baseline', h.ctx);
     const content = lastAssistantContent(h);
     expect(content).toContain('baseline');
@@ -477,8 +476,6 @@ describe('working-tree slash commands', () => {
   });
 
   it('/diffs lists saved snapshots', async () => {
-    const { initWorkingTree } = await import('../working-tree.js');
-    initWorkingTree(projectDir, projectDir);
     await handleSlashCommand('/snapshot first', h.ctx);
     await handleSlashCommand('/snapshot second', h.ctx);
     await handleSlashCommand('/diffs', h.ctx);
@@ -488,35 +485,33 @@ describe('working-tree slash commands', () => {
   });
 
   it('/diffs with no snapshots shows a helpful message', async () => {
+    // Wipe the snapshots dir to simulate a brand-new workspace.
+    const { rmSync: rm } = require('fs');
+    rm(join(projectDir, '.nanoagent', 'snapshots'), { recursive: true, force: true });
     await handleSlashCommand('/diffs', h.ctx);
     expect(lastAssistantContent(h)).toContain('No snapshots yet');
   });
 
   it('/rollback <name> restores an earlier snapshot and undoes an edit', async () => {
-    const { initWorkingTree, workingTreeDir } = await import('../working-tree.js');
-    initWorkingTree(projectDir, projectDir);
     await handleSlashCommand('/snapshot before', h.ctx);
-    writeFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'export const x = 99;\n');
+    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 99;\n');
     await handleSlashCommand('/rollback before', h.ctx);
     expect(lastAssistantContent(h)).toContain('before');
-    const after = readFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'utf-8');
+    const after = readFileSync(join(projectDir, 'index.ts'), 'utf-8');
     expect(after).toBe('export const x = 1;\n');
   });
 
-  it('/rollback (no name) wipes the working tree back to source', async () => {
-    const { initWorkingTree, workingTreeDir } = await import('../working-tree.js');
-    initWorkingTree(projectDir, projectDir);
-    writeFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'export const x = 99;\n');
-    expect(readFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'utf-8')).toContain('99');
+  it('/rollback (no name) restores the baseline', async () => {
+    // Edit the source so the baseline differs.
+    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 99;\n');
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toContain('99');
     await handleSlashCommand('/rollback', h.ctx);
-    expect(lastAssistantContent(h)).toContain('rolled back');
-    const after = readFileSync(join(workingTreeDir(projectDir), 'index.ts'), 'utf-8');
+    expect(lastAssistantContent(h)).toContain('rolled back to baseline');
+    const after = readFileSync(join(projectDir, 'index.ts'), 'utf-8');
     expect(after).toBe('export const x = 1;\n');
   });
 
   it('/rollback <unknown-name> reports the error', async () => {
-    const { initWorkingTree } = await import('../working-tree.js');
-    initWorkingTree(projectDir, projectDir);
     await handleSlashCommand('/snapshot known', h.ctx);
     await handleSlashCommand('/rollback ghost', h.ctx);
     expect(lastAssistantContent(h)).toMatch(/snapshot not found|Failed to rollback/);

@@ -119,20 +119,17 @@ export function SCRATCHPAD_DIR_FOR(_workspace?: string): string {
 }
 
 /**
- * Per-workspace metadata. Always lives at <workspace>/.nanoagent/ — the
- * workspace is the project root the user pointed at, and this is where
- * working-tree state, snapshots, and the rollback log are kept.
+ * Per-workspace rollback store. Always lives at
+ * <workspace>/.nanoagent/ — the workspace is the project root the user
+ * pointed at, and this is where named snapshots and the baseline live.
+ * Tools edit the workspace directly; the snapshot store is the rollback
+ * machinery.
  */
 export function WORKSPACE_META_DIR_FOR(workspace: string): string {
   return join(workspace, '.nanoagent');
 }
 
-/** Where the actual editable files live for the given workspace. */
-export function WORKING_TREE_DIR_FOR(workspace: string): string {
-  return join(WORKSPACE_META_DIR_FOR(workspace), 'working-tree');
-}
-
-/** Where named .diff snapshots are stored for the given workspace. */
+/** Where named JSON snapshots are stored for the given workspace. */
 export function SNAPSHOTS_DIR_FOR(workspace: string): string {
   return join(WORKSPACE_META_DIR_FOR(workspace), 'snapshots');
 }

@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.3.0** (`@omega3_0/nanoagent`) — single canonical install root (`NANOAGENT_ROOT`); one boot script (`nanoagent` = `scripts/run-nanoagent.mjs`); all skills, sessions, .env, scratchpad, and logs live under `<NANOAGENT_ROOT>/{config,skills,tools,sessions,workspace,logs}`. Tools edit a per-workspace working tree, never the source directly — `/snapshot` and `/rollback` give you a check-pointed, reversible edit surface. No more cwd/homedir/legacy fallbacks — by design, a missing or duplicate candidate fails fast.
+Current release: **2.4.0** (`@omega3_0/nanoagent`) — tools edit the user's project directly; a baseline snapshot of the workspace is captured at agent-init time, and `/snapshot` + `/rollback` give you a check-pointed, reversible edit surface. Combined with 2.3.0's single canonical install root (`NANOAGENT_ROOT`) and one boot script (`scripts/run-nanoagent.mjs`). No more cwd/homedir/legacy fallbacks — by design, a missing or duplicate candidate fails fast.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -261,31 +261,30 @@ Triggers in the frontmatter or `Use when: ...` clauses in the description auto-l
 
 ## Working tree & rollback
 
-Tools **never edit your source directly**. The first tool call against a workspace lazy-copies it to `<workspace>/.nanoagent/working-tree/` and the agent reads/writes there. Your project on disk is untouched until you explicitly roll back.
+Tools **edit the directory you pointed at directly**. `cfg.workspace` is your project; `read_file`, `write_file`, `edit_file`, etc. all read and write inside it. Rollback is the safety net: on first agent init we capture a baseline snapshot of every file in the workspace, and named snapshots record additional checkpoints. `/rollback` reverts to the baseline; `/rollback <name>` reverts to a named one.
 
 ```text
-<workspace>/                       # your project (--workspace)
-└── .nanoagent/                    # agent-owned metadata
-    ├── working-tree/              # actual edits happen here
-    │   ├── metadata.json           # { sourcePath, createdAt, snapshotCount }
-    │   └── … your files
-    └── snapshots/                  # /snapshots land here as JSON
-        ├── baseline.json
-        └── pre-refactor.json
+<workspace>/                        # your project (--workspace)
+├── .nanoagent/                     # agent-owned rollback store
+│   └── snapshots/
+│       ├── init.json               # baseline (taken at agent init)
+│       ├── pre-refactor.json       # /snapshot pre-refactor
+│       └── ready-to-ship.json      # /snapshot ready-to-ship
+└── … your files                    # tools edit these directly
 ```
 
-The tree is reused across sessions against the same source (no re-copy), so in-progress edits survive an agent restart. If `cfg.workspace` is the same directory as the source, the copy is shallow (top-level entries only) so the agent never recurses into the tree it's creating.
+The first time the agent runs against a workspace, `init.json` is written automatically (full capture of every file). Subsequent `/snapshot <name>` calls capture only the diff against the previous named snapshot, so the snapshot store stays small. `/rollback <name>` walks the chain to compose deletions correctly: a file added after a snapshot and then removed after a later one reverts to "exists in the earlier, gone in the later" with the correct outcome.
 
 ### Slash commands
 
 | Command                  | What it does                                                                                          |
 | ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `/snapshot [name]`       | Capture the current working-tree state. Default name: `snap-YYYYMMDD-HHMMSS`. First snapshot captures every file; later ones are diffs. |
+| `/snapshot [name]`       | Capture the current workspace state. Default name: `snap-YYYYMMDD-HHMMSS`. First snapshot is a full capture; later ones are diffs against the previous named snapshot. |
 | `/diffs`                  | List every saved snapshot for this workspace, newest first.                                            |
-| `/rollback [name]`        | No name: wipe the working tree and re-copy from source (irreversible — `/snapshot` first). With name: restore that snapshot, walking the chain so deletions compose correctly. |
+| `/rollback [name]`        | No name: restore the workspace to the baseline (init.json). With name: restore that snapshot, walking the chain so deletions compose correctly. |
 | `/rollback ghost`         | Returns "snapshot not found" so the user knows.                                                        |
 
-The startup banner shows the working-tree status (`workspace: …; working tree: …`), so you always know where your edits are landing.
+The startup banner shows the baseline status (`baseline snapshot: <workspace>/.nanoagent/snapshots/init.json`), so you always know what `/rollback` will revert to.
 
 ---
 
@@ -431,17 +430,18 @@ NANOAGENT_ROOT/
 
 ## Changelog
 
-### 2.4.0 — Working tree, snapshots, rollback
+### 2.4.0 — Snapshots and rollback
 
-Tools no longer edit your source. Every workspace gets a per-session working tree at `<workspace>/.nanoagent/working-tree/`, lazy-copied from source on the first tool call. Your project on disk is untouched until you roll back. The tree is reused across agent restarts (no re-copy), and when `cfg.workspace` IS the source, the copy is shallow (top-level entries only) so the agent never recurses into the tree it's creating.
+Tools edit the user's project directly. `cfg.workspace` IS the directory the user pointed at; `read_file`, `write_file`, `edit_file`, etc. all read and write inside it. Rollback is the safety net: on first agent init, a baseline snapshot of every file in the workspace is captured at `<workspace>/.nanoagent/snapshots/init.json`. Named snapshots (`/snapshot <name>`) record additional checkpoints as diffs against the previous named snapshot, so the store stays small.
 
-- **`/snapshot [name]`** — capture the current working-tree state. First snapshot records every file; later ones are diffs against the previous. Snapshots are JSON files at `<workspace>/.nanoagent/snapshots/<name>.json` — easy to inspect, easy to `.gitignore`.
+- **`/snapshot [name]`** — capture the current workspace state. First snapshot is a full capture; later ones are diffs.
 - **`/diffs`** — list every saved snapshot, newest first.
-- **`/rollback <name>`** — restore a named snapshot, walking the chain so deletions compose correctly.
-- **`/rollback`** (no name) — wipe the working tree and re-copy from source. The user's edits are lost unless they were `/snapshotted` first; the command clearly says "rolled back to source" so this is a deliberate choice.
-- **Startup banner** shows the working-tree state, so you always know where your edits are landing.
-- **Files**: `src/working-tree.ts` (init, lazy init, drop), `src/snapshots.ts` (capture, list, restore, delete), `src/agent-tools/execute.ts` (every tool call routed through `effectiveToolWorkspace(agent.cfg.workspace)`), `src/opentui/slash-commands/index.ts` (the four commands).
-- **Tests**: 21 new unit tests in `src/working-tree.test.ts` (lazy init, source==workspace shallow copy, metadata tracking, snapshot save/restore, chain-walking rollback, deletion composition), 5 new slash-command tests in `src/opentui/slash-commands.test.ts`. Suite is 926 pass / 2 pre-existing-on-main fail.
+- **`/rollback <name>`** — restore a named snapshot, walking the chain so deletions compose correctly. `new.ts` added after a snapshot and removed after a later one reverts to "gone" when rolling back to the earlier one — the chain walk reconstructs the file set at that point in time.
+- **`/rollback`** (no name) — restore the workspace to the baseline (`init.json`). The user's edits are lost unless they were `/snapshotted` first.
+- **Startup banner** shows the baseline status, so you always know what `/rollback` will revert to.
+- **Files**: `src/snapshots.ts` (capture, list, restore, delete, baseline, restoreBaseline), `src/agent-lifecycle.ts` (take baseline at init), `src/opentui/slash-commands/index.ts` (the four commands), `src/agent-tools/execute.ts` (tools now pass `agent.cfg.workspace` directly — no more working-tree redirect), `src/opentui/app.tsx` (banner).
+- **Tests**: 16 new unit tests in `src/snapshots.test.ts` (baseline, named snapshots, diff chain, restore, list), 5 new slash-command tests in `src/opentui/slash-commands.test.ts`. Suite: 921 pass / 2 pre-existing-on-main fail.
+- **Removed**: the previous "lazy copy into `<workspace>/.nanoagent/working-tree/`" model — the working tree was the wrong place to put edits. The rollback store lives at `<workspace>/.nanoagent/snapshots/` and tools operate on the source directly.
 
 ### 2.3.0 — Single canonical install root
 

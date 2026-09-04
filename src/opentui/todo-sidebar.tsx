@@ -44,7 +44,7 @@ export function TodoSidebar({
       {visibleTodos.map((t, i) => (
         <box key={t.id} flexDirection="row" height={1}>
           <text fg={theme.mutedFg}>{i + 1}.</text>
-          <text fg={theme.userFg}>[ ] </text>
+          <text fg={theme.accent}>[ ] </text>
           <text fg={theme.headerFg}>
             {(t.text ?? '').length > 22 ? (t.text ?? '').slice(0, 21) + '…' : (t.text ?? '')}
           </text>

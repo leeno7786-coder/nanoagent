@@ -36,59 +36,59 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text> </text>
 
       <text fg={theme.accent}>Commands:</text>
-      <text fg={theme.agentFg}> /new Start a new session (clear all)</text>
-      <text fg={theme.agentFg}> /clear Clear chat history</text>
-      <text fg={theme.agentFg}> /compact Compact conversation context</text>
-      <text fg={theme.agentFg}> /auto ... Autonomous subagent mode</text>
-      <text fg={theme.agentFg}> /config Live config overlay (saves ~/.nanogent.json)</text>
-      <text fg={theme.agentFg}> /config show Print config summary</text>
-      <text fg={theme.agentFg}>
+      <text fg={theme.headerFg}> /new Start a new session (clear all)</text>
+      <text fg={theme.headerFg}> /clear Clear chat history</text>
+      <text fg={theme.headerFg}> /compact Compact conversation context</text>
+      <text fg={theme.headerFg}> /auto ... Autonomous subagent mode</text>
+      <text fg={theme.headerFg}> /config Live config overlay (saves ~/.nanogent.json)</text>
+      <text fg={theme.headerFg}> /config show Print config summary</text>
+      <text fg={theme.headerFg}>
         {' '}
         /config set &lt;key&gt; &lt;val&gt; [--global] Write a config file
       </text>
-      <text fg={theme.agentFg}> /settings Alias for /config overlay</text>
-      <text fg={theme.agentFg}> /effort Thinking effort: none|low|medium|high|extra-high</text>
-      <text fg={theme.agentFg}>
+      <text fg={theme.headerFg}> /settings Alias for /config overlay</text>
+      <text fg={theme.headerFg}> /effort Thinking effort: none|low|medium|high|extra-high</text>
+      <text fg={theme.headerFg}>
         {' '}
         /set &lt;key&gt; &lt;val&gt; [--global] Quick-set config options (model, baseURL, etc)
       </text>
-      <text fg={theme.agentFg}>
+      <text fg={theme.headerFg}>
         {' '}
         /profile [list|&lt;name&gt;] Apply a named model snapshot (--global to persist)
       </text>
-      <text fg={theme.agentFg}> /todo Toggle todo sidebar (/todo add ...)</text>
-      <text fg={theme.agentFg}> /skill List loaded skills</text>
-      <text fg={theme.agentFg}> /skills Manage skills (F8) — create, enable, disable</text>
-      <text fg={theme.agentFg}> /sessions List saved sessions</text>
-      <text fg={theme.agentFg}> /resume [id] Resume latest or specific session</text>
-      <text fg={theme.agentFg}> /rename [name] Rename current session</text>
-      <text fg={theme.agentFg}> /copy [id] Copy message content to clipboard</text>
-      <text fg={theme.agentFg}> /save [name] Save conversation</text>
-      <text fg={theme.agentFg}> /load Load a saved conversation</text>
-      <text fg={theme.agentFg}> /reload Reload config, skills, and LM Studio metadata</text>
-      <text fg={theme.agentFg}> /theme [name] Switch color theme</text>
-      <text fg={theme.agentFg}>
+      <text fg={theme.headerFg}> /todo Toggle todo sidebar (/todo add ...)</text>
+      <text fg={theme.headerFg}> /skill List loaded skills</text>
+      <text fg={theme.headerFg}> /skills Manage skills (F8) — create, enable, disable</text>
+      <text fg={theme.headerFg}> /sessions List saved sessions</text>
+      <text fg={theme.headerFg}> /resume [id] Resume latest or specific session</text>
+      <text fg={theme.headerFg}> /rename [name] Rename current session</text>
+      <text fg={theme.headerFg}> /copy [id] Copy message content to clipboard</text>
+      <text fg={theme.headerFg}> /save [name] Save conversation</text>
+      <text fg={theme.headerFg}> /load Load a saved conversation</text>
+      <text fg={theme.headerFg}> /reload Reload config, skills, and LM Studio metadata</text>
+      <text fg={theme.headerFg}> /theme [name] Switch color theme</text>
+      <text fg={theme.headerFg}>
         {' '}
         /connect Connect provider — browse runtimes, enter API keys, select models
       </text>
-      <text fg={theme.agentFg}> /usage Session tokens + estimated USD (when prices are known)</text>
-      <text fg={theme.agentFg}> /doctor Health check (config + LM Studio / local runtimes)</text>
-      <text fg={theme.agentFg}> /models List local models, context, load state</text>
-      <text fg={theme.agentFg}> /graph [sub] Memory graph — build|stats|report</text>
-      <text fg={theme.agentFg}> /mcp List connected Model Context Protocol servers</text>
-      <text fg={theme.agentFg}>
+      <text fg={theme.headerFg}> /usage Session tokens + estimated USD (when prices are known)</text>
+      <text fg={theme.headerFg}> /doctor Health check (config + LM Studio / local runtimes)</text>
+      <text fg={theme.headerFg}> /models List local models, context, load state</text>
+      <text fg={theme.headerFg}> /graph [sub] Memory graph — build|stats|report</text>
+      <text fg={theme.headerFg}> /mcp List connected Model Context Protocol servers</text>
+      <text fg={theme.headerFg}>
         {' '}
         /mcp-add &lt;name&gt; &lt;local|remote&gt; &lt;cmd|url&gt; Add MCP server
       </text>
-      <text fg={theme.agentFg}> /mcp-remove &lt;name&gt; Remove MCP server</text>
-      <text fg={theme.agentFg}> /cd [path] Change workspace directory</text>
-      <text fg={theme.agentFg}> /allow [path] Approve extra tool access outside workspace</text>
-      <text fg={theme.agentFg}> /permissions Tool &amp; command permissions</text>
-      <text fg={theme.agentFg}> /export Export chat to markdown file</text>
-      <text fg={theme.agentFg}> /exit Quit (auto-saves session)</text>
+      <text fg={theme.headerFg}> /mcp-remove &lt;name&gt; Remove MCP server</text>
+      <text fg={theme.headerFg}> /cd [path] Change workspace directory</text>
+      <text fg={theme.headerFg}> /allow [path] Approve extra tool access outside workspace</text>
+      <text fg={theme.headerFg}> /permissions Tool &amp; command permissions</text>
+      <text fg={theme.headerFg}> /export Export chat to markdown file</text>
+      <text fg={theme.headerFg}> /exit Quit (auto-saves session)</text>
       <text> </text>
 
-      <text fg={theme.userFg}>Shortcuts:</text>
+      <text fg={theme.accent}>Shortcuts:</text>
       <text fg={theme.mutedFg}>
         {' '}
         Shift+Tab Cycle permission mode (read_only ➔ ask ➔ allow_edits ➔ always_allow)
@@ -105,20 +105,20 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.mutedFg}> F10 Exit</text>
       <text> </text>
 
-      <text fg={theme.userFg}>CLI Execution (headless or scripts):</text>
+      <text fg={theme.accent}>CLI Execution (headless or scripts):</text>
       <text fg={theme.mutedFg}> nanogent Interactive TUI (default)</text>
       <text fg={theme.mutedFg}> nanogent run -p "task" -w . Run single task</text>
       <text fg={theme.mutedFg}> nanogent doctor --json Health check report</text>
       <text fg={theme.mutedFg}> nanogent models List available local/remote models</text>
       <text> </text>
-      <text fg={theme.userFg}>Input:</text>
+      <text fg={theme.accent}>Input:</text>
       <text fg={theme.mutedFg}> Shift+Enter Multi-line input</text>
       <text fg={theme.mutedFg}> Ctrl+↑/↓ Select message</text>
       <text fg={theme.mutedFg}> Ctrl+C Copy selection or selected message</text>
       <text fg={theme.mutedFg}> Ctrl+Shift+V or right-click Paste (terminal paste)</text>
       <text> </text>
 
-      <text fg={theme.userFg}>Copying and pasting:</text>
+      <text fg={theme.accent}>Copying and pasting:</text>
       <text fg={theme.mutedFg}> Mouse capture is OFF by default for easy terminal paste</text>
       <text fg={theme.mutedFg}> Select text and use terminal copy (Ctrl+Shift+C)</text>
       <text fg={theme.mutedFg}> Right-click or Ctrl+Shift+V to paste into focused field</text>
@@ -186,7 +186,7 @@ export function HistoryOverlay({
     <scrollbox
       ref={scrollRef}
       flexDirection="column"
-      borderStyle="double"
+      borderStyle="single"
       borderColor={theme.borderColor}
       paddingX={2}
       paddingY={1}
@@ -209,10 +209,10 @@ export function HistoryOverlay({
             <text
               key={sess.id}
               id={`session-${i}`}
-              fg={isSel ? theme.headerFg : theme.mutedFg}
-              bg={isSel ? theme.bgSelected : undefined}
+              fg={isSel ? theme.onAccentFg : theme.mutedFg}
+              bg={isSel ? theme.accentBg : undefined}
             >
-              {isSel ? '> ' : '  '}
+              {'  '}
               {date} ({sess.messages.length}) {preview}
             </text>
           );

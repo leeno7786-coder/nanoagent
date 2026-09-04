@@ -566,7 +566,7 @@ export function SkillsOverlay({
       flexGrow={1}
       minHeight={0}
       overflow="hidden"
-      borderStyle="double"
+      borderStyle="single"
       borderColor={theme.borderColor}
       backgroundColor={theme.bgPanel}
     >
@@ -790,10 +790,10 @@ export function SkillsOverlay({
                 <text
                   key={`s-${i}`}
                   id={`skill-item-${i}`}
-                  fg={i === selected ? theme.headerFg : theme.agentFg}
-                  bg={i === selected ? theme.bgSelected : undefined}
+                  fg={i === selected ? theme.onAccentFg : theme.headerFg}
+                  bg={i === selected ? theme.accentBg : undefined}
                 >
-                  {i === selected ? '> ' : '  '}
+                  {'  '}
                   {item.text}
                 </text>
               );
@@ -803,11 +803,11 @@ export function SkillsOverlay({
                 <text
                   key={`a-${i}`}
                   id={`skill-item-${i}`}
-                  fg={i === selected ? theme.headerFg : theme.agentFg}
-                  bg={i === selected ? theme.bgSelected : undefined}
+                  fg={i === selected ? theme.onAccentFg : theme.agentFg}
+                  bg={i === selected ? theme.accentBg : undefined}
                   marginTop={1}
                 >
-                  {i === selected ? '> ' : '  '}
+                  {'  '}
                   {item.text}
                 </text>
               );

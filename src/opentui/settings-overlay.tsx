@@ -144,7 +144,7 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
       flexGrow={1}
       minHeight={0}
       overflow="hidden"
-      borderStyle="double"
+      borderStyle="single"
       borderColor={theme.borderColor}
       backgroundColor={theme.bgPanel}
     >
@@ -170,7 +170,7 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
         {SETTINGS_ITEMS.map((item, index) => {
           if (item.type === 'header') {
             return (
-              <text key={`header-${item.label}`} id={`cfg-${index}`} fg={theme.mutedFg}>
+              <text key={`header-${item.label}`} id={`cfg-${index}`} fg={theme.accent}>
                 {`  ${item.label}`}
               </text>
             );
@@ -185,10 +185,10 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
             <text
               key={item.key}
               id={`cfg-${index}`}
-              fg={selected ? theme.headerFg : theme.inputFg}
-              bg={selected ? theme.bgSelected : undefined}
+              fg={selected ? theme.onAccentFg : theme.inputFg}
+              bg={selected ? theme.accentBg : undefined}
             >
-              {selected ? '> ' : '  '}
+              {'  '}
               {item.label.padEnd(17)} {value}
             </text>
           );

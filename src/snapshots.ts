@@ -17,9 +17,8 @@
  * at time T" for the changes. We don't try to be a real VCS.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join, relative, sep } from 'path';
-import { readWorkingTreeMetadata, workingTreeDir } from './working-tree.js';
 
 interface SnapshotManifest {
   name: string;
@@ -112,26 +111,25 @@ function snapshotTree(treePath: string): Map<string, string> {
 }
 
 /**
- * Take a snapshot of the current working tree. If there are no prior
- * snapshots, captures every file; otherwise captures only files whose
- * content changed since the most recent snapshot.
+ * Take a snapshot of the current state. The snapshot's "tree" is the
+ * workspace itself (tools edit cfg.workspace directly). Every file
+ * that differs from the previous named snapshot's recorded content is
+ * captured in the diff. The implicit `init` baseline is never used as
+ * a `prev`; only user-named snapshots are.
  */
 export function captureSnapshot(workspace: string, name: string): SnapshotInfo {
-  const treePath = workingTreeDir(workspace);
-  if (!existsSync(treePath)) {
-    throw new Error(`[nanoagent] cannot snapshot: working tree not initialised at ${treePath}`);
-  }
-  const meta = readWorkingTreeMetadata(workspace);
-  if (!meta) {
-    throw new Error(`[nanoagent] cannot snapshot: working tree metadata missing at ${workspace}`);
+  if (!existsSync(workspace)) {
+    throw new Error(`[nanoagent] cannot snapshot: workspace does not exist: ${workspace}`);
   }
   const safe = safeName(name);
-  const existing = listSnapshots(workspace);
+  const existing = listSnapshots(workspace).filter((s) => s.name !== 'init');
   const prev: Map<string, string> =
-    existing.length > 0 ? readSnapshot(existing[0].name, workspace)?.files
-      ? new Map(Object.entries(readSnapshot(existing[0].name, workspace)!.files))
-      : new Map() : new Map();
-  const next = snapshotTree(treePath);
+    existing.length > 0
+      ? readSnapshot(existing[0]!.name, workspace)?.files
+        ? new Map(Object.entries(readSnapshot(existing[0]!.name, workspace)!.files))
+        : new Map()
+      : new Map();
+  const next = snapshotTree(workspace);
 
   const files: Record<string, string> = {};
   const allKeys = new Set<string>([...next.keys(), ...prev.keys()]);
@@ -140,8 +138,6 @@ export function captureSnapshot(workspace: string, name: string): SnapshotInfo {
     const b = next.get(key);
     if (a !== b) {
       if (b !== undefined) files[key] = b;
-      // For deletions we store the previous content so a rollback can
-      // re-create the file. (b === undefined and a !== undefined.)
       else if (a !== undefined) files[key] = a;
     }
   }
@@ -150,7 +146,7 @@ export function captureSnapshot(workspace: string, name: string): SnapshotInfo {
     name: safe,
     createdAt: new Date().toISOString(),
     base: workspace,
-    against: existing.length > 0 ? existing[0].name : null,
+    against: existing.length > 0 ? existing[0]!.name : null,
     files,
   };
   writeSnapshot(manifest, workspace);
@@ -167,14 +163,57 @@ export function defaultSnapshotName(): string {
   return `snap-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
 }
 
+const BASELINE_NAME = 'init';
+
+/** Path of the baseline snapshot (no extension; it's the implicit reference). */
+export function baselineSnapshotPath(workspace: string): string {
+  return join(snapshotsDir(workspace), `${BASELINE_NAME}.json`);
+}
+
+/** True if a baseline snapshot exists for `workspace`. */
+export function hasBaselineSnapshot(workspace: string): boolean {
+  return existsSync(baselineSnapshotPath(workspace));
+}
+
 /**
- * Restore the working tree to a snapshot. For a non-differential snapshot
- * (first one), every file in the manifest is written verbatim. For a
- * differential snapshot (`against !== null`), we chain backwards through
- * the snapshot history so deletions and modifications compose correctly.
+ * Take (or refresh) the baseline snapshot: a full capture of every file
+ * in the workspace at agent-init time. `/rollback` (no name) restores
+ * from this snapshot. Safe to call repeatedly — overwrites.
+ */
+export function takeBaselineSnapshot(workspace: string): SnapshotInfo {
+  const treePath = workspace;
+  if (!existsSync(treePath)) {
+    throw new Error(`[nanoagent] cannot take baseline: workspace does not exist: ${treePath}`);
+  }
+  const dir = snapshotsDir(workspace);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const files = snapshotTree(treePath);
+  const manifest: SnapshotManifest = {
+    name: BASELINE_NAME,
+    createdAt: new Date().toISOString(),
+    base: workspace,
+    against: null,
+    files: Object.fromEntries(files),
+  };
+  const file = baselineSnapshotPath(workspace);
+  writeFileSync(file, JSON.stringify(manifest, null, 2), 'utf-8');
+  return {
+    name: BASELINE_NAME,
+    path: file,
+    createdAt: manifest.createdAt,
+    filesChanged: Object.keys(files).length,
+  };
+}
+
+/**
+ * Restore the workspace to a named snapshot. Overwrites every file
+ * recorded in the snapshot (chained from the baseline up to the target
+ * snapshot so deletions compose correctly) and removes any file
+ * currently on disk that wasn't in the merged state.
  */
 export function restoreSnapshot(workspace: string, name: string): {
   applied: number;
+  removed: number;
   snapshotPath: string;
   missingIntermediate: string[];
 } {
@@ -210,28 +249,44 @@ export function restoreSnapshot(workspace: string, name: string): {
     }
   }
 
-  // Apply: write every file in `merged` to the working tree, delete
-  // any file currently in the tree that isn't in `merged`.
-  const treePath = workingTreeDir(workspace);
+  // Apply: write every file in `merged` to the workspace, delete any
+  // file currently on disk that isn't in `merged`.
   let applied = 0;
-  if (existsSync(treePath)) {
-    const live = snapshotTree(treePath);
-    for (const [path, content] of merged) {
-      const target = join(treePath, path);
+  let removed = 0;
+  if (existsSync(workspace)) {
+    const live = new Map<string, string>();
+    const stack: string[] = [workspace];
+    while (stack.length) {
+      const dir = stack.pop()!;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === '.nanoagent') continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(full);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        try {
+          live.set(relative(workspace, full).split(sep).join('/'), readFileSync(full, 'utf-8'));
+        } catch {
+          /* skip */
+        }
+      }
+    }
+    for (const [relPath, content] of merged) {
+      const target = join(workspace, relPath);
       mkdirSync(join(target, '..'), { recursive: true });
-      const current = live.get(path);
+      const current = live.get(relPath);
       if (current !== content) {
         writeFileSync(target, content, 'utf-8');
         applied++;
       }
     }
-    // Deletions: any live file not in merged.
-    for (const path of live.keys()) {
-      if (!merged.has(path)) {
-        const target = join(treePath, path);
+    for (const [relPath] of live) {
+      if (!merged.has(relPath)) {
         try {
-          rmSync(target, { force: true });
-          applied++;
+          rmSync(join(workspace, relPath), { force: true });
+          removed++;
         } catch {
           /* ignore */
         }
@@ -240,6 +295,7 @@ export function restoreSnapshot(workspace: string, name: string): {
   }
   return {
     applied,
+    removed,
     snapshotPath: join(dir, `${safeName(name)}.json`),
     missingIntermediate,
   };
@@ -248,6 +304,79 @@ export function restoreSnapshot(workspace: string, name: string): {
 /** True if the snapshot file exists for `name`. */
 export function snapshotExists(workspace: string, name: string): boolean {
   return existsSync(join(snapshotsDir(workspace), `${safeName(name)}.json`));
+}
+
+/**
+ * Restore the workspace to the baseline snapshot. Overwrites every
+ * file recorded in the baseline and removes any file currently on disk
+ * that wasn't in the baseline. Returns counts so the caller can show
+ * the user a one-line summary.
+ */
+export function restoreBaseline(workspace: string): {
+  applied: number;
+  removed: number;
+  baselinePath: string;
+} {
+  const file = baselineSnapshotPath(workspace);
+  if (!existsSync(file)) {
+    throw new Error(
+      `[nanoagent] no baseline snapshot at ${file}. ` +
+        `Run the agent once to create one, or /snapshot manually.`
+    );
+  }
+  const manifest = JSON.parse(readFileSync(file, 'utf-8')) as SnapshotManifest;
+  // The recorded file contents are the live paths in the workspace —
+  // baseline captures the workspace directly, not a separate tree.
+  let applied = 0;
+  for (const [relPath, content] of Object.entries(manifest.files)) {
+    const target = join(workspace, relPath);
+    mkdirSync(join(target, '..'), { recursive: true });
+    const current = (() => {
+      try {
+        return readFileSync(target, 'utf-8');
+      } catch {
+        return undefined;
+      }
+    })();
+    if (current !== content) {
+      writeFileSync(target, content, 'utf-8');
+      applied++;
+    }
+  }
+  // Deletions: any file currently on disk that isn't in the baseline.
+  let removed = 0;
+  if (existsSync(workspace)) {
+    const live = new Map<string, string>();
+    const stack: string[] = [workspace];
+    while (stack.length) {
+      const dir = stack.pop()!;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === '.nanoagent') continue; // never touch the rollback store
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(full);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        try {
+          live.set(relative(workspace, full).split(sep).join('/'), readFileSync(full, 'utf-8'));
+        } catch {
+          /* skip */
+        }
+      }
+    }
+    for (const [relPath] of live) {
+      if (!(relPath in manifest.files)) {
+        try {
+          rmSync(join(workspace, relPath), { force: true });
+          removed++;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+  return { applied, removed, baselinePath: file };
 }
 
 /** Delete a single snapshot. */

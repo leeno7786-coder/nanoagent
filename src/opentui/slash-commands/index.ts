@@ -659,7 +659,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       if (snaps.length === 0) {
         pushAssistant(
           agent,
-          'No snapshots yet. Run `/snapshot [name]` to capture the current working-tree state.',
+          'No snapshots yet. Run `/snapshot [name]` to capture the current workspace state.',
           setMessages
         );
         return;
@@ -676,18 +676,17 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       return;
     }
     case 'rollback': {
-      const { restoreSnapshot } = await import('../../snapshots.js');
-      const { dropWorkingTree, initWorkingTree } = await import('../../working-tree.js');
+      const { restoreSnapshot, restoreBaseline } = await import('../../snapshots.js');
       const target = args.trim();
       try {
         if (!target) {
-          // Tree swap: replace the working tree contents with the source.
-          // The user's edits are lost (unless they were /snapshotted first).
-          dropWorkingTree(agent.cfg.workspace);
-          initWorkingTree(agent.cfg.workspace, agent.cfg.workspace);
+          // No name: revert the workspace to the baseline captured at
+          // agent-init time. The user's edits are lost unless they were
+          // /snapshotted first.
+          const result = restoreBaseline(agent.cfg.workspace);
           pushAssistant(
             agent,
-            `↺ Working tree rolled back to source (${agent.cfg.workspace}).`,
+            `↺ Workspace rolled back to baseline (${result.applied} restored, ${result.removed} removed).\n  baseline: \`${result.baselinePath}\``,
             setMessages
           );
         } else {
@@ -698,7 +697,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           }
           pushAssistant(
             agent,
-            `↺ Rolled back to snapshot \`${target}\` (${result.applied} files)${warn}`,
+            `↺ Rolled back to snapshot \`${target}\` (${result.applied} restored, ${result.removed} removed)${warn}`,
             setMessages
           );
         }

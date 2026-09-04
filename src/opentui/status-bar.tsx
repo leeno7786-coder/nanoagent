@@ -107,8 +107,9 @@ export function StatusBar({
   return (
     <box flexDirection="column" height={2} flexShrink={0} backgroundColor={theme.bgPanel}>
       <box flexDirection="row" paddingX={1} height={1}>
-        <text fg={theme.headerFg}>⚡ NanoAgent</text>
-        {workspaceName && <text fg={theme.accent || theme.headerFg}> [{workspaceName}]</text>}
+        <text fg={theme.accent}>⚡</text>
+        <text fg={theme.headerFg}> NanoAgent</text>
+        {workspaceName && <text fg={theme.accent}> [{workspaceName}]</text>}
         {busy && (
           <text fg={theme.statusTool}>
             {' '}
@@ -128,9 +129,9 @@ export function StatusBar({
         {sessionCost && <text fg={theme.mutedFg}> · {sessionCost}</text>}
         {mcpIndicator && <text fg={theme.mutedFg}>{mcpIndicator}</text>}
         {elapsed && <text fg={theme.mutedFg}> · {elapsed}</text>}
-        <text fg={s.color}>
+        <text fg={s.color}> ●</text>
+        <text fg={theme.mutedFg}>
           {' '}
-          {busy ? '' : spin}
           {s.label}
           {toolLabel}
         </text>
@@ -141,7 +142,7 @@ export function StatusBar({
           F1 help · Shift+Tab perm · F3 auto · F4 todo · F9 theme · F10 exit · F7 mouse · ^D abort ·
           !cmd
         </text>
-        {!mouseEnabled && <text fg={theme.statusError}> [MOUSE OFF]</text>}
+        {!mouseEnabled && <text fg={theme.warningFg}> [MOUSE OFF]</text>}
       </box>
     </box>
   );
