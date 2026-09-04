@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.5.4** (`@omega3_0/nanoagent`) — the small-model system prompt now opens with an explicit turn contract (every reply ends with tool calls or a visible answer, never thinking-only), and a dead-chat-input regression on Windows Terminal is fixed (mouse-movement tracking off, wheel scroll kept). Reasoning-only turns nudge the model instead of silently retrying identical context. The workspace defaults to the directory you launched nanoagent from, so tools see your actual project. Includes the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
+Current release: **2.5.5** (`@omega3_0/nanoagent`) — the repeating-analysis loop on thinking models is fixed at the root: reasoning-only turns that hit the output cap now double the session's `maxTokens` before retrying, and alternating think-only loops terminate on a cumulative cap. The small-model prompt opens with an explicit turn contract, and a dead-chat-input regression on Windows Terminal is fixed. The workspace defaults to the directory you launched nanoagent from, so tools see your actual project. Includes the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -432,6 +432,13 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.5.5 — Reasoning-loop root cause: output-cap escalation
+
+- **The repeating-analysis loop is fixed at the root.** Thinking models (Qwen/Bonsai ≤8B) were burning the entire 4096-token default output budget mid-thought, so every turn ended `finish_reason=length` with zero visible content — and the 2.5.3 nudge couldn't help, because the retry truncated at the same point. When a reasoning-only turn ends `length`, the harness now doubles the session's output cap (up to 32768) before nudging, with a notice showing the raise.
+- **Alternating loops terminate.** The reasoning-only streak reset on any healthy turn, so a model alternating think-only turns with tool rounds could loop until the iteration cap. A cumulative per-run cap (2× the streak cap) now stops those.
+- **Clearer terminal notice** when the model never replies: suggests raising `maxTokens` or switching models.
+- **Tests:** 2 new regression tests (cap escalation, cumulative-cap termination); suite 931 pass / 0 fail.
 
 ### 2.5.4 — Small-model prompt rework + dead-input fix
 

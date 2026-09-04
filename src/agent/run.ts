@@ -28,6 +28,14 @@ const REASONING_ONLY_NUDGE =
 const EARLY_STOP_MAX_TOOL_ROUNDS = 2;
 /** Cap auto-continues per run so we never loop forever on check-ins. */
 const EARLY_STOP_MAX_CONTINUES = 2;
+/**
+ * Output-cap escalation ceiling for reasoning-only turns. A thinking model
+ * that burns the whole completion budget mid-thought (finish_reason=length,
+ * no content) cannot recover from a nudge alone — the retry thinks the same
+ * thought and truncates at the same point. Double the budget up to this
+ * ceiling instead.
+ */
+const REASONING_ONLY_OUTPUT_CAP_CEILING = 32768;
 
 export async function agentRun(
   agent: AgentCore,
@@ -48,6 +56,9 @@ export async function agentRun(
       : agent._smallModel
         ? SMALL_MODEL_MAX_REASONING_ONLY
         : DEFAULT_MAX_REASONING_ONLY;
+  /** Cumulative cap (streak resets on healthy turns; total does not) so
+   *  alternating reasoning-only/tool-call loops still terminate. */
+  const maxReasoningOnlyTotal = maxReasoningOnly === Infinity ? Infinity : maxReasoningOnly * 2;
 
   // Auto-load skills matching user input triggers
   if (!userText.trim().startsWith('/')) {
@@ -261,6 +272,7 @@ export async function agentRun(
 
   let iterationCount = 0;
   let reasoningOnlyStreak = 0;
+  let reasoningOnlyTotal = 0;
   /** Retries after silent context overflow (finish_reason=length, 0 output). */
   let overflowRetries = 0;
   const MAX_OVERFLOW_RETRIES = 2;
@@ -290,13 +302,32 @@ export async function agentRun(
    * Reasoning-only turn (thinking but no visible content or tool calls).
    * Nudges the model so the retry sees new context — re-sending identical
    * history makes small models regenerate the same analysis forever.
+   * When the turn was cut off by the output cap (finish_reason=length), the
+   * model burned the whole completion budget mid-thought — a nudge alone
+   * can't help, so the output cap is doubled first (up to a ceiling).
    */
-  const handleReasoningOnlyTurn = (): 'continue' | 'error' | 'stop' => {
+  const handleReasoningOnlyTurn = (finishReason?: string): 'continue' | 'error' | 'stop' => {
     reasoningOnlyStreak++;
-    if (reasoningOnlyStreak >= maxReasoningOnly) {
+    reasoningOnlyTotal++;
+    if (finishReason === 'length') {
+      const cur = agent.cfg.maxTokens ?? 0;
+      if (cur > 0 && cur < REASONING_ONLY_OUTPUT_CAP_CEILING) {
+        const next = Math.min(cur * 2, REASONING_ONLY_OUTPUT_CAP_CEILING);
+        agent.cfg.maxTokens = next;
+        agent.addNoticeMessage(
+          `↻ Model spent its whole ${cur}-token output budget on thinking and never replied. ` +
+            `Raised the output cap to ${next} and nudging it to answer (${reasoningOnlyStreak}/${maxReasoningOnly})…`
+        );
+        agent.addNudgeMessage(REASONING_ONLY_NUDGE);
+        agent.setState('thinking');
+        agent.onUpdate?.();
+        return 'continue';
+      }
+    }
+    if (reasoningOnlyStreak >= maxReasoningOnly || reasoningOnlyTotal >= maxReasoningOnlyTotal) {
       agent.addNoticeMessage(
-        `Model produced ${maxReasoningOnly} reasoning-only responses without tool calls. ` +
-          `Try rephrasing your request or switching to a model that supports tool calling.`
+        `Model produced ${reasoningOnlyTotal} reasoning-only responses without tool calls. ` +
+          `Try rephrasing your request, raising maxTokens, or switching to a model that supports tool calling.`
       );
       return 'error';
     }
@@ -611,7 +642,7 @@ export async function agentRun(
           assistantMsg.content.trim() === '' &&
           assistantMsg.reasoningContent
         ) {
-          const action = handleReasoningOnlyTurn();
+          const action = handleReasoningOnlyTurn(finishReason);
           if (action !== 'continue') {
             agent.setState(action === 'error' ? 'error' : 'idle');
             agent.onUpdate?.();
@@ -891,7 +922,7 @@ export async function agentRun(
 
       if (!msg.tool_calls || msg.tool_calls.length === 0) {
         if (!msg.content && msg.reasoning_content) {
-          const action = handleReasoningOnlyTurn();
+          const action = handleReasoningOnlyTurn(response.finishReason);
           if (action !== 'continue') {
             agent.setState(action === 'error' ? 'error' : 'idle');
             agent.onUpdate?.();

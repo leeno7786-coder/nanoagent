@@ -302,4 +302,52 @@ describe('run-loop review fixes', () => {
     expect(withCalls).toEqual([]);
     expect(agent.state).toBe('idle');
   }, 20000);
+
+  it('doubles the output cap when a reasoning-only turn is truncated at maxTokens', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    // Turn 1: a thinking model burns the whole 4096-token completion budget
+    // mid-thought — reasoning channel only, no content, finish_reason=length.
+    // A nudge alone can't fix that; the harness must raise the output cap.
+    // Turn 2 (with the raised cap): a real reply.
+    scripted.push([{ reasoningContent: 'analyzing the whole codebase…', finishReason: 'length' }]);
+    scripted.push([{ content: 'final answer' }]);
+
+    await agent.run('hi');
+
+    expect(agent.cfg.maxTokens).toBe(8192);
+    expect(agent.messages.some((m) => m.id.startsWith('nudge-'))).toBe(true);
+    expect(agent.state).toBe('idle');
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.content).toBe('final answer');
+  }, 20000);
+
+  it('still terminates alternating reasoning-only loops via the cumulative cap', async () => {
+    const agent = newAgent(makeConfig(ws, { maxIterations: 100 }));
+    await agent.init();
+
+    // Reasoning-only turns interrupted by tool rounds reset the consecutive
+    // streak — only the cumulative cap can stop this loop. Distinct args per
+    // round so the stuck-loop (same-signature) guard doesn't fire first.
+    for (let i = 0; i < 20; i++) {
+      scripted.push([
+        {
+          toolCalls: [
+            { id: `call-${i}`, name: 'list_dir', arguments: JSON.stringify({ path: `d${i}` }) },
+          ],
+        },
+      ]);
+      scripted.push([{ reasoningContent: 're-analyzing…' }]);
+    }
+
+    await agent.run('hi');
+
+    // 2x the consecutive cap (default 5) = 10 cumulative reasoning-only turns
+    const reasoningOnlyNotices = agent.messages.filter(
+      (m) => m.id.startsWith('notice-') && /reasoning-only|thinking only/.test(m.content)
+    );
+    expect(reasoningOnlyNotices.length).toBeGreaterThan(0);
+    expect(agent.state).toBe('error');
+  }, 30000);
 });
