@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/react */
 
+import { useTerminalDimensions } from '@opentui/react';
 import type { AgentState } from '../types.js';
 import { isSmallModelFromConfig } from '../model-runtime.js';
 import { DEFAULT_EFFORT } from '../config/effort.js';
@@ -42,6 +43,10 @@ function spinnerFrame(ms: number): string {
   return SPINNER[Math.floor(ms / 80) % SPINNER.length];
 }
 
+function truncate(text: string, max: number): string {
+  return text.length > max ? text.slice(0, Math.max(1, max - 1)) + '…' : text;
+}
+
 export function StatusBar({
   state,
   model,
@@ -57,6 +62,8 @@ export function StatusBar({
   mcpToolCount = 0,
   workspace,
 }: StatusBarProps) {
+  const { width: termWidth } = useTerminalDimensions();
+
   const cfg: Record<AgentState, { color: string; label: string }> = {
     idle: { color: theme.statusIdle, label: 'idle' },
     thinking: { color: theme.statusThinking, label: 'thinking' },
@@ -68,14 +75,12 @@ export function StatusBar({
 
   const s = cfg[state];
   const toolLabel = currentTool ? ` ${currentTool.name}` : '';
-  const displayModel = model.length > 28 ? model.slice(0, 27) + '…' : model;
   const agentEffort = modelRuntime?.effort ?? DEFAULT_EFFORT;
-  const workspaceName = workspace
+  const rawWorkspaceName = workspace
     ? workspace.split(/[/\\]/).filter(Boolean).pop() || workspace
     : '';
 
   const elapsed = elapsedMs && elapsedMs > 0 ? `${(elapsedMs / 1000).toFixed(1)}s` : '';
-  const mcpIndicator = mcpToolCount > 0 ? ` · MCP:${mcpToolCount}` : '';
   const spin = state !== 'idle' && state !== 'error' ? spinnerFrame(elapsedMs || 0) + ' ' : '';
 
   const lastTokens = formatTurnUsage(lastUsage);
@@ -100,38 +105,81 @@ export function StatusBar({
   };
   const smallModelIndicator = isSmallModelFromConfig(runtimeCfg) ? ' [≤8B]' : '';
 
-  // Single compact row: identity + model on the left, token story + state +
-  // key hints on the right (never show session cumulative as context fill).
+  // Fit-to-width: measure every segment and drop lowest-priority stats until
+  // the row fits, instead of letting flex shrink mangle every node. All text
+  // nodes are flexShrink={0} so anything that still overflows clips cleanly
+  // at the right edge rather than garbling the whole row.
+  const narrow = termWidth < 120;
+  const displayModel = truncate(model, narrow ? 20 : 28);
+  const workspaceName = rawWorkspaceName ? truncate(rawWorkspaceName, narrow ? 14 : 22) : '';
+  const effortPart = narrow ? smallModelIndicator : ` · ${agentEffort}${smallModelIndicator}`;
+  const hints =
+    termWidth >= 130
+      ? 'F1 help · ctrl+p commands · ^D abort'
+      : termWidth >= 100
+        ? 'F1 help · ^P commands'
+        : 'F1 help';
+
+  // '⚡' is a wide glyph (2 cells); paddingX=1 on each side.
+  const leftWidth =
+    2 + 10 + (workspaceName ? workspaceName.length + 3 : 0) + 3 + displayModel.length + effortPart.length;
+  const stateLabel = `${s.label}${toolLabel}`;
+  const tailWidth = 1 + 1 + stateLabel.length + 3 + hints.length; // ● + space + label + ' · ' + hints
+
+  // Stats in priority order (most useful first). Busy rows show the spinner +
+  // ctx inline instead of the stats list.
+  const stats: string[] = [];
+  if (ctxIndicator) stats.push(ctxIndicator);
+  if (sessionTokens) stats.push(sessionTokens);
+  if (sessionCost) stats.push(sessionCost);
+  if (lastTokens) stats.push(lastTokens);
+  if (mcpToolCount > 0) stats.push(`MCP:${mcpToolCount}`);
+  if (elapsed) stats.push(elapsed);
+  if (todoCount > 0) stats.push(`${todoCount} todo`);
+
+  let budget = busy ? 0 : termWidth - 2 - leftWidth - tailWidth - 2;
+  const kept: string[] = [];
+  for (const stat of stats) {
+    const cost = stat.length + 3; // joined with ' · ' plus trailing separator
+    if (cost <= budget) {
+      kept.push(stat);
+      budget -= cost;
+    }
+  }
+  const statsText = kept.length > 0 ? kept.join(' · ') + ' · ' : '';
+
   return (
     <box flexDirection="row" paddingX={1} height={1} flexShrink={0} backgroundColor={theme.bgPanel}>
-      <text fg={theme.accent}>⚡</text>
-      <text fg={theme.headerFg}> NanoAgent</text>
-      {workspaceName && <text fg={theme.accent}> [{workspaceName}]</text>}
-      <text fg={theme.mutedFg}>
-        {' '}
-        · {displayModel} · {agentEffort}
-        {smallModelIndicator}
+      <text flexShrink={0} fg={theme.accent}>
+        ⚡
       </text>
-      {busy && (
-        <text fg={theme.statusTool}>
-          {'  '}
-          {spin}
-          {ctxIndicator || 'working…'}
+      <text flexShrink={0} fg={theme.headerFg}>
+        {' NanoAgent'}
+      </text>
+      {workspaceName && (
+        <text flexShrink={0} fg={theme.accent}>
+          {` [${workspaceName}]`}
         </text>
       )}
-      <box flexGrow={1} />
-      {!busy && ctxIndicator ? <text fg={theme.mutedFg}>{ctxIndicator} · </text> : null}
-      {lastTokens && <text fg={theme.mutedFg}>{lastTokens} · </text>}
-      {sessionTokens && <text fg={theme.mutedFg}>{sessionTokens} · </text>}
-      {sessionCost && <text fg={theme.mutedFg}>{sessionCost} · </text>}
-      {mcpIndicator && <text fg={theme.mutedFg}>{mcpIndicator.trim()} · </text>}
-      {elapsed && <text fg={theme.mutedFg}>{elapsed} · </text>}
-      {todoCount > 0 && <text fg={theme.mutedFg}>{todoCount} todo · </text>}
-      <text fg={s.color}>●</text>
-      <text fg={theme.mutedFg}>
-        {' '}
-        {s.label}
-        {toolLabel} · F1 help · ctrl+p commands · ^D abort
+      <text flexShrink={0} fg={theme.mutedFg}>
+        {` · ${displayModel}${effortPart}`}
+      </text>
+      {busy && (
+        <text flexShrink={0} fg={theme.statusTool}>
+          {`  ${spin}${ctxIndicator || 'working…'}`}
+        </text>
+      )}
+      <box flexGrow={1} flexShrink={1} />
+      {statsText && (
+        <text flexShrink={0} fg={theme.mutedFg}>
+          {statsText}
+        </text>
+      )}
+      <text flexShrink={0} fg={s.color}>
+        ●
+      </text>
+      <text flexShrink={0} fg={theme.mutedFg}>
+        {` ${stateLabel} · ${hints}`}
       </text>
     </box>
   );
