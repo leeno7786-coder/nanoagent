@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.4.0** (`@omega3_0/nanoagent`) — tools edit the user's project directly; a baseline snapshot of the workspace is captured at agent-init time, and `/snapshot` + `/rollback` give you a check-pointed, reversible edit surface. Combined with 2.3.0's single canonical install root (`NANOAGENT_ROOT`) and one boot script (`scripts/run-nanoagent.mjs`). No more cwd/homedir/legacy fallbacks — by design, a missing or duplicate candidate fails fast.
+Current release: **2.5.0** (`@omega3_0/nanoagent`) — a full TUI polish pass: six themes with semantic tokens, an opencode-style Ctrl+P command palette, quiet tool rows, tinted full-width diffs with line numbers, inline markdown in chat, a width-aware status bar, and normal-terminal copy/paste (mouse capture is gone for good). Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -35,7 +35,7 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 - **One boot script** — `nanoagent` / `nanogent` / `nano-agent` all dispatch `scripts/run-nanoagent.mjs`. That script creates the layout, sets `NANOAGENT_ROOT`, and chdirs the child. Nothing else boots the agent.
 - **Launch from anywhere** — `nanoagent`, `nanogent`, `nano-agent`, or `npx @omega3_0/nanoagent`
 - **Tiny-model first** — compact prompts, context auto-compact (default 80% of the live window), and small-model tool-call resilience
-- **OpenTUI dashboard** — streaming chat, tool diffs, todos, skills overlay, connect overlay, and keyboard shortcuts
+- **OpenTUI dashboard** — streaming chat, tool diffs, todos, skills overlay, connect overlay, six themes, and a Ctrl+P command palette
 - **Permissions** — `read_only` / `ask` / `allow_edits` / `always_allow`, plus Shift+Tab to cycle in the TUI
 - **Remote sub-agents** — `explore_subagent` workers against a configured pool or `REMOTE_LMSTUDIO_URL`
 - **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`); only the canonical global config is trusted by default
@@ -314,7 +314,7 @@ The startup banner shows the baseline status (`baseline snapshot: <workspace>/.n
 | `/permissions`                                  | `read_only` / `ask` / `allow_edits` / `always_allow`                                      |
 | `/cd [path]`                                    | Change tool workspace                                                                     |
 | `/allow [path]`                                 | Extra tool path outside the workspace                                                     |
-| `/theme [name]`                                 | Switch theme (F9 cycles)                                                                  |
+| `/theme [name]`                                 | Switch theme — dark, light, warmDark, coolDark, black (OLED), highContrast (F9 cycles)     |
 | `/save` `/load` `/sessions` `/resume` `/rename` | Session persistence                                                                       |
 | `/delete-session`                               | Delete a saved session                                                                    |
 | `/export`                                       | Export chat to markdown                                                                   |
@@ -333,16 +333,17 @@ The startup banner shows the baseline status (`baseline snapshot: <workspace>/.n
 | F4          | Todo sidebar                                        |
 | F5          | Save session                                        |
 | F6          | Load session                                        |
-| F7          | Toggle mouse capture                                |
 | F8          | Skills overlay                                      |
 | F9          | Cycle theme                                         |
 | F10         | Exit                                                |
+| Ctrl+P      | Command palette (themes, overlays, session actions) |
 | Shift+Tab   | Cycle permission mode                               |
 | Shift+Enter | Multi-line input                                    |
 | Ctrl+↑/↓    | Select message                                      |
 | Ctrl+C      | Copy selected message                               |
 | Ctrl+D      | Abort current run                                   |
-| Shift+drag  | Select and copy (or turn mouse capture off with F7) |
+| Drag-select | Copy (mouse capture is always off)                  |
+| Right-click / Ctrl+Shift+V / Ctrl+V | Paste — chat keeps line breaks, key fields collapse to one line |
 
 ---
 
@@ -429,6 +430,19 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.5.0 — TUI polish pass
+
+A ground-up visual cleanup of the OpenTUI interface, aimed at a quieter, more polished chat surface.
+
+- **Six themes** — `dark`, `light`, `warmDark`, `coolDark`, `black` (OLED), and `highContrast`, all built on full semantic tokens (diff backgrounds/signs, code background, accent/on-accent pairs, syntax palette). `/theme <name>` to pick, F9 to cycle, live preview from the command palette.
+- **Ctrl+P command palette** — opencode-style floating palette with fuzzy filter over app actions (theme, settings, connect, compact, export, sessions, skills, permissions, exit). Theme switching previews live without closing the palette.
+- **Quiet tool rows** — muted `→`/`←`/`$` glyphs, accent-highlighted targets, workspace-relative paths, multi-line commands truncated to one line, no per-message token noise.
+- **Full-width tinted diffs** with line numbers and colored gutters; code blocks render on a dedicated background; chat text renders inline markdown (`` `code` ``, `**bold**`, `##` headings).
+- **Inline slash dropdown** — `/` suggestions render directly above the input with accent-bar selection and right-aligned F-key hints, not as a modal.
+- **Normal-terminal copy/paste** — mouse capture removed entirely (the F7 toggle is gone). Drag-select copy and right-click / Ctrl+Shift+V paste work natively; Ctrl+V / Shift+Insert fall back to clipboard tools. Paste heuristics: the chat input preserves interior line breaks, single-line fields (API keys) collapse to one trimmed line.
+- **Width-aware status bar** — one compact row that measures itself against the terminal and drops low-priority stats instead of garbling; slim one-line welcome banner.
+- **Tests**: 153 TUI tests + clipboard heuristic coverage; suite green (2 pre-existing environment failures unrelated to the TUI).
 
 ### 2.4.0 — Snapshots and rollback
 
