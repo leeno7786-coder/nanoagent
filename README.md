@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.5.1** (`@omega3_0/nanoagent`) — a full TUI polish pass: six themes with semantic tokens, an opencode-style Ctrl+P command palette, quiet tool rows, tinted full-width diffs with line numbers, inline markdown in chat, a width-aware status bar, and normal-terminal copy/paste (mouse capture is gone for good). Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
+Current release: **2.5.2** (`@omega3_0/nanoagent`) — the workspace now defaults to the directory you launched nanoagent from, so tools see your actual project. Includes the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -430,6 +430,13 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.5.2 — Workspace follows the launch directory
+
+- **Tools see your actual project.** The launcher chdirs the child into the install root (by design), and the config then defaulted the workspace to the canned `<NANOAGENT_ROOT>/workspace` — so the agent could only see placeholder files, not the directory you opened nanoagent in. The launcher now captures your launch directory as `NANOAGENT_LAUNCH_CWD` and the agent's default workspace resolves to it.
+- **Precedence:** `--workspace` / `QWEN_WORKSPACE` → launch directory → install-root workspace (fallback for tests/embedded use). `/cd` still switches at runtime.
+- **Trust boundary kept:** a `nanogent.json` in the launch directory is *not* read as a config override — opening nanoagent in a cloned repo can't silently reconfigure the agent.
+- **Tests:** 4 new workspace-precedence tests; suite 929 pass / 0 fail.
 
 ### 2.5.1 — CI green + command surfacing fixes
 
