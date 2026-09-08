@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.5.5** (`@omega3_0/nanoagent`) — the repeating-analysis loop on thinking models is fixed at the root: reasoning-only turns that hit the output cap now double the session's `maxTokens` before retrying, and alternating think-only loops terminate on a cumulative cap. The small-model prompt opens with an explicit turn contract, and a dead-chat-input regression on Windows Terminal is fixed. The workspace defaults to the directory you launched nanoagent from, so tools see your actual project. Includes the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
+Current release: **2.5.7** (`@omega3_0/nanoagent`) — context accounting and compaction are synchronized across the agent loop, TUI, and restored sessions. API-reported `prompt_tokens` are used when available, tool-schema overhead is tracked, stale provider reports cannot freeze the context gauge, and compaction preserves system prompts, task/tool-call integrity, and summaries. Session restore and mutable todo/system messages are included in accounting. This release also includes the repeating-analysis fix for thinking models, the workspace-launch-directory default, and the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -106,6 +106,18 @@ sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanoagent
 ```
 
 `scripts/run-nanoagent.mjs` is the **only** entry point. In a source checkout it runs `src/main.ts` via bun (same path as `bun run start`); packaged `.deb` / Windows zip / npm installs have no `src/` and use compiled `dist/main.js`. Either way the launcher creates the canonical layout under `NANOAGENT_ROOT` on first run.
+
+### Release automation
+
+Releases are driven by annotated `v*` tags. After committing a version bump, push both `main` and the matching tag; GitHub Actions runs the CI/package jobs, publishes the npm package through trusted OIDC publishing, builds the Linux `.deb` and Windows zip, and creates the GitHub Release:
+
+```bash
+npm version patch --no-git-tag-version
+git add package.json package-lock.json README.md src
+git commit -m "release: v$(node -p \"require('./package.json').version\")"
+git tag -a "v$(node -p \"require('./package.json').version\")" -m "Release v$(node -p \"require('./package.json').version\")"
+git push origin main --follow-tags
+```
 
 ---
 
@@ -216,7 +228,13 @@ Catalog defaults when unset: OpenRouter 20 RPM / 2 in-flight, Groq 30/2, Cerebra
 
 Optional TPM (`maxTokensPerMinute` / `QWEN_MAX_TOKENS_PER_MINUTE`, alias `QWEN_MAX_TPM`) is off unless you set it — there is no catalog TPM default. Cloud tool results are capped at 8000 tokens by default after secrets sanitize (`maxToolResultTokens` / `QWEN_MAX_TOOL_RESULT_TOKENS`; `0` = off; local stays uncapped unless you set a value). Session `$` estimates use OpenRouter catalog prices when available, or `promptPricePerMillion` / `completionPricePerMillion` (`QWEN_PROMPT_PRICE_PER_MILLION`, `QWEN_COMPLETION_PRICE_PER_MILLION`). Prices are never invented; `/usage` and the status bar show tokens only when rates are unknown.
 
-Context windows come from the live runtime when the catalog reports them: LM Studio loaded instance, OpenRouter `context_length`, or a cached GET `/models` on other OpenAI-compatible clouds (`context_length` / `max_model_len` / `max_context_length`). Missing fields stay on the existing heuristic — NanoAgent never invents a smaller window. Catalog capability flags (`supportsTools`, `supportsThinking`, `supportsPromptCache`) are opt-in only when the provider is explicit; unknown keeps today's request shape (`enable_thinking` for `qwen*` / `bonsai*`, tools always sent). Cloud endpoints that advertise prompt cache get a stable `prompt_cache_key` (workspace + model). Opt out with `"promptCache": false` or `QWEN_PROMPT_CACHE=0`. Local providers skip cache hints. `/config show` and `nanogent doctor --json` include the resolved context source and known flags when set.
+Context windows come from the live runtime when the catalog reports them: LM Studio loaded instance, OpenRouter `context_length`, or a cached GET `/models` on other OpenAI-compatible clouds (`context_length` / `max_model_len` / `max_context_length`). Missing fields stay on the existing heuristic — NanoAgent never invents a smaller window. Catalog capability flags (`supportsTools`, `supportsThinking`, `supportsPromptCache`) are opt-in only when the provider is explicit; unknown keeps today's request shape (`enable_thinking` for `qwen*` / `bonsai*`, tools always sent). Cloud endpoints that advertise prompt cache get a stable `prompt_cache_key` (workspace + model). Opt out with `\"promptCache\": false` or `QWEN_PROMPT_CACHE=0`. Local providers skip cache hints. `/config show` and `nanogent doctor --json` include the resolved context source and known flags when set.
+
+### Context accounting and compaction
+
+The TUI context indicator shows the **live prompt fill**, not the cumulative session total. When a provider reports `prompt_tokens`, NanoAgent uses that value as a baseline and tracks local message growth on top of it. It also learns tool-schema and chat-template overhead, so large tool sets are not silently ignored. Flat or stale provider reports cannot freeze the gauge.
+
+Automatic compaction normally triggers around the configured threshold (80% by default) and targets roughly 20% of the model window afterward to leave room for tool schemas and the next response. Compaction preserves the system prompt, the original task, complete assistant tool-call/tool-result groups, and a system-level conversation summary. Restored sessions, todo/system-message updates, and tool-schema changes are synchronized with the same accounting path. Use `/compact` to force compaction; the status bar's context value is the source of truth.
 
 **Failover** is explicit only — NanoAgent never invents a cloud backup. After LLM retries are exhausted, a 429 / 502 / 503 / 504, timeout, or connection error retries the same turn on the next `fallbacks[]` entry (or `QWEN_FALLBACK_MODEL` + optional `QWEN_FALLBACK_BASE_URL` / `QWEN_FALLBACK_PROVIDER` when the file omits `fallbacks`). File wins over env; invalid env is logged and ignored. Auth failures (401/403), bad requests (400), and user abort do not fail over. Each fallback is tried once per main-agent turn, and once per `explore_subagent` worker run. The live session or that worker's in-memory client switches — not `$NANOAGENT_ROOT/config/nanogent.json`, and not the shared pool default for other workers. API keys are resolved per fallback provider — the primary key is never sent to a different provider.
 
@@ -432,6 +450,14 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.5.7 — Context accounting and compaction synchronization
+
+- API-reported `prompt_tokens` are used as the live context baseline when available; local message growth and tool-schema/chat-template overhead are tracked on top.
+- Flat or stale provider reports cannot freeze the context gauge. Normal compaction targets roughly 20% of the model window and preserves the system prompt, original task, complete tool-call/result groups, and a system-level summary.
+- Restored sessions, mutable todo/system messages, compaction summaries, and tool-schema changes stay synchronized with `ContextManager` accounting.
+- Release automation publishes npm and native packages from a pushed `v*` tag through GitHub Actions.
+- Tests: 955 pass / 0 fail.
 
 ### 2.5.5 — Reasoning-loop root cause: output-cap escalation
 

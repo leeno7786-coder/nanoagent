@@ -155,6 +155,7 @@ export async function reloadAgentFromDisk(agent: AgentCore) {
     maxConcurrentLlmRequests: fresh.maxConcurrentLlmRequests,
     maxTokensPerMinute: fresh.maxTokensPerMinute,
     maxToolResultTokens: fresh.maxToolResultTokens,
+    effort: fresh.effort,
     promptPricePerMillion: fresh.promptPricePerMillion,
     completionPricePerMillion: fresh.completionPricePerMillion,
     subAgentModel: fresh.subAgentModel,
