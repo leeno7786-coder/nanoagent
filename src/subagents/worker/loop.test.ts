@@ -24,7 +24,7 @@ function resetStreamMock() {
   streamCfgs.length = 0;
 }
 
-mock.module('../../llm.js', () => ({
+mock.module('../../llm/index.js', () => ({
   streamChat: (
     _client: unknown,
     cfg: { model: string; baseURL: string; apiKey: string | null },
