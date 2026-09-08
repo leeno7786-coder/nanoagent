@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'bun:test';
+import { describe, it, expect, afterEach, beforeEach } from 'bun:test';
 
 import { getSanitizedEnv, safe, sandboxErrorMessage, PathEscapesWorkspaceError } from './shared.js';
 
@@ -56,6 +56,12 @@ describe('getSanitizedEnv GIT_CONFIG_* family handling', () => {
 
 describe('safe() sandbox error message', () => {
   const ws = process.cwd();
+
+  beforeEach(() => {
+    // Ensure workspace exists for isolation from tests that create temp dirs.
+    const fs = require('fs');
+    try { fs.mkdirSync(ws, { recursive: true }); } catch {}
+  });
 
   it('does not echo the offending path in the thrown error', () => {
     const noisy = 'C:/Windows/System32/drivers/etc/hosts';
