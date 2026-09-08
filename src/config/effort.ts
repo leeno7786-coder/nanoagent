@@ -7,6 +7,15 @@ export const EFFORT_LEVELS = ['none', 'low', 'medium', 'high', 'extra-high'] as 
 
 export const DEFAULT_EFFORT: EffortLevel = 'low';
 
+/**
+ * Default thinking-token budget for small local models (≤8B) when no
+ * explicit `reasoningBudget` / `QWEN_REASONING_BUDGET` is configured. Sent
+ * as `reasoning_budget_tokens` to llama.cpp; LM Studio ignores unknown
+ * fields. llama.cpp uses -1 for unrestricted; we pick a hard cap so a
+ * runaway chain-of-thought can't eat the whole output budget.
+ */
+export const DEFAULT_LOCAL_REASONING_BUDGET = 2048;
+
 const ALIASES: Record<string, EffortLevel> = {
   none: 'none',
   low: 'low',

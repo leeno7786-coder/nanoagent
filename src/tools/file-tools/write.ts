@@ -4,7 +4,7 @@ import { basename, dirname, resolve } from 'path';
 import { fileChangeDiff } from '../../lib/file-diff.js';
 
 import type { Tool } from '../shared.js';
-import { rel, safe } from '../shared.js';
+import { rel, safe, sandboxErrorMessage } from '../shared.js';
 
 /**
  * Match an inserted block's line endings to the host file. A CRLF file that
@@ -131,7 +131,7 @@ export const writeFileTool: Tool = {
         line_number_echo_stripped: echo.stripped ? true : undefined,
       });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };
@@ -285,7 +285,7 @@ export const editFileTool: Tool = {
         line_number_echo_stripped: oldEcho.stripped || newEcho.stripped ? true : undefined,
       });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };
@@ -404,7 +404,7 @@ export const editFileLinesTool: Tool = {
         line_number_echo_stripped: echo.stripped ? true : undefined,
       });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };

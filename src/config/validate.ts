@@ -95,6 +95,14 @@ export function validateConfig(cfg: Config): {
     }
   }
 
+  if (cfg.reasoningBudget !== undefined) {
+    if (cfg.reasoningBudget < -1 || cfg.reasoningBudget > 1_000_000) {
+      errors.push(
+        `reasoningBudget must be -1 (unrestricted) or between 0 and 1000000, got ${cfg.reasoningBudget}. Example: QWEN_REASONING_BUDGET=2048 or { "reasoningBudget": 2048 } in ~/.nanogent.json`
+      );
+    }
+  }
+
   if (cfg.maxToolResultTokens !== undefined) {
     if (cfg.maxToolResultTokens < 0 || cfg.maxToolResultTokens > 1_000_000) {
       errors.push(

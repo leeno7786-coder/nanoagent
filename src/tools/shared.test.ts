@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'bun:test';
 
-import { getSanitizedEnv } from './shared.js';
+import { getSanitizedEnv, safe, sandboxErrorMessage, PathEscapesWorkspaceError } from './shared.js';
 
 describe('getSanitizedEnv GIT_CONFIG_* family handling', () => {
   // Snapshot the ambient family once; every test restores exactly this set.
@@ -51,5 +51,56 @@ describe('getSanitizedEnv GIT_CONFIG_* family handling', () => {
     const env = getSanitizedEnv();
     expect(env.MY_TEST_SECRET_TOKEN).toBeUndefined();
     delete process.env.MY_TEST_SECRET_TOKEN;
+  });
+});
+
+describe('safe() sandbox error message', () => {
+  const ws = process.cwd();
+
+  it('does not echo the offending path in the thrown error', () => {
+    const noisy = 'C:/Windows/System32/drivers/etc/hosts';
+    let caught: unknown;
+    try {
+      safe(noisy, ws);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(PathEscapesWorkspaceError);
+    expect((caught as Error).message).not.toContain(noisy);
+    expect((caught as Error).message).not.toMatch(/symlink/i);
+  });
+
+  it('uses a stable message for `..` escapes (no "via symlinked parent" wording)', () => {
+    let caught: unknown;
+    try {
+      safe('../etc/passwd', ws);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(PathEscapesWorkspaceError);
+    expect((caught as Error).message).not.toMatch(/symlink/i);
+    expect((caught as Error).message).not.toMatch(/parent/i);
+  });
+
+  it('sandboxErrorMessage strips the path and gives a model-friendly hint', () => {
+    let caught: unknown;
+    try {
+      safe('../../something/secret.txt', ws);
+    } catch (e) {
+      caught = e;
+    }
+    const msg = sandboxErrorMessage(caught);
+    expect(msg).toBe('Path is outside the workspace. Use a path relative to the workspace root.');
+    expect(msg).not.toContain('secret.txt');
+    expect(msg).not.toMatch(/symlink/i);
+  });
+
+  it('sandboxErrorMessage passes through unrelated fs errors', () => {
+    const msg = sandboxErrorMessage(new Error('ENOENT: no such file'));
+    expect(msg).toBe('ENOENT: no such file');
+  });
+
+  it('sandboxErrorMessage falls back when the error has no message', () => {
+    expect(sandboxErrorMessage({}, 'fallback text')).toBe('fallback text');
   });
 });

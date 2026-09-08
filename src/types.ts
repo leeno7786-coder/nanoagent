@@ -80,6 +80,13 @@ export interface Config {
   temperature?: number;
   /** Maximum tokens for completions (small models work better with lower values). */
   maxTokens?: number;
+  /**
+   * Thinking-token budget sent to local runtimes as `reasoning_budget_tokens`
+   * (llama.cpp honors it; LM Studio ignores unknown fields). 0 = thinking off,
+   * -1 = unrestricted. Unset: small-model mode defaults to 2048, otherwise
+   * nothing is sent.
+   */
+  reasoningBudget?: number;
   /** Active context length from runtime (e.g. LM Studio loaded instance). */
   modelContextLength?: number;
   /** Maximum context the model supports (from runtime catalog). */

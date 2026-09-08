@@ -190,7 +190,7 @@ describe('buildChatCompletionsParams effort', () => {
     expect(body.enable_thinking).toBe(true);
   });
 
-  it('does not send reasoning_effort on local endpoints', () => {
+  it('sends reasoning_effort on local endpoints so /effort actually applies', () => {
     const body = buildChatCompletionsParams(
       cfg({
         model: 'qwen3.5-4b',
@@ -200,7 +200,7 @@ describe('buildChatCompletionsParams effort', () => {
       }),
       messages
     );
-    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.reasoning_effort).toBe('high');
     expect(body.enable_thinking).toBe(true);
   });
 
@@ -227,6 +227,122 @@ describe('buildChatCompletionsParams effort', () => {
         supportsThinking: true,
       }),
       messages
+    );
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.reasoning_effort).toBe('none');
+  });
+});
+
+describe('buildChatCompletionsParams local reasoning', () => {
+  it('sends reasoning_effort on local LM Studio so /effort actually applies', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'http://127.0.0.1:1234/v1',
+        effort: 'high',
+      }),
+      messages
+    );
+    expect(body.reasoning_effort).toBe('high');
+    expect(body.enable_thinking).toBe(true);
+  });
+
+  it('defaults the thinking budget for small local models', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'http://127.0.0.1:1234/v1',
+        smallModelMode: true,
+      }),
+      messages
+    );
+    expect(body.reasoning_budget_tokens).toBe(2048);
+  });
+
+  it('skips the default budget when smallModelMode is false', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'http://127.0.0.1:1234/v1',
+        smallModelMode: false,
+      }),
+      messages
+    );
+    expect(body.reasoning_budget_tokens).toBeUndefined();
+  });
+
+  it('honors an explicit cfg.reasoningBudget override', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'http://127.0.0.1:1234/v1',
+        reasoningBudget: 512,
+      }),
+      messages
+    );
+    expect(body.reasoning_budget_tokens).toBe(512);
+  });
+
+  it('lets a per-call options.reasoningBudgetTokens override win over cfg', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'http://127.0.0.1:1234/v1',
+        reasoningBudget: 4096,
+      }),
+      messages,
+      undefined,
+      { reasoningBudgetTokens: 128 }
+    );
+    expect(body.reasoning_budget_tokens).toBe(128);
+  });
+
+  it('forwards reasoning_effort=none when thinking is explicitly disabled (escalation retry)', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'http://127.0.0.1:1234/v1',
+        effort: 'high',
+      }),
+      messages,
+      undefined,
+      { enableThinking: false }
+    );
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.reasoning_effort).toBe('none');
+  });
+
+  it('does not send the budget on cloud endpoints', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'https://openrouter.ai/api/v1',
+        supportsReasoningEffort: true,
+        supportsThinking: true,
+        effort: 'high',
+        reasoningBudget: 1024,
+      }),
+      messages
+    );
+    expect(body.reasoning_budget_tokens).toBeUndefined();
+  });
+
+  it('cloud force-thinking-off sends reasoning_effort=none even when effort is set', () => {
+    // The reasoning-only loop retry passes `enableThinking: false` so the
+    // call no longer spends the output budget on a thinking block, even
+    // though cfg.effort would otherwise send 'low' to a model that
+    // supports the field.
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'openai/gpt-5',
+        baseURL: 'https://openrouter.ai/api/v1',
+        effort: 'low',
+        supportsReasoningEffort: true,
+        supportsThinking: true,
+      }),
+      messages,
+      undefined,
+      { enableThinking: false }
     );
     expect(body.enable_thinking).toBeUndefined();
     expect(body.reasoning_effort).toBe('none');

@@ -449,6 +449,19 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
       cfg.maxToolCallArgumentTokens = n;
     }
   }
+  const reasoningBudgetEnv = process.env.QWEN_REASONING_BUDGET;
+  if (reasoningBudgetEnv !== undefined && reasoningBudgetEnv !== '') {
+    const n = parseInt(reasoningBudgetEnv, 10);
+    if (Number.isNaN(n) || n < -1 || n > 1_000_000) {
+      logError(
+        `Error: QWEN_REASONING_BUDGET must be -1 (unrestricted) or an integer 0-1000000, got ${JSON.stringify(reasoningBudgetEnv)}.\n` +
+          `  Example: QWEN_REASONING_BUDGET=2048\n` +
+          `  Or in ~/.nanogent.json: { "reasoningBudget": 2048 }`
+      );
+    } else if (cfg.reasoningBudget === undefined) {
+      cfg.reasoningBudget = n;
+    }
+  }
   const promptPriceEnv = process.env.QWEN_PROMPT_PRICE_PER_MILLION;
   if (promptPriceEnv !== undefined && promptPriceEnv !== '') {
     const n = parseFloat(promptPriceEnv);

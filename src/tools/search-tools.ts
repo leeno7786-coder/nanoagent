@@ -9,6 +9,7 @@ import {
   isAccessBlocked,
   rel,
   safe,
+  sandboxErrorMessage,
   validateSearchPattern,
   walk,
 } from './shared.js';
@@ -150,7 +151,7 @@ export const mapProjectTreeTool: Tool = {
         note: 'Large model mode: Tree structure shown in markdown format with directory and file information.',
       });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };
@@ -242,7 +243,7 @@ export const searchAndViewTool: Tool = {
         truncated: results.length >= maxResults,
       });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };
@@ -315,7 +316,7 @@ export const findFilesTool: Tool = {
         small_model_optimized: isSmall,
       });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };
@@ -455,7 +456,7 @@ export const grepSearchTool: Tool = {
         small_model_optimized: isSmall,
       });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };

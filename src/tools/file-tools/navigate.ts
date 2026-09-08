@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from 'fs';
 import { resolve } from 'path';
 
 import type { Tool } from '../shared.js';
-import { rel, safe, isAccessBlocked } from '../shared.js';
+import { rel, safe, isAccessBlocked, sandboxErrorMessage } from '../shared.js';
 
 export const changeWorkspaceTool: Tool = {
   name: 'change_workspace',
@@ -29,7 +29,7 @@ export const changeWorkspaceTool: Tool = {
         message: `Successfully changed active workspace to ${next}`,
       });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };
@@ -70,7 +70,7 @@ export const listDirTool: Tool = {
         });
       return JSON.stringify({ ok: true, path: rel(p, ws), entries });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };
@@ -100,7 +100,7 @@ export const statPathTool: Tool = {
         modified: st.mtime.toISOString(),
       });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };

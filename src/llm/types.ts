@@ -99,4 +99,11 @@ export interface ChatRequestOptions {
   scope?: 'parent' | 'subagent';
   /** Fraction of the parent's TPM reservation this caller claims (0–1). */
   subAgentClaimRatio?: number;
+  /**
+   * Per-call override for the thinking-token budget sent to local runtimes
+   * as `reasoning_budget_tokens`. Falls back to `cfg.reasoningBudget` and
+   * then the small-model default. Undefined = do not send the field
+   * (cloud endpoints, or local providers where the user hasn't opted in).
+   */
+  reasoningBudgetTokens?: number;
 }

@@ -276,6 +276,15 @@ export async function agentRun(
   /** Retries after silent context overflow (finish_reason=length, 0 output). */
   let overflowRetries = 0;
   const MAX_OVERFLOW_RETRIES = 2;
+  /**
+   * Force-thinking-off escalation counter. When nudges can't break a
+   * reasoning-only loop, the next retry sends `enableThinking: false` so
+   * the model can't burn the output budget on a thinking block. Capped at
+   * the same ceiling as the nudges so a stuck model still terminates.
+   * Reset on any turn that produces content or tool calls.
+   */
+  let forceThinkingOffRetries = 0;
+  const MAX_FORCE_THINKING_OFF_RETRIES = 2;
   /** Stuck-loop guard: consecutive rounds issuing identical tool-call signatures. */
   let lastToolSignature: string | undefined;
   let sameSignatureStreak = 0;
@@ -305,6 +314,12 @@ export async function agentRun(
    * When the turn was cut off by the output cap (finish_reason=length), the
    * model burned the whole completion budget mid-thought — a nudge alone
    * can't help, so the output cap is doubled first (up to a ceiling).
+   *
+   * If nudges still don't break the loop after the configured cap, the
+   * next retry is escalated with `enableThinking: false` (set on the
+   * chat request so the model can't keep thinking — see
+   * `streamChat`/`chat` options below). That bypasses any stubborn
+   * reasoning-only behavior at the cost of a non-thinking response.
    */
   const handleReasoningOnlyTurn = (finishReason?: string): 'continue' | 'error' | 'stop' => {
     reasoningOnlyStreak++;
@@ -324,18 +339,30 @@ export async function agentRun(
         return 'continue';
       }
     }
-    if (reasoningOnlyStreak >= maxReasoningOnly || reasoningOnlyTotal >= maxReasoningOnlyTotal) {
-      agent.addNoticeMessage(
-        `Model produced ${reasoningOnlyTotal} reasoning-only responses without tool calls. ` +
-          `Try rephrasing your request, raising maxTokens, or switching to a model that supports tool calling.`
-      );
-      return 'error';
-    }
     if (isEndpointRateLimited(agent.cfg.baseURL)) {
       agent.addNoticeMessage(
         'Model produced a reasoning-only response while the provider is rate-limited — stopping extra retries.'
       );
       return 'stop';
+    }
+    if (reasoningOnlyStreak >= maxReasoningOnly || reasoningOnlyTotal >= maxReasoningOnlyTotal) {
+      if (forceThinkingOffRetries < MAX_FORCE_THINKING_OFF_RETRIES) {
+        forceThinkingOffRetries++;
+        agent.addNoticeMessage(
+          `↻ Nudges didn't break the reasoning-only loop. ` +
+            `Forcing thinking off for the next retry (${forceThinkingOffRetries}/${MAX_FORCE_THINKING_OFF_RETRIES}) so the model can't keep thinking.`
+        );
+        agent.addNudgeMessage(REASONING_ONLY_NUDGE);
+        agent.setState('thinking');
+        agent.onUpdate?.();
+        return 'continue';
+      }
+      agent.addNoticeMessage(
+        `Model produced ${reasoningOnlyTotal} reasoning-only responses without tool calls ` +
+          `and the force-thinking-off retry also failed. ` +
+          `Try rephrasing your request, raising maxTokens, or switching to a model that supports tool calling.`
+      );
+      return 'error';
     }
     agent.addNoticeMessage(
       `↻ Model produced thinking only — no reply or tool calls. Nudging it to respond (${reasoningOnlyStreak}/${maxReasoningOnly})…`
@@ -399,6 +426,10 @@ export async function agentRun(
           agent.buildToolSchemas(activeSkills),
           signal,
           {
+            // Reasoning-only loop escalation: stop the model from thinking
+            // entirely so it can't burn the output budget again. Reset on
+            // any turn that produces content or tool calls (see below).
+            ...(forceThinkingOffRetries > 0 ? { enableThinking: false as const } : {}),
             onRetry: () => {
               assistantMsg.content = '';
               assistantMsg.reasoningContent = undefined;
@@ -565,6 +596,12 @@ export async function agentRun(
             assistantMsg.toolCalls = toolCallBuffers;
           }
           reasoningOnlyStreak = 0;
+          // Successful tool call: stop nudging for the rest of the run,
+          // but do NOT clear the force-thinking-off escalation — once
+          // triggered, it persists for the rest of this user turn so a
+          // stubborn reasoning-only model can't alternate between
+          // thinking-only and tool-call turns forever. The escalation
+          // resets when the user issues a new prompt (fresh agentRun).
         }
 
         if (
@@ -654,6 +691,9 @@ export async function agentRun(
 
         if (!assistantMsg.toolCalls || assistantMsg.toolCalls.length === 0) {
           reasoningOnlyStreak = 0;
+          // Same as the tool-call branch: a visible reply breaks the
+          // reasoning-only streak, but the force-thinking-off escalation
+          // (if active) persists for the rest of the user turn.
           if (
             !isEndpointRateLimited(agent.cfg.baseURL) &&
             tryContinueAfterPrematureCheckin(assistantMsg.content)
@@ -767,7 +807,8 @@ export async function agentRun(
           agent.cfg,
           agent.toChatMessages(),
           agent.buildToolSchemas(activeSkills),
-          signal
+          signal,
+          forceThinkingOffRetries > 0 ? { enableThinking: false } : undefined
         );
       } catch (err: unknown) {
         const e = err as {

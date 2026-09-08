@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
-import { DEFAULT_EFFORT, reasoningEffortParam } from '../config/effort.js';
+import {
+  DEFAULT_EFFORT,
+  DEFAULT_LOCAL_REASONING_BUDGET,
+  reasoningEffortParam,
+} from '../config/effort.js';
 import type { EffortLevel } from '../config/effort.js';
 import type { Config } from '../types.js';
 import { logWarn } from '../log.js';
@@ -129,7 +133,44 @@ export function buildChatCompletionsParams(
     }
   }
   if (enableThinking) params.enable_thinking = true;
-  if (shouldSendReasoningEffort(cfg)) {
+  if (isLocalProvider(cfg.baseURL)) {
+    // LM Studio and llama.cpp both honor per-request reasoning_effort —
+    // without it local thinking models ignore /effort entirely.
+    if (enableThinking) {
+      params.reasoning_effort = reasoningEffortParam(effort);
+      // llama.cpp hard thinking budget (honored by llama-server; LM Studio
+      // ignores unknown fields). Small models default to 2048 so a runaway
+      // chain-of-thought can't eat the whole output budget.
+      const budget =
+        options?.reasoningBudgetTokens ??
+        cfg.reasoningBudget ??
+        (cfg.smallModelMode ? DEFAULT_LOCAL_REASONING_BUDGET : undefined);
+      if (budget !== undefined) params.reasoning_budget_tokens = budget;
+    } else if (options?.enableThinking === false) {
+      // Explicitly forced off (reasoning-only loop retry): 'none' closes the
+      // thinking block immediately on both llama.cpp and LM Studio.
+      params.reasoning_effort = 'none';
+    }
+  }
+  // Force-thinking-off escalation: when the caller passes
+  // `enableThinking: false` (the reasoning-only loop retry path), also
+  // override the cloud `reasoning_effort` field to 'none'. Without this,
+  // a cloud model that lists `reasoning_effort` as a supported parameter
+  // would still receive the configured `effort` (e.g. 'low') and keep
+  // spending tokens on a thinking block the caller has explicitly
+  // disabled. Local endpoints already set this in the local branch above.
+  if (
+    options?.enableThinking === false &&
+    !isLocalProvider(cfg.baseURL) &&
+    shouldSendReasoningEffort(cfg)
+  ) {
+    params.reasoning_effort = 'none';
+  }
+  // Default cloud reasoning_effort from cfg.effort. Don't overwrite a
+  // value already set above (the force-off escalation or the local
+  // branch); cfg.effort === 'none' is what produces a 'none' here when
+  // no override is in play.
+  if (shouldSendReasoningEffort(cfg) && params.reasoning_effort === undefined) {
     params.reasoning_effort = reasoningEffortParam(effort);
   }
   if (shouldSendPromptCacheKey(cfg)) {

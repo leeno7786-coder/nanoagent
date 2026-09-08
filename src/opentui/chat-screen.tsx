@@ -15,6 +15,7 @@ import { buildToolDisplayBlock, type ToolDisplayBlock } from './tool-display.js'
 import { ErrorBoundary } from './error-boundary.js';
 import { useAppStore } from './app-store.js';
 import { formatBusyContext, type ContextUsageSnapshot, type TurnUsage } from './token-display.js';
+import { isParseableDiff } from './diff-utils.js';
 
 interface ChatScreenProps {
   theme: Theme;
@@ -665,6 +666,12 @@ function ToolActivityBlock({
   if (block.kind === 'edit') {
     const diffLines = block.diff ? sanitizeForTui(block.diff).split('\n') : [];
     const maxDiffLines = 26;
+    const trimmedDiff = diffLines.slice(0, maxDiffLines).join('\n');
+    // Defense in depth: tool-result diffs come from `createTwoFilesPatch`
+    // and always parse, but a future change could break that. Fall back to
+    // a plain <code> block instead of letting OpenTUI's <diff> show its red
+    // "Error parsing diff: Added line count did not match..." pane.
+    const renderAsDiff = isParseableDiff(trimmedDiff);
     return (
       <box flexDirection="column" marginY={0}>
         <box flexDirection="row">
@@ -677,12 +684,24 @@ function ToolActivityBlock({
           {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
         </box>
         {diffLines.length > 0 ? (
-          <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
-            <diff diff={diffLines.slice(0, maxDiffLines).join('\n')} {...diffRenderProps(theme)} />
-            {diffLines.length > maxDiffLines && (
-              <text fg={theme.mutedFg}>… {diffLines.length - maxDiffLines} diff lines hidden</text>
-            )}
-          </box>
+          renderAsDiff ? (
+            <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
+              <diff diff={trimmedDiff} {...diffRenderProps(theme)} />
+              {diffLines.length > maxDiffLines && (
+                <text fg={theme.mutedFg}>
+                  … {diffLines.length - maxDiffLines} diff lines hidden
+                </text>
+              )}
+            </box>
+          ) : (
+            <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg} paddingX={1}>
+              {trimmedDiff.split('\n').map((line, i) => (
+                <text key={i} fg={theme.mutedFg}>
+                  {line || ' '}
+                </text>
+              ))}
+            </box>
+          )
         ) : block.previewLines?.length ? (
           linePreview(block.previewLines, 6, theme.mutedFg, theme, '  ')
         ) : null}
@@ -722,9 +741,19 @@ function ToolActivityBlock({
         {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
       </box>
       {block.diff ? (
-        <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
-          <diff diff={block.diff} {...diffRenderProps(theme)} />
-        </box>
+        isParseableDiff(block.diff) ? (
+          <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
+            <diff diff={block.diff} {...diffRenderProps(theme)} />
+          </box>
+        ) : (
+          <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg} paddingX={1}>
+            {block.diff.split('\n').map((line, i) => (
+              <text key={i} fg={theme.mutedFg}>
+                {line || ' '}
+              </text>
+            ))}
+          </box>
+        )
       ) : previews?.length ? (
         linePreview(previews, 6, theme.mutedFg, theme, '  ')
       ) : null}
@@ -1114,9 +1143,31 @@ function AssistantMessageView({
             );
           }
           if (seg.lang === 'diff') {
-            return (
+            const diffText = sanitizedCode[si] ?? '';
+            // Small local models often emit ```diff blocks that are
+            // truncated mid-hunk or have header/body line-count mismatches.
+            // OpenTUI's <diff> swallows the parse error internally and
+            // renders a red "Error parsing diff: Added line count did not
+            // match..." pane instead of the diff — fall back to a plain
+            // monospace <code> block so the user still sees the content.
+            return isParseableDiff(diffText) ? (
               <box key={si} flexDirection="column" marginY={1} backgroundColor={theme.codeBg}>
-                <diff diff={sanitizedCode[si] ?? ''} {...diffRenderProps(theme)} />
+                <diff diff={diffText} {...diffRenderProps(theme)} />
+              </box>
+            ) : (
+              <box
+                key={si}
+                flexDirection="column"
+                marginY={1}
+                backgroundColor={theme.codeBg}
+                paddingX={1}
+              >
+                <text fg={theme.mutedFg}>diff</text>
+                {diffText.split('\n').map((line, i) => (
+                  <text key={i} fg={theme.mutedFg}>
+                    {line || ' '}
+                  </text>
+                ))}
               </box>
             );
           }

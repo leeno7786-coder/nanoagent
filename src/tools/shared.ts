@@ -193,6 +193,19 @@ export function validateSearchPattern(q: string): string | null {
  * Validate and resolve a path relative to the workspace.
  * Throws if the path attempts to escape the workspace boundary.
  */
+/**
+ * Error thrown by `safe()` when a path resolves outside the workspace.
+ * The message deliberately omits the offending path so tool errors shown to
+ * the model don't echo filesystem-layout noise (absolute paths, symlink
+ * names, "via symlinked parent" wording for plain `..` escapes, etc.).
+ */
+export class PathEscapesWorkspaceError extends Error {
+  constructor() {
+    super('Path is outside the workspace');
+    this.name = 'PathEscapesWorkspaceError';
+  }
+}
+
 export function safe(p: string, ws: string, _cfg?: Config): string {
   const resolved = resolve(ws, p || '.');
 
@@ -208,11 +221,12 @@ export function safe(p: string, ws: string, _cfg?: Config): string {
 
     // Ensure the resolved path is within workspace or is the workspace itself
     if (!normResolved.startsWith(normWorkspace + '/') && normResolved !== normWorkspace) {
-      throw new Error(`Path escapes workspace: ${p}`);
+      throw new PathEscapesWorkspaceError();
     }
 
     return resolved;
-  } catch {
+  } catch (e) {
+    if (e instanceof PathEscapesWorkspaceError) throw e;
     // The target doesn't exist yet (new file). Resolve symlinks on the
     // nearest existing ancestor so a symlinked directory inside the
     // workspace can't be used to write outside it.
@@ -226,10 +240,10 @@ export function safe(p: string, ws: string, _cfg?: Config): string {
       const realAncestor = realpathSync(ancestor).replace(/\\/g, '/');
       const realWorkspace = realpathSync(ws).replace(/\\/g, '/');
       if (realAncestor !== realWorkspace && !realAncestor.startsWith(realWorkspace + '/')) {
-        throw new Error(`Path escapes workspace (via symlinked parent): ${p}`);
+        throw new PathEscapesWorkspaceError();
       }
-    } catch (e) {
-      if (e instanceof Error && e.message.includes('escapes workspace')) throw e;
+    } catch (e2) {
+      if (e2 instanceof PathEscapesWorkspaceError) throw e2;
       // Fall through to string comparison if ancestors can't be resolved
     }
 
@@ -238,7 +252,7 @@ export function safe(p: string, ws: string, _cfg?: Config): string {
     const normWorkspace = ws.replace(/\\/g, '/');
 
     if (!normResolved.startsWith(normWorkspace + '/') && normResolved !== normWorkspace) {
-      throw new Error(`Path escapes workspace: ${p}`);
+      throw new PathEscapesWorkspaceError();
     }
 
     return resolved;
@@ -295,6 +309,22 @@ const BLOCKED_BASENAMES = new Set([
   '.npmrc',
   '.yarnrc',
 ]);
+
+/**
+ * Convert an exception thrown inside a tool into a clean, model-friendly
+ * error string. Strips workspace-path/symlink noise from `safe()` throws
+ * and falls back to the raw message for everything else. Tools that wrap
+ * `safe()` + an fs op in a try/catch should call this so the model sees a
+ * stable message instead of "Path escapes workspace (via symlinked
+ * parent): <path>".
+ */
+export function sandboxErrorMessage(e: unknown, fallback = 'Unknown error'): string {
+  if (e instanceof PathEscapesWorkspaceError) {
+    return 'Path is outside the workspace. Use a path relative to the workspace root.';
+  }
+  const msg = (e as { message?: string } | null)?.message;
+  return msg && msg !== fallback ? msg : fallback;
+}
 
 export function walk(
   root: string,

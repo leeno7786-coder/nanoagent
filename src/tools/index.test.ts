@@ -47,7 +47,7 @@ describe('tools', () => {
       const out = JSON.parse(batchRead.execute({ paths: ['../outside-batch.txt'] }, ws));
       // Path escaping should be prevented by safe() function
       expect(out.results['../outside-batch.txt'].ok).toBe(false);
-      expect(out.results['../outside-batch.txt'].error).toContain('Path escapes workspace');
+      expect(out.results['../outside-batch.txt'].error).toContain('Path is outside the workspace');
     } finally {
       try {
         rmSync(parentFile, { force: true });
@@ -209,7 +209,11 @@ describe('tools', () => {
       const out = JSON.parse(readFile.execute({ path: '../outside-single.txt' }, ws));
       // Path escaping should be prevented by safe() function
       expect(out.ok).toBe(false);
-      expect(out.error).toContain('Path escapes workspace');
+      expect(out.error).toContain('Path is outside the workspace');
+      // The error must not echo the model-supplied path, and must not
+      // include misleading "symlink" wording that leaks sandbox internals.
+      expect(out.error).not.toContain('../outside-single.txt');
+      expect(out.error).not.toMatch(/symlink/i);
     } finally {
       try {
         rmSync(parentFile, { force: true });

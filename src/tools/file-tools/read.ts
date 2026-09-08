@@ -10,6 +10,7 @@ import {
   isAccessBlocked,
   rel,
   safe,
+  sandboxErrorMessage,
   truncate,
 } from '../shared.js';
 
@@ -70,12 +71,12 @@ export const batchReadFilesTool: Tool = {
             originalLength: sliced.originalLength,
           };
         } catch (e: unknown) {
-          results[rawPath] = { ok: false, error: (e as { message?: string }).message };
+          results[rawPath] = { ok: false, error: sandboxErrorMessage(e) };
         }
       }
       return JSON.stringify({ ok: true, results });
     } catch (e: unknown) {
-      return JSON.stringify({ ok: false, error: (e as { message?: string }).message });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });
     }
   },
 };
@@ -176,7 +177,7 @@ export const readFileTool: Tool = {
           });
         }
       }
-      return JSON.stringify({ ok: false, error: err.message || 'Unknown error' });
+      return JSON.stringify({ ok: false, error: sandboxErrorMessage(err) });
     }
   },
 };

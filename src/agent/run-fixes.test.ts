@@ -27,6 +27,9 @@ type Chunk = {
 
 const scripted: Chunk[][] = [];
 const sentMessages: unknown[][] = [];
+/** Full request bodies sent to the stub, for asserting `enable_thinking` /
+ *  `reasoning_effort` fields without parsing messages. */
+const sentBodies: unknown[] = [];
 /** When true, the stub writes the first scripted chunk then hangs (for abort tests). */
 let hangAfterFirstChunk = false;
 
@@ -47,8 +50,10 @@ function startStubServer(): Promise<void> {
         try {
           const parsed = JSON.parse(body || '{}');
           sentMessages.push(parsed.messages ?? []);
+          sentBodies.push(parsed);
         } catch {
           sentMessages.push([]);
+          sentBodies.push({});
         }
         const chunks = scripted.shift() ?? [];
         res.writeHead(200, {
@@ -122,6 +127,7 @@ describe('run-loop review fixes', () => {
     ws = mkdtempSync(join(tmpdir(), 'run-fixes-test-'));
     scripted.length = 0;
     sentMessages.length = 0;
+    sentBodies.length = 0;
     hangAfterFirstChunk = false;
     agents = [];
     await startStubServer();
@@ -350,4 +356,42 @@ describe('run-loop review fixes', () => {
     expect(reasoningOnlyNotices.length).toBeGreaterThan(0);
     expect(agent.state).toBe('error');
   }, 30000);
+
+  it('escalates to force-thinking-off after nudges fail, then resets on a healthy turn', async () => {
+    const agent = newAgent(makeConfig(ws, { maxReasoningOnlyRounds: 2 }));
+    await agent.init();
+
+    // Turn 1: reasoning-only (nudge 1/2).
+    // Turn 2: reasoning-only again (nudge 2/2, but cumulative cap kicks in → escalate to force-off).
+    // Turn 3: a real reply (with `enableThinking: false` so the local runtime won't think).
+    scripted.push([{ reasoningContent: 'still thinking…' }]);
+    scripted.push([{ reasoningContent: 'still thinking more…' }]);
+    scripted.push([{ content: 'finally answered' }]);
+
+    await agent.run('hi');
+
+    // The escalation notice should fire once before the model recovers.
+    const escalateNotices = agent.messages.filter(
+      (m) => m.id.startsWith('notice-') && /forcing thinking off/i.test(m.content)
+    );
+    expect(escalateNotices.length).toBeGreaterThan(0);
+
+    // Find the request body that produced the real reply (the third sent).
+    // The reasoning-only turns are stripped from history (per the
+    // reasoning-only handling contract), so the local runtime sees two
+    // consecutive nudge messages followed by the actual user request.
+    const replyBody = sentBodies[sentBodies.length - 1] as {
+      enable_thinking?: boolean;
+      reasoning_effort?: string;
+      messages?: Array<{ role: string }>;
+    };
+    expect(replyBody).toBeDefined();
+    expect(replyBody.enable_thinking).toBeUndefined();
+    // LM Studio / llama.cpp honor `reasoning_effort: 'none'` to close the
+    // thinking block — see buildChatCompletionsParams.
+    expect(replyBody.reasoning_effort).toBe('none');
+    expect(agent.state).toBe('idle');
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.content).toBe('finally answered');
+  }, 20000);
 });
