@@ -53,6 +53,24 @@ describe('ContextManager.updateModel', () => {
   });
 });
 
+describe('ContextManager overhead reset', () => {
+  it('clears API-derived overhead, baseline, and cached stats', () => {
+    const cm = createContextManager(makeCfg({ modelContextLength: 10000 }));
+    cm.addMessage(msg('1'));
+    cm.reportApiUsage({ input_tokens: 5000 });
+    expect(cm.getStats().tokenSource).toBe('api');
+    expect(cm.getStats().apiPromptTokens).toBe(5000);
+
+    cm.resetOverhead();
+
+    const stats = cm.getStats();
+    expect(stats.tokenSource).toBe('estimate');
+    expect(stats.apiPromptTokens).toBeUndefined();
+    expect(stats.overheadTokens).toBe(0);
+    expect(stats.currentTokens).toBe(stats.estimatedTokens);
+  });
+});
+
 describe('ContextManager 80% usage warning', () => {
   const originalWarn = console.warn;
   let warnings: string[];

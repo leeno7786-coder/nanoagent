@@ -425,6 +425,11 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(summary).toBeDefined();
     expect(summary!.role).toBe('system');
     expect(summary!.content).toContain('compacted');
+    const contextSummary = agent.contextManager
+      .getMessages()
+      .find((m) => m.id === 'system-compaction');
+    expect(contextSummary).toBeDefined();
+    expect(contextSummary!.content).toBe(summary!.content);
 
     const payload = agent.toChatMessages();
     expect(payload[0]?.role).toBe('system');

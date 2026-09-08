@@ -249,6 +249,41 @@ export class ContextManager {
     this.stats = null;
   }
 
+  /** Replace an existing tracked message and update token accounting. */
+  updateMessage(message: Message): void {
+    const index = this.messages.findIndex((m) => m.id === message.id);
+    if (index < 0) {
+      this.addMessage(message);
+      return;
+    }
+    const previousTokens = this.messageTokenCache.get(message.id) ?? 0;
+    const nextTokens = this.countSingleMessageTokens(message);
+    this.messages[index] = message;
+    this.messageTokenCache.set(message.id, nextTokens);
+    this.cachedTotalTokens += nextTokens - previousTokens;
+    if (this.lastApiPromptTokens != null) {
+      this.tokensAddedSinceApiReport += nextTokens - previousTokens;
+    }
+    this.stats = null;
+  }
+
+  /** Insert a message at a matching history position and update accounting. */
+  insertMessage(index: number, message: Message): void {
+    if (this.messages.some((m) => m.id === message.id)) {
+      this.updateMessage(message);
+      return;
+    }
+    const tokens = this.countSingleMessageTokens(message);
+    const at = Math.max(0, Math.min(index, this.messages.length));
+    this.messages.splice(at, 0, message);
+    this.messageTokenCache.set(message.id, tokens);
+    this.cachedTotalTokens += tokens;
+    if (this.lastApiPromptTokens != null) {
+      this.tokensAddedSinceApiReport += tokens;
+    }
+    this.stats = null;
+  }
+
   /**
    * Add a message to the context.
    */
@@ -610,9 +645,12 @@ export class ContextManager {
     this.config.enabled = enabled;
   }
 
-  /** Reset the learned API overhead (e.g. after tool-set / MCP changes). */
+  /** Reset learned API accounting after tool-set / MCP changes. */
   resetOverhead(): void {
     this.apiOverheadTokens = 0;
+    this.lastApiPromptTokens = undefined;
+    this.tokensAddedSinceApiReport = 0;
+    this.stats = null;
   }
 
   /**

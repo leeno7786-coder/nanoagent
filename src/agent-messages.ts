@@ -26,6 +26,13 @@ export function refreshSystemPrompt(agent: AgentCore) {
   }
 }
 
+/** Keep ContextManager aligned with the agent history after lifecycle rewrites. */
+export function syncContextManagerMessages(agent: AgentCore): void {
+  // Notices are rendered-only status messages and are intentionally excluded
+  // from the LLM prompt and context-window accounting.
+  agent.contextManager.setMessages(agent.messages.filter((m) => !isNoticeMessage(m)));
+}
+
 /**
  * Ensure system-base is present and at index 0.
  * Context compaction / session edits can drop it; Qwen Jinja requires a
@@ -274,6 +281,9 @@ export function checkAndCompactContext(agent: AgentCore, force = false): boolean
     // model call often returns empty / stops. Merge it into the system block.
     if (result.summary) {
       setCompactionSummaryMessage(agent, result.summary);
+      // The summary is part of the system prompt sent on the next turn, so it
+      // must also be included in token accounting and future compactions.
+      syncContextManagerMessages(agent);
     }
 
     // UI-only notice — keep out of ContextManager so it doesn't inflate the

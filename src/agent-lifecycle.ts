@@ -22,7 +22,7 @@ import { autoSaveSession } from './store.js';
 import type { AgentCore } from './agent.js';
 import { now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
-import { refreshSystemPrompt } from './agent-messages.js';
+import { refreshSystemPrompt, syncContextManagerMessages } from './agent-messages.js';
 import { logDebug, logError, logWarn } from './log.js';
 import { GLOBAL_CONFIG_FILE } from './config/paths.js';
 
@@ -364,10 +364,11 @@ export function rebuildSystemPrompt(
   syncTodoMessage(agent);
   agent.skillManager.syncSkillMessages(agent.messages, agent._smallModel);
 
-  const refreshed = agent.messages.find((m) => m.id === 'system-base');
-  if (refreshed) {
-    agent.contextManager.setMessages([refreshed]);
-  }
+  // Re-seed the context manager from the complete current history. Session
+  // restore and config/model reloads may replace the system prompt while the
+  // conversation remains in agent.messages; keeping only system-base here
+  // makes restored history invisible to compaction accounting.
+  syncContextManagerMessages(agent);
   refreshSystemPrompt(agent);
 }
 

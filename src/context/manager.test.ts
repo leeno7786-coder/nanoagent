@@ -47,6 +47,39 @@ describe('ContextManager', () => {
     });
   });
 
+  describe('message updates', () => {
+    it('keeps token accounting synchronized when a tracked message changes', () => {
+      const original: Message = {
+        id: 'mutable',
+        role: 'system',
+        content: 'short',
+        timestamp: Date.now(),
+      };
+      contextManager.addMessage(original);
+      const before = contextManager.getStats().currentTokens;
+      contextManager.updateMessage({ ...original, content: 'a much longer system message' });
+      expect(contextManager.getStats().currentTokens).toBeGreaterThan(before);
+    });
+
+    it('inserts new messages at the requested history position', () => {
+      const first: Message = {
+        id: 'first',
+        role: 'system',
+        content: 'first',
+        timestamp: Date.now(),
+      };
+      const second: Message = {
+        id: 'second',
+        role: 'user',
+        content: 'second',
+        timestamp: Date.now(),
+      };
+      contextManager.addMessage(first);
+      contextManager.insertMessage(1, second);
+      expect(contextManager.getMessages().map((m) => m.id)).toEqual(['first', 'second']);
+    });
+  });
+
   describe('addMessage', () => {
     it('should add messages to the context', () => {
       const msg: Message = {

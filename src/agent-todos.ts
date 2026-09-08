@@ -33,6 +33,11 @@ export function syncTodoMessage(agent: AgentCore) {
   const content = buildTodoContext(agent);
   if (idx >= 0) {
     agent.messages[idx].content = content;
+    if (typeof agent.contextManager.updateMessage === 'function') {
+      agent.contextManager.updateMessage(agent.messages[idx]);
+    } else {
+      agent.contextManager.setMessages([...agent.messages]);
+    }
   } else {
     const todoMsg: Message = {
       id: 'system-todos',
@@ -41,10 +46,16 @@ export function syncTodoMessage(agent: AgentCore) {
       timestamp: now(),
     };
     const baseIdx = agent.messages.findIndex((m) => m.id === 'system-base');
+    const insertAt = baseIdx >= 0 ? baseIdx + 1 : 0;
     if (baseIdx >= 0) {
-      agent.messages.splice(baseIdx + 1, 0, todoMsg);
+      agent.messages.splice(insertAt, 0, todoMsg);
     } else {
       agent.messages.unshift(todoMsg);
+    }
+    if (typeof agent.contextManager.insertMessage === 'function') {
+      agent.contextManager.insertMessage(insertAt, todoMsg);
+    } else {
+      agent.contextManager.setMessages([...agent.messages]);
     }
   }
 }
