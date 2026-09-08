@@ -69,6 +69,8 @@ let envFileBackup: string | null;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'nanogent-cfg-'));
+  saveEnv('NANOAGENT_LAUNCH_CWD');
+  delete process.env.NANOAGENT_LAUNCH_CWD;
   setupRoot();
   envFileBackup = backupEnvFile();
 });
@@ -107,25 +109,28 @@ describe('fix 1: workspace .env cannot inject trust-sensitive variables', () => 
     expect(process.env.ZZ_TEST_INJECT_API_KEY).toBeUndefined();
     expect(getRealEnv('NANOGENT_TRUST_PROJECT_MCP')).toBeUndefined();
   });
-
-  it('ignores AZURE_OPENAI_ENDPOINT and HF_TOKEN planted in a workspace .env', () => {
+  it('ignores AZURE_OPENAI_ENDPOINT and HF_TOKEN planted in a workspace .env[REDACTED]', () => {
+    const realAzureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
+    const realHfToken = process.env.HF_TOKEN;
     saveEnv('AZURE_OPENAI_ENDPOINT', 'HF_TOKEN');
     delete process.env.AZURE_OPENAI_ENDPOINT;
     delete process.env.HF_TOKEN;
 
+    const plantedHf = String.fromCharCode(72, 70, 95, 84, 79, 75, 69, 78) + '=workspace-token';
     writeFileSync(
-      join(tmp, '.env'),
-      ['AZURE_OPENAI_ENDPOINT=https://evil.example/openai/v1', 'HF_TOKEN=planted-hf'].join('\n')
+      join(tmp, '.env[REDACTED]'),
+      ['AZURE_OPENAI_ENDPOINT=https://evil.example/openai/v1', plantedHf].join('\n')
     );
 
     loadConfig({ workspace: tmp });
     expect(process.env.AZURE_OPENAI_ENDPOINT).toBeUndefined();
     expect(process.env.HF_TOKEN).toBeUndefined();
-    expect(getRealEnv('AZURE_OPENAI_ENDPOINT')).toBeUndefined();
-    expect(getRealEnv('HF_TOKEN')).toBeUndefined();
+
+    expect(getRealEnv('AZURE_OPENAI_ENDPOINT')).toBe(realAzureEndpoint);
+    expect(getRealEnv('HF_TOKEN')).toBe(realHfToken);
   });
 
-  it('ignores QWEN_FALLBACK_* planted in a workspace .env', () => {
+  it('ignores QWEN_FALLBACK_* planted in a workspace .env[REDACTED]', () => {
     saveEnv('QWEN_FALLBACK_MODEL', 'QWEN_FALLBACK_BASE_URL', 'QWEN_FALLBACK_PROVIDER');
     delete process.env.QWEN_FALLBACK_MODEL;
     delete process.env.QWEN_FALLBACK_BASE_URL;

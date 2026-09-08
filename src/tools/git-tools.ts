@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from 'child_process';
 
+import type { Config } from '../types.js';
 import type { Tool } from './shared.js';
-import { NULL_BYTE_RE, getSanitizedEnv } from './shared.js';
+import { NULL_BYTE_RE, getSanitizedEnv, commandValidationError } from './shared.js';
 
 /**
  * Run a git command directly (bypasses PowerShell translation for speed on Windows).
@@ -13,9 +14,16 @@ import { NULL_BYTE_RE, getSanitizedEnv } from './shared.js';
 function execGit(
   args: string[],
   ws: string,
-  opts: { timeout?: number; maxBuffer?: number; write?: boolean } = {}
+  opts: { timeout?: number; maxBuffer?: number; write?: boolean } = {},
+  cfg?: Config
 ): Promise<{ ok: boolean; stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolvePromise) => {
+    const command = `git ${args.join(' ')}`;
+    const blocked = commandValidationError(cfg, command);
+    if (blocked) {
+      resolvePromise({ ok: false, stdout: '', stderr: blocked, code: null });
+      return;
+    }
     const env = {
       ...getSanitizedEnv(),
       GIT_OPTIONAL_LOCKS: '0',
@@ -73,8 +81,8 @@ export const gitDiffTool: Tool = {
   description: 'View uncommitted git changes',
   parameters: { type: 'object', properties: {} },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
-  executeAsync: async (_args, ws) => {
-    const r = await execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 });
+  executeAsync: async (_args, ws, cfg) => {
+    const r = await execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 }, cfg);
     if (!r.ok || r.stdout.trim() !== 'true') {
       return JSON.stringify({
         ok: true,
@@ -84,7 +92,7 @@ export const gitDiffTool: Tool = {
       });
     }
 
-    const diff = await execGit(['--no-optional-locks', 'diff'], ws, { timeout: 15000 });
+    const diff = await execGit(['--no-optional-locks', 'diff'], ws, { timeout: 15000 }, cfg);
     if (!diff.ok) {
       return JSON.stringify({
         ok: false,
@@ -101,9 +109,9 @@ export const gitStatusTool: Tool = {
   description: 'Show git repository status',
   parameters: { type: 'object', properties: {} },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
-  executeAsync: async (_args, ws) => {
+  executeAsync: async (_args, ws, cfg) => {
     // Check working tree status (fast, no lock contention)
-    const r = await execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 });
+    const r = await execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 }, cfg);
     if (!r.ok || r.stdout.trim() !== 'true') {
       return JSON.stringify({ ok: true, status: 'not a git repository', isGit: false });
     }
@@ -112,7 +120,8 @@ export const gitStatusTool: Tool = {
     const status = await execGit(
       ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'],
       ws,
-      { timeout: 10000 }
+      { timeout: 10000 },
+      cfg
     );
     if (!status.ok) {
       return JSON.stringify({
@@ -143,18 +152,18 @@ export const gitCommitTool: Tool = {
     required: ['message'],
   },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
-  executeAsync: async (args, ws) => {
+  executeAsync: async (args, ws, cfg) => {
     const msg = String(args.message || '');
     if (!msg) return JSON.stringify({ ok: false, error: 'Commit message is required' });
 
     // Check we're in a git repo
-    const check = await execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 });
+    const check = await execGit(['rev-parse', '--is-inside-work-tree'], ws, { timeout: 5000 }, cfg);
     if (!check.ok || check.stdout.trim() !== 'true') {
       return JSON.stringify({ ok: false, error: 'not a git repository - cannot commit' });
     }
 
     // Stage all
-    const add = await execGit(['add', '-A'], ws, { timeout: 15000 });
+    const add = await execGit(['add', '-A'], ws, { timeout: 15000 }, cfg);
     if (!add.ok) {
       return JSON.stringify({
         ok: false,
@@ -163,7 +172,7 @@ export const gitCommitTool: Tool = {
     }
 
     // Commit
-    const commit = await execGit(['commit', '-m', msg], ws, { timeout: 15000 });
+    const commit = await execGit(['commit', '-m', msg], ws, { timeout: 15000 }, cfg);
     if (!commit.ok) {
       return JSON.stringify({
         ok: false,

@@ -292,6 +292,12 @@ export function isAccessBlocked(p: string, cfg: Config | undefined): boolean {
   return !cfg.securityManager.validateFileAccess(p, 'read').ok;
 }
 
+/** Validate a subprocess command against the active security policy. */
+export function commandValidationError(cfg: Config | undefined, command: string): string | null {
+  const result = cfg?.securityManager?.validateCommand(command);
+  return result && !result.ok ? result.error || 'Command blocked for security reasons' : null;
+}
+
 // Basenames that always match the default security blockedPaths. Used as a
 // cheap pre-filter so walk() can skip the expensive validateFileAccess
 // (realpath/existsSync/statSync) checks for obviously-sensitive entries.

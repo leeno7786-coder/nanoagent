@@ -3,7 +3,12 @@ import { existsSync } from 'fs';
 import { resolve, join } from 'path';
 
 import type { Tool } from './shared.js';
-import { NULL_BYTE_RE, REPLACEMENT_CHAR_RE, getSanitizedEnv } from './shared.js';
+import {
+  NULL_BYTE_RE,
+  REPLACEMENT_CHAR_RE,
+  getSanitizedEnv,
+  commandValidationError,
+} from './shared.js';
 import { isTuiActive } from '../log.js';
 
 interface ShellInfo {
@@ -555,9 +560,11 @@ export const runTestsTool: Tool = {
   description: 'Run project tests',
   parameters: { type: 'object', properties: {} },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
-  executeAsync: async (_args, ws, _cfg, signal) => {
+  executeAsync: async (_args, ws, cfg, signal) => {
     const hasBun = existsSync(resolve(ws, 'bun.lock')) || existsSync(resolve(ws, 'bun.lockb'));
     const cmd = hasBun ? 'bun test' : 'npm test';
+    const blocked = commandValidationError(cfg, cmd);
+    if (blocked) return JSON.stringify({ ok: false, error: blocked });
     return execCmdAsync(cmd, ws, 300, signal);
   },
 };
@@ -567,9 +574,11 @@ export const installDependenciesTool: Tool = {
   description: 'Install project dependencies',
   parameters: { type: 'object', properties: {} },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
-  executeAsync: async (_args, ws, _cfg, signal) => {
+  executeAsync: async (_args, ws, cfg, signal) => {
     const hasBun = existsSync(resolve(ws, 'bun.lock')) || existsSync(resolve(ws, 'bun.lockb'));
     const cmd = hasBun ? 'bun install' : 'npm install';
+    const blocked = commandValidationError(cfg, cmd);
+    if (blocked) return JSON.stringify({ ok: false, error: blocked });
     return execCmdAsync(cmd, ws, 600, signal);
   },
 };
@@ -589,7 +598,7 @@ export const runCommandTool: Tool = {
     required: ['command'],
   },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
-  executeAsync: async (args, ws, _cfg, signal) => {
+  executeAsync: async (args, ws, cfg, signal) => {
     const allowed = new Set(['build', 'lint', 'format']);
     const sub = String(args.command || '').trim();
     if (!allowed.has(sub)) {
@@ -601,6 +610,8 @@ export const runCommandTool: Tool = {
     const hasBun = existsSync(resolve(ws, 'bun.lock')) || existsSync(resolve(ws, 'bun.lockb'));
     const runner = hasBun ? 'bun run' : 'npm run';
     const cmd = `${runner} ${sub}`;
+    const blocked = commandValidationError(cfg, cmd);
+    if (blocked) return JSON.stringify({ ok: false, error: blocked });
     return execCmdAsync(cmd, ws, 300, signal);
   },
 };
@@ -610,7 +621,10 @@ export const typecheckTool: Tool = {
   description: 'Run tsc --noEmit',
   parameters: { type: 'object', properties: {} },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
-  executeAsync: async (_args, ws, _cfg, signal) => {
-    return execCmdAsync('tsc --noEmit', ws, 180, signal);
+  executeAsync: async (_args, ws, cfg, signal) => {
+    const cmd = 'tsc --noEmit';
+    const blocked = commandValidationError(cfg, cmd);
+    if (blocked) return JSON.stringify({ ok: false, error: blocked });
+    return execCmdAsync(cmd, ws, 180, signal);
   },
 };

@@ -34,6 +34,13 @@ export const batchReadFilesTool: Tool = {
       if (!Array.isArray(paths)) {
         return JSON.stringify({ ok: false, error: 'paths must be an array of strings' });
       }
+      const maxBatchFiles = cfg?.securityManager?.getConfig().maxBatchFiles ?? 50;
+      if (maxBatchFiles > 0 && paths.length > maxBatchFiles) {
+        return JSON.stringify({
+          ok: false,
+          error: `Too many files requested: ${paths.length} (max ${maxBatchFiles})`,
+        });
+      }
       const results: Record<
         string,
         {

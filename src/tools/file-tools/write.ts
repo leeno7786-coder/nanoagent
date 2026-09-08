@@ -112,13 +112,11 @@ export const writeFileTool: Tool = {
       }
       const echo = stripLineNumberEcho(args.content);
       const newText = echo.text;
-      const rewroteEol =
-        existed && oldText.includes('\r\n') && !newText.includes('\r\n')
-          ? matchEol(oldText, newText) !== newText
-          : false;
+      const writtenText = existed ? matchEol(oldText, newText) : newText;
+      const rewroteEol = writtenText !== newText;
       mkdirSync(dirname(p), { recursive: true });
-      writeFileSync(p, newText, 'utf-8');
-      const { added, removed, diff } = fileChangeDiff(relPath, oldText, newText);
+      writeFileSync(p, writtenText, 'utf-8');
+      const { added, removed, diff } = fileChangeDiff(relPath, oldText, writtenText);
       return JSON.stringify({
         ok: true,
         path: relPath,
@@ -126,7 +124,7 @@ export const writeFileTool: Tool = {
         added,
         removed,
         diff,
-        bytes: Buffer.byteLength(newText),
+        bytes: Buffer.byteLength(writtenText),
         eol_rewritten: rewroteEol ? true : undefined,
         line_number_echo_stripped: echo.stripped ? true : undefined,
       });
