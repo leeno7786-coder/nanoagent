@@ -211,6 +211,9 @@ export const GRAPH_TOOLS = new Set([
 
 export function toolsForConfig(all: Tool[], cfg?: Config, activeSkills?: Set<string>): Tool[] {
   let filtered = all;
+  if (cfg && !subAgentAvailable(cfg)) {
+    filtered = filtered.filter((t) => t.name !== 'explore_subagent');
+  }
   if (cfg && checkSmallModel(cfg)) {
     filtered = filtered.filter((t) => {
       if (activeSkills?.has('memory-graph') && GRAPH_TOOLS.has(t.name)) return true;

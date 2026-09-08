@@ -224,6 +224,16 @@ describe('handleSlashCommand', () => {
     expect(content).toContain('1200/262144');
   });
 
+  it('/compact forces compaction and refreshes the rendered messages', async () => {
+    stub.agent.forceCompactContext = mock(() => true);
+
+    await handleSlashCommand('/compact', h.ctx);
+
+    expect(stub.agent.forceCompactContext).toHaveBeenCalledTimes(1);
+    expect(h.messagesSnapshots.length).toBeGreaterThan(0);
+    expect(lastAssistantContent(h)).not.toContain('no compaction needed');
+  });
+
   it('/todo <text> adds a todo to the agent', async () => {
     await handleSlashCommand('/todo write more tests', h.ctx);
     expect(stub.todos).toHaveLength(1);

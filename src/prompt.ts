@@ -118,19 +118,6 @@ export function appendPromptExtras(base: string, ctx: PromptContext, _smallModel
     '- Commands are awaited synchronously: the tool call blocks until the command finishes or the timeout kills it, then the output is returned directly to you.\n' +
     '- Do NOT repeatedly poll or rerun duplicate commands; make ONE call with an adequate `timeout` value and work with the returned output.';
 
-  system +=
-    '\n\n## Remote sub-agents\n' +
-    "You have 4 remote sub-agents (Qwen3.5 2B) reached via this machine's LM Studio. " +
-    'They have READ-ONLY tools (read_file, batch_read_files, list_dir, grep_search, map_project_tree, search_and_view, find_files) against this workspace.\n' +
-    '- `explore_subagent` — dispatch ONE sub-agent with a SPECIFIC task and file paths. This is the ONLY sub-agent tool.\n' +
-    'Rules:\n' +
-    "  - The file tree is auto-injected into every sub-agent's context. DO NOT waste their turns on discovery.\n" +
-    "  - Give each sub-agent a NARROW task with EXACT file paths. Bad: 'audit the codebase'. Good: 'Read src/agent.ts and src/llm.ts. Check for error handling gaps and report findings with line numbers.'\n" +
-    '  - Each sub-agent gets 24 turns and can batch-read files. They report back with structured findings.\n' +
-    '  - Up to 4 can run in parallel — emit all `explore_subagent` calls in ONE message.\n' +
-    '  - After explore_subagent returns, SYNTHESIZE findings immediately. They run synchronously — when it returns, they are done.\n' +
-    "  - BANNED: NEVER write 'waiting for sub-agents' or 'sub-agent is still running'. Synthesize right away.\n";
-
   return system;
 }
 

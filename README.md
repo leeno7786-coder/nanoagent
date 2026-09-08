@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.5.7** (`@omega3_0/nanoagent`) — context accounting and compaction are synchronized across the agent loop, TUI, and restored sessions. API-reported `prompt_tokens` are used when available, tool-schema overhead is tracked, stale provider reports cannot freeze the context gauge, and compaction preserves system prompts, task/tool-call integrity, and summaries. Session restore and mutable todo/system messages are included in accounting. This release also includes the repeating-analysis fix for thinking models, the workspace-launch-directory default, and the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
+Current release: **2.5.8** (`@omega3_0/nanoagent`) — context accounting and compaction are synchronized across the agent loop, TUI, and restored sessions. API-reported `prompt_tokens` are used when available, tool-schema overhead is tracked, stale provider reports cannot freeze the context gauge, and compaction preserves system prompts, task/tool-call integrity, and summaries. Session restore and mutable todo/system messages are included in accounting. This release also includes the repeating-analysis fix for thinking models, the workspace-launch-directory default, and the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
 
@@ -451,13 +451,15 @@ NANOAGENT_ROOT/
 
 ## Changelog
 
-### 2.5.7 — Context accounting and compaction synchronization
+### 2.5.8 — Small-model prompt and tool consistency
 
 - API-reported `prompt_tokens` are used as the live context baseline when available; local message growth and tool-schema/chat-template overhead are tracked on top.
 - Flat or stale provider reports cannot freeze the context gauge. Normal compaction targets roughly 20% of the model window and preserves the system prompt, original task, complete tool-call/result groups, and a system-level summary.
 - Restored sessions, mutable todo/system messages, compaction summaries, and tool-schema changes stay synchronized with `ContextManager` accounting.
+- Small-model mode changes now refresh the live prompt and model policy immediately.
+- Remote sub-agent instructions and `explore_subagent` are advertised only when a pool is configured.
 - Release automation publishes npm and native packages from a pushed `v*` tag through GitHub Actions.
-- Tests: 955 pass / 0 fail.
+- Tests: full suite passes.
 
 ### 2.5.5 — Reasoning-loop root cause: output-cap escalation
 

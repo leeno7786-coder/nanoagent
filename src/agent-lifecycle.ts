@@ -52,6 +52,7 @@ export function isTrustedMcpConfigSource(
  */
 export async function reconfigureAgent(agent: AgentCore, newCfg: Partial<Config>) {
   const modelChanged = newCfg.model !== undefined || newCfg.baseURL !== undefined;
+  const smallModelModeChanged = newCfg.smallModelMode !== undefined;
   const workspaceChanged = newCfg.workspace !== undefined;
   const previousModelId = agent.cfg.model;
 
@@ -83,6 +84,11 @@ export async function reconfigureAgent(agent: AgentCore, newCfg: Partial<Config>
     await agent.applyRuntimeProfile();
   } else {
     agent.client = createClient(agent.cfg);
+  }
+
+  if (smallModelModeChanged) {
+    agent._smallModel = isSmallModelFromConfig(agent.cfg);
+    rebuildSystemPrompt(agent);
   }
 
   // Update security manager if workspace changed

@@ -245,6 +245,36 @@ describe('tools', () => {
     }
   });
 
+  it('toOpenAI hides explore_subagent when no pool is configured', () => {
+    const cfg = {
+      baseURL: 'http://127.0.0.1:1234/v1',
+      model: 'qwen3-8b',
+      apiKey: '',
+      maxIterations: 10,
+      workspace: ws,
+      smallModelMode: true,
+      maxTokens: 4096,
+      subAgentEnabled: false,
+    };
+    const names = toOpenAI(tools, cfg).map((t) => t.function.name);
+    expect(names).not.toContain('explore_subagent');
+  });
+
+  it('toOpenAI keeps explore_subagent when a pool is explicitly enabled', () => {
+    const cfg = {
+      baseURL: 'http://127.0.0.1:1234/v1',
+      model: 'qwen3-8b',
+      apiKey: '',
+      maxIterations: 10,
+      workspace: ws,
+      smallModelMode: true,
+      maxTokens: 4096,
+      subAgentEnabled: true,
+    };
+    const names = toOpenAI(tools, cfg).map((t) => t.function.name);
+    expect(names).toContain('explore_subagent');
+  });
+
   it('toOpenAI filters and shortens tools for small models', () => {
     const cfg = {
       baseURL: 'http://127.0.0.1:1234/v1',
