@@ -60,7 +60,7 @@ describe('safe() sandbox error message', () => {
   beforeEach(() => {
     // Ensure workspace exists for isolation from tests that create temp dirs.
     const fs = require('fs');
-    try { fs.mkdirSync(ws, { recursive: true }); } catch {}
+    try { fs.mkdirSync(ws, { recursive: true }); } catch { /* workspace may already exist */ }
   });
 
   it('does not echo the offending path in the thrown error', () => {

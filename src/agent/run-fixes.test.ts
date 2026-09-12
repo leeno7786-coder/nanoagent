@@ -282,6 +282,38 @@ describe('run-loop review fixes', () => {
     expect(last.content).toBe('final answer');
   }, 20000);
 
+  it('parses and executes multiple Nanobeige XML tool calls from stream content', async () => {
+    const agent = newAgent();
+    await agent.init();
+    agent.onPermissionRequest = async () => 'allow';
+
+    writeFileSync(join(ws, 'input.txt'), 'input payload', 'utf-8');
+
+    const xml = `
+<tool_call>
+  <function=read_file>
+    <parameter=path>input.txt</parameter>
+  </function>
+</tool_call>
+<tool_call>
+  <function=write_file>
+    <parameter=path>output.txt</parameter>
+    <parameter=content>{\n  "status": "ok"\n}</parameter>
+  </function>
+</tool_call>`;
+    scripted.push([{ content: xml }]);
+    scripted.push([{ content: 'done' }]);
+
+    await agent.run('inspect');
+
+    const toolMsgs = agent.messages.filter((m) => m.role === 'tool');
+    expect(toolMsgs).toHaveLength(2);
+    expect(existsSync(join(ws, 'output.txt'))).toBe(true);
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.role).toBe('assistant');
+    expect(last.content).toBe('done');
+  }, 20000);
+
   it('strips un-executed toolCalls when aborted mid-stream', async () => {
     const agent = newAgent();
     await agent.init();

@@ -209,7 +209,7 @@ export class PathEscapesWorkspaceError extends Error {
 export function safe(p: string, ws: string, _cfg?: Config): string {
   // Reject absolute Windows paths (e.g. C:/Windows/...) even on Linux,
   // where resolve() treats them as relative segments.
-  if (/^[A-Za-z]:[\/]/.test(p)) {
+  if (/^[A-Za-z]:\//.test(p)) {
     throw new PathEscapesWorkspaceError();
   }
   const resolved = resolve(ws, p || '.');

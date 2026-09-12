@@ -11,6 +11,7 @@ import {
   capToolArgumentsForLlm,
   resolveToolCallArgumentTokenBudget,
 } from '../llm/tool-result-budget.js';
+import { parseXmlToolCalls } from '../llm/tool-call-parser.js';
 
 const DEFAULT_MAX_REASONING_ONLY = 5;
 /** Small models rarely recover from reasoning-only turns — stop them sooner. */
@@ -545,6 +546,25 @@ export async function agentRun(
                 })(),
               })
             );
+          }
+
+          const parsedFromStream = parseXmlToolCalls(assistantMsg.content || '');
+          if (!hasToolCalls && parsedFromStream.toolCalls.length > 0) {
+            hasToolCalls = true;
+            assistantMsg.content = parsedFromStream.content;
+            toolCallBuffers = parsedFromStream.toolCalls.map((tc, idx) => ({
+              id: `call_${idx}_${Math.random().toString(36).slice(2, 10)}`,
+              name: tc.name,
+              arguments: (() => {
+                const budget = resolveToolCallArgumentTokenBudget(agent.cfg);
+                return budget > 0
+                  ? capToolArgumentsForLlm(tc.name, tc.arguments, {
+                      maxTokens: budget,
+                      modelId: agent.cfg.model,
+                    })
+                  : tc.arguments;
+              })(),
+            }));
           }
 
           agent.emitUpdateThrottled();

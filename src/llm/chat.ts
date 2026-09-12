@@ -9,6 +9,7 @@ import {
   calculateBackoffDelay,
   sleepWithSignal,
 } from './utils.js';
+import { parseXmlToolCalls } from './tool-call-parser.js';
 import { buildChatCompletionsParams } from './request.js';
 import {
   awaitEndpointTurn,
@@ -66,6 +67,32 @@ export async function chat(
         };
         const choice = completionObj.choices[0] as Record<string, unknown> | undefined;
         const msg = choice?.message as Record<string, unknown> | undefined;
+        const content = normalizeContent(msg?.content);
+        const xml = parseXmlToolCalls(content);
+        const explicitToolCalls = ((msg?.tool_calls as Array<Record<string, unknown>> | undefined) || [])
+          .map((tc: Record<string, unknown>) => {
+            if (!(tc.function as Record<string, unknown> | undefined)?.name) {
+              return null;
+            }
+            return {
+              id: (tc.id as string) || `call_${Math.random().toString(36).slice(2, 10)}`,
+              type: 'function' as const,
+              function: {
+                name: (tc.function as Record<string, unknown>).name as string,
+                arguments:
+                  ((tc.function as Record<string, unknown>).arguments as string) || '{}',
+              },
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+
+        const xmlToolCalls = xml.toolCalls.length
+          ? xml.toolCalls.map((tc) => ({
+              id: `call_${Math.random().toString(36).slice(2, 10)}`,
+              type: 'function' as const,
+              function: { name: tc.name, arguments: tc.arguments },
+            }))
+          : [];
 
         noteEndpointSuccess(cfg.baseURL);
         const usage = normalizeUsage(completionObj.usage);
@@ -73,27 +100,12 @@ export async function chat(
         return {
           message: {
             role: (msg?.role as string) || 'assistant',
-            content: normalizeContent(msg?.content),
+            content: xml.toolCalls.length > 0 ? xml.content : content,
             reasoning_content:
               (msg?.reasoning_content as string) ||
               (choice?.reasoning_content as string) ||
               undefined,
-            tool_calls: ((msg?.tool_calls as Array<Record<string, unknown>> | undefined) || [])
-              .map((tc: Record<string, unknown>) => {
-                if (!(tc.function as Record<string, unknown> | undefined)?.name) {
-                  return null;
-                }
-                return {
-                  id: (tc.id as string) || `call_${Math.random().toString(36).slice(2, 10)}`,
-                  type: 'function' as const,
-                  function: {
-                    name: (tc.function as Record<string, unknown>).name as string,
-                    arguments:
-                      ((tc.function as Record<string, unknown>).arguments as string) || '{}',
-                  },
-                };
-              })
-              .filter((x): x is NonNullable<typeof x> => x !== null),
+            tool_calls: explicitToolCalls.length > 0 ? explicitToolCalls : xmlToolCalls,
           },
           usage,
           finishReason: choice?.finish_reason as string | undefined,
