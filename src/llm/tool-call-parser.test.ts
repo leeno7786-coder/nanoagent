@@ -16,7 +16,9 @@ I will inspect the workspace first.
 Some tool results should follow.
 `;
     const parsed = parseXmlToolCalls(xml);
-    expect(parsed.content).toBe('I will inspect the workspace first.\nSome tool results should follow.');
+    expect(parsed.content).toBe(
+      'I will inspect the workspace first.\nSome tool results should follow.'
+    );
     expect(parsed.toolCalls).toEqual([
       { name: 'list_dir', arguments: JSON.stringify({ path: '/home/noah/murmur' }) },
       { name: 'git_status', arguments: '{}' },

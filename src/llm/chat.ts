@@ -69,7 +69,9 @@ export async function chat(
         const msg = choice?.message as Record<string, unknown> | undefined;
         const content = normalizeContent(msg?.content);
         const xml = parseXmlToolCalls(content);
-        const explicitToolCalls = ((msg?.tool_calls as Array<Record<string, unknown>> | undefined) || [])
+        const explicitToolCalls = (
+          (msg?.tool_calls as Array<Record<string, unknown>> | undefined) || []
+        )
           .map((tc: Record<string, unknown>) => {
             if (!(tc.function as Record<string, unknown> | undefined)?.name) {
               return null;
@@ -79,8 +81,7 @@ export async function chat(
               type: 'function' as const,
               function: {
                 name: (tc.function as Record<string, unknown>).name as string,
-                arguments:
-                  ((tc.function as Record<string, unknown>).arguments as string) || '{}',
+                arguments: ((tc.function as Record<string, unknown>).arguments as string) || '{}',
               },
             };
           })
