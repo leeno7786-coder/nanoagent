@@ -290,28 +290,34 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       }
       const ctrl = new AbortController();
       abortControllerRef.current = ctrl;
-      agentRef.current.run(next, ctrl.signal).catch((err) => {
-        drainingRef.current = false;
-        const isAborted =
-          ctrl.signal.aborted ||
-          (err instanceof Error &&
-            (err.name === 'AbortError' ||
-              err.message === 'Aborted' ||
-              err.message.toLowerCase().includes('abort')));
-        if (!isAborted && agentRef.current) {
-          agentRef.current.messages.push({
-            id: Math.random().toString(36).slice(2, 10),
-            role: 'assistant',
-            content: `Command error: ${err instanceof Error ? err.message : String(err)}`,
-            timestamp: Date.now(),
-          });
-          agentRef.current.setState('idle');
-          store.getState().syncFromAgent(agentRef.current);
-        } else if (isAborted && agentRef.current) {
-          agentRef.current.setState('idle');
-          store.getState().syncFromAgent(agentRef.current);
-        }
-      });
+      agentRef.current
+        .run(next, ctrl.signal)
+        .catch((err) => {
+          const isAborted =
+            ctrl.signal.aborted ||
+            (err instanceof Error &&
+              (err.name === 'AbortError' ||
+                err.message === 'Aborted' ||
+                err.message.toLowerCase().includes('abort')));
+          if (!isAborted && agentRef.current) {
+            // Requeue the failed message so it isn't silently lost.
+            store.getState().requeueMessage(next);
+            agentRef.current.messages.push({
+              id: Math.random().toString(36).slice(2, 10),
+              role: 'assistant',
+              content: `Command error: ${err instanceof Error ? err.message : String(err)}`,
+              timestamp: Date.now(),
+            });
+            agentRef.current.setState('idle');
+            store.getState().syncFromAgent(agentRef.current);
+          } else if (isAborted && agentRef.current) {
+            agentRef.current.setState('idle');
+            store.getState().syncFromAgent(agentRef.current);
+          }
+        })
+        .finally(() => {
+          drainingRef.current = false;
+        });
     }, 50);
     return () => {
       clearTimeout(timer);
@@ -660,7 +666,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             handleLoad,
             handleRename,
             clearQueue: st.clearQueue,
-            removeQueueMessage: st.removeQueueMessage,
           });
           return;
         }

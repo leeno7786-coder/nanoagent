@@ -662,7 +662,7 @@ export function ChatScreen({
             busy
               ? 'Working…'
               : editingQueueIndex >= 0
-                ? `Editing queued message (${messageQueue.length - editingQueueIndex}/${messageQueue.length})…`
+                ? `Editing queued message (${editingQueueIndex + 1}/${messageQueue.length})…`
                 : 'Type a message or / for commands…'
           }
           value={inputValue}
@@ -696,12 +696,7 @@ export function ChatScreen({
                 {i === editingQueueIndex ? '✎ ' : '  '}
               </text>
               <text fg={i === editingQueueIndex ? theme.headerFg : theme.mutedFg} wrapMode="word">
-                {Array.from(text).length > 50
-                  ? text.slice(
-                      0,
-                      [...text].reduce((acc, ch, idx) => (idx < 50 ? acc + ch.length : acc), 0)
-                    ) + '…'
-                  : text}
+                {text.length > 60 ? text.slice(0, 57) + '…' : text}
               </text>
             </box>
           ))}

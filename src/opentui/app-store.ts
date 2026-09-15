@@ -66,8 +66,8 @@ interface AppState {
 
   /** Messages queued while the agent was busy. Drained automatically when idle. */
   messageQueue: string[];
-  /** Retry count for the most recently requeued message. */
-  queueRetryCount: number;
+  /** Retry count per queued message (message -> retry count). */
+  queueRetryCount: Map<string, number>;
   /** Index of the queued message being edited (-1 = not editing). */
   editingQueueIndex: number;
 
@@ -155,7 +155,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   bangRun: null,
 
   messageQueue: [],
-  queueRetryCount: 0,
+  queueRetryCount: new Map(),
   editingQueueIndex: -1,
 
   sessions: [],
@@ -239,23 +239,26 @@ export const useAppStore = create<AppState>()((set, get) => ({
     if (st.messageQueue.length >= MAX_QUEUE_SIZE) {
       return false;
     }
-    const retries = st.queueRetryCount;
+    const retries = st.queueRetryCount.get(text) ?? 0;
     if (retries >= 3) {
       return false;
     }
+    const newRetryCount = new Map(st.queueRetryCount);
+    newRetryCount.set(text, retries + 1);
     set({
       messageQueue: [...st.messageQueue, text],
-      queueRetryCount: retries + 1,
+      queueRetryCount: newRetryCount,
     });
     return true;
   },
-  clearQueue: () => set({ messageQueue: [], queueRetryCount: 0, editingQueueIndex: -1 }),
+  clearQueue: () =>
+    set({ messageQueue: [], queueRetryCount: new Map(), editingQueueIndex: -1 }),
   getQueueSize: () => get().messageQueue.length,
   isQueueFull: () => get().messageQueue.length >= MAX_QUEUE_SIZE,
   startEditingQueue: () => {
     const st = get();
     if (st.messageQueue.length === 0) return;
-    set({ editingQueueIndex: st.messageQueue.length - 1 });
+    set({ editingQueueIndex: 0 });
   },
   editQueueMessage: (index, newText) => {
     const st = get();

@@ -552,6 +552,8 @@ describe('promptCache from config/env', () => {
 
 describe('explicit options beat config files', () => {
   it('an explicitly-passed baseURL/model is not clobbered by the global config', () => {
+    saveEnv('MISTRAL_API_KEY');
+    delete process.env.MISTRAL_API_KEY;
     writeFileSync(
       GLOBAL_CONFIG_FILE(),
       JSON.stringify({

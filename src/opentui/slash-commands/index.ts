@@ -775,10 +775,19 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       } else if (sub === 'remove' || sub === 'rm') {
         const numStr = args.split(' ')[1];
         const num = parseInt(numStr, 10);
+        const queue = useAppStore.getState().messageQueue;
         if (!numStr || isNaN(num) || num < 1) {
           pushAssistant(
             agent,
             'Usage: `/queue remove <number>` — Remove a queued message by its number.',
+            setMessages
+          );
+          return;
+        }
+        if (num > queue.length) {
+          pushAssistant(
+            agent,
+            `No message at position #${num}. Queue has ${queue.length} message${queue.length === 1 ? '' : 's'}.`,
             setMessages
           );
           return;
@@ -802,14 +811,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           const list = queue
             .map(
               (msg, i) =>
-                `${i + 1}. ${
-                  Array.from(msg).length > 60
-                    ? msg.slice(
-                        0,
-                        [...msg].reduce((acc, ch, idx) => (idx < 57 ? acc + ch.length : acc), 0)
-                      ) + '…'
-                    : msg
-                }`
+                `${i + 1}. ${msg.length > 60 ? msg.slice(0, 57) + '…' : msg}`
             )
             .join('\n');
           pushAssistant(
