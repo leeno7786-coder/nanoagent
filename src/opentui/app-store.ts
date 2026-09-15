@@ -251,8 +251,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     });
     return true;
   },
-  clearQueue: () =>
-    set({ messageQueue: [], queueRetryCount: new Map(), editingQueueIndex: -1 }),
+  clearQueue: () => set({ messageQueue: [], queueRetryCount: new Map(), editingQueueIndex: -1 }),
   getQueueSize: () => get().messageQueue.length,
   isQueueFull: () => get().messageQueue.length >= MAX_QUEUE_SIZE,
   startEditingQueue: () => {

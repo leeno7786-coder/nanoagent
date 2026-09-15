@@ -809,10 +809,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           pushAssistant(agent, 'Message queue is empty.', setMessages);
         } else {
           const list = queue
-            .map(
-              (msg, i) =>
-                `${i + 1}. ${msg.length > 60 ? msg.slice(0, 57) + '…' : msg}`
-            )
+            .map((msg, i) => `${i + 1}. ${msg.length > 60 ? msg.slice(0, 57) + '…' : msg}`)
             .join('\n');
           pushAssistant(
             agent,
