@@ -27,6 +27,7 @@ import type { SlashCommandContext } from './types.js';
 import { pushAssistant } from './utils.js';
 import { handlePermissionsCommand } from './permissions.js';
 import { handleMcpCommand, handleMcpAddCommand, handleMcpRemoveCommand } from './mcp.js';
+import { useAppStore } from '../app-store.js';
 import { formatUsageReport, hasKnownPrices } from '../../llm/cost.js';
 import { resolveToolResultTokenBudget } from '../../llm/tool-result-budget.js';
 
@@ -628,7 +629,13 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
     }
     case 'exit':
       if (agent) {
-        autoSaveSession(agent.messages, agent.todos, cfg.workspace, agent.cfg);
+        autoSaveSession(
+          agent.messages,
+          agent.todos,
+          cfg.workspace,
+          agent.cfg,
+          useAppStore.getState().messageQueue
+        );
         // Graceful shutdown (same as SIGINT): tear down MCP children etc.
         await agent.shutdown().catch(() => {});
       }
@@ -765,13 +772,45 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       if (sub === 'clear') {
         ctx.clearQueue();
         pushAssistant(agent, 'Message queue cleared.', setMessages);
+      } else if (sub === 'remove' || sub === 'rm') {
+        const numStr = args.split(' ')[1];
+        const num = parseInt(numStr, 10);
+        if (!numStr || isNaN(num) || num < 1) {
+          pushAssistant(
+            agent,
+            'Usage: `/queue remove <number>` — Remove a queued message by its number.',
+            setMessages
+          );
+          return;
+        }
+        const idx = num - 1;
+        const removed = useAppStore.getState().removeQueueMessage(idx);
+        if (removed) {
+          pushAssistant(agent, `Removed queued message #${num}.`, setMessages);
+        } else {
+          pushAssistant(
+            agent,
+            `No message at position #${num}. Use \`/queue\` to see the list.`,
+            setMessages
+          );
+        }
       } else if (sub === 'list' || sub === 'show' || sub === '') {
-        const queue = ctx.messageQueue;
+        const queue = useAppStore.getState().messageQueue;
         if (queue.length === 0) {
           pushAssistant(agent, 'Message queue is empty.', setMessages);
         } else {
           const list = queue
-            .map((msg, i) => `${i + 1}. ${msg.length > 60 ? msg.slice(0, 57) + '...' : msg}`)
+            .map(
+              (msg, i) =>
+                `${i + 1}. ${
+                  Array.from(msg).length > 60
+                    ? msg.slice(
+                        0,
+                        [...msg].reduce((acc, ch, idx) => (idx < 57 ? acc + ch.length : acc), 0)
+                      ) + '…'
+                    : msg
+                }`
+            )
             .join('\n');
           pushAssistant(
             agent,
@@ -782,7 +821,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       } else {
         pushAssistant(
           agent,
-          'Usage:\n  `/queue` — Show queued messages\n  `/queue clear` — Clear the queue',
+          'Usage:\n  `/queue` — Show queued messages\n  `/queue remove <N>` — Remove message at position N\n  `/queue clear` — Clear the queue',
           setMessages
         );
       }

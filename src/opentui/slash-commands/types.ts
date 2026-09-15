@@ -32,4 +32,5 @@ export interface SlashCommandContext {
   handleLoad: (session: Session) => Promise<void>;
   handleRename: (name: string) => void;
   clearQueue: () => void;
+  removeQueueMessage: (index: number) => boolean;
 }

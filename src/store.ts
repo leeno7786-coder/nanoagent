@@ -91,7 +91,8 @@ export function autoSaveSession(
   messages: Message[],
   todos: Todo[],
   workspace: string,
-  cfg?: Config
+  cfg?: Config,
+  messageQueue?: string[]
 ): string {
   ensureDir();
   const hash = hashWorkspace(workspace);
@@ -106,6 +107,7 @@ export function autoSaveSession(
     baseURL: cfg?.baseURL,
     provider: cfg?.provider,
     config: cfg ? buildConfigSnapshot(cfg) : undefined,
+    messageQueue: messageQueue && messageQueue.length > 0 ? messageQueue : undefined,
   };
   sessionStore(id).write(session);
   return id;

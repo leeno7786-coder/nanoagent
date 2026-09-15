@@ -85,6 +85,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const compactTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const drainingRef = useRef(false);
 
   // Resolve (or deny) a pending permission request so agent.run can never
   // hang waiting on an orphaned promise. Guarded: a throw inside a keyboard
@@ -157,6 +158,17 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     (globalThis as Record<string, unknown>)['__refreshSkills'] = handleSkillRefresh;
 
     const handleSigint = () => {
+      // Save queue state before shutdown (shutdownAgent's autoSaveSession
+      // doesn't have access to the TUI store).
+      if (agent.messages.length > 0 && agent.cfg.workspace) {
+        autoSaveSession(
+          agent.messages,
+          agent.todos,
+          agent.cfg.workspace,
+          agent.cfg,
+          store.getState().messageQueue
+        );
+      }
       agent.shutdown().catch(() => {});
     };
     process.on('SIGINT', handleSigint);
@@ -220,7 +232,13 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         compactTimerRef.current = null;
       }
       if (agent && agent.messages.length > 0) {
-        autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
+        autoSaveSession(
+          agent.messages,
+          agent.todos,
+          agent.cfg.workspace,
+          agent.cfg,
+          store.getState().messageQueue
+        );
       }
       delete (globalThis as Record<string, unknown>)['__refreshSkills'];
       delete (globalThis as Record<string, unknown>)['__questionToolNotify'];
@@ -258,16 +276,22 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   // Depends on messageQueue.length to drain messages added while idle.
   useEffect(() => {
     if (state !== 'idle') return;
+    if (drainingRef.current) return;
     const agent = agentRef.current;
     if (!agent) return;
     const next = store.getState().dequeueFirstMessage();
     if (!next) return;
+    drainingRef.current = true;
     // Small delay so the UI can show the idle state briefly before the next run.
     const timer = setTimeout(() => {
-      if (!agentRef.current) return;
+      if (!agentRef.current) {
+        drainingRef.current = false;
+        return;
+      }
       const ctrl = new AbortController();
       abortControllerRef.current = ctrl;
       agentRef.current.run(next, ctrl.signal).catch((err) => {
+        drainingRef.current = false;
         const isAborted =
           ctrl.signal.aborted ||
           (err instanceof Error &&
@@ -289,7 +313,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         }
       });
     }, 50);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      drainingRef.current = false;
+    };
   }, [state, messageQueue.length]);
 
   useEffect(() => {
@@ -324,6 +351,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         baseURL: agent.cfg.baseURL,
         provider: agent.cfg.provider,
         config: buildConfigSnapshot(agent.cfg),
+        messageQueue: store.getState().messageQueue,
       };
       saveSession(session);
     }, 3000);
@@ -478,6 +506,11 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     setToolResults([]);
     setCurrentSessionId(session.id);
 
+    // Restore queued messages from the session (if any).
+    if (session.messageQueue && session.messageQueue.length > 0) {
+      useAppStore.setState({ messageQueue: session.messageQueue });
+    }
+
     const restoredProvider = session.provider || savedConfig.provider || 'saved settings';
     agent.messages.push({
       id: Math.random().toString(36).slice(2, 10),
@@ -627,6 +660,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             handleLoad,
             handleRename,
             clearQueue: st.clearQueue,
+            removeQueueMessage: st.removeQueueMessage,
           });
           return;
         }
@@ -829,7 +863,13 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         }
         case 'exit':
           if (agent) {
-            autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
+            autoSaveSession(
+              agent.messages,
+              agent.todos,
+              agent.cfg.workspace,
+              agent.cfg,
+              store.getState().messageQueue
+            );
             agent
               .shutdown()
               .catch(() => {})
@@ -992,7 +1032,13 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       const agent = agentRef.current;
       keyEvent.preventDefault?.();
       if (agent) {
-        autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
+        autoSaveSession(
+          agent.messages,
+          agent.todos,
+          agent.cfg.workspace,
+          agent.cfg,
+          store.getState().messageQueue
+        );
         // Graceful shutdown (same as SIGINT): tear down MCP children etc.
         agent
           .shutdown()

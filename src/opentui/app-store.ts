@@ -66,8 +66,8 @@ interface AppState {
 
   /** Messages queued while the agent was busy. Drained automatically when idle. */
   messageQueue: string[];
-  /** Retry count for failed queued messages (message -> retry count). */
-  queueRetryCount: Map<string, number>;
+  /** Retry count for the most recently requeued message. */
+  queueRetryCount: number;
   /** Index of the queued message being edited (-1 = not editing). */
   editingQueueIndex: number;
 
@@ -110,6 +110,7 @@ interface AppState {
 
   enqueueMessage: (text: string) => boolean;
   dequeueFirstMessage: () => string | undefined;
+  removeQueueMessage: (index: number) => boolean;
   requeueMessage: (text: string) => boolean;
   clearQueue: () => void;
   getQueueSize: () => number;
@@ -154,7 +155,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   bangRun: null,
 
   messageQueue: [],
-  queueRetryCount: new Map(),
+  queueRetryCount: 0,
   editingQueueIndex: -1,
 
   sessions: [],
@@ -220,23 +221,35 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set({ messageQueue: rest });
     return first;
   },
+  removeQueueMessage: (index) => {
+    const st = get();
+    if (index < 0 || index >= st.messageQueue.length) return false;
+    const newQueue = [...st.messageQueue.slice(0, index), ...st.messageQueue.slice(index + 1)];
+    set({
+      messageQueue: newQueue,
+      editingQueueIndex:
+        st.editingQueueIndex >= index
+          ? Math.max(-1, st.editingQueueIndex - 1)
+          : st.editingQueueIndex,
+    });
+    return true;
+  },
   requeueMessage: (text) => {
     const st = get();
     if (st.messageQueue.length >= MAX_QUEUE_SIZE) {
       return false;
     }
-    const retries = st.queueRetryCount.get(text) ?? 0;
+    const retries = st.queueRetryCount;
     if (retries >= 3) {
       return false;
     }
-    st.queueRetryCount.set(text, retries + 1);
     set({
       messageQueue: [...st.messageQueue, text],
-      queueRetryCount: new Map(st.queueRetryCount),
+      queueRetryCount: retries + 1,
     });
     return true;
   },
-  clearQueue: () => set({ messageQueue: [], queueRetryCount: new Map(), editingQueueIndex: -1 }),
+  clearQueue: () => set({ messageQueue: [], queueRetryCount: 0, editingQueueIndex: -1 }),
   getQueueSize: () => get().messageQueue.length,
   isQueueFull: () => get().messageQueue.length >= MAX_QUEUE_SIZE,
   startEditingQueue: () => {

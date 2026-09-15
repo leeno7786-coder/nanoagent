@@ -490,6 +490,8 @@ export interface Session {
   provider?: string;
   /** Config snapshot for restoring exact settings. */
   config?: Partial<Config>;
+  /** Messages queued while the agent was busy (pending on restore). */
+  messageQueue?: string[];
 }
 
 /**

@@ -421,11 +421,11 @@ export function ChatScreen({
           keyEvent.preventDefault?.();
           return;
         }
-        // If already editing, move to older message
+        // If already editing, move to older message (lower index)
         if (editingQueueIndex >= 0) {
           const st = useAppStore.getState();
-          const newIndex = editingQueueIndex + 1;
-          if (newIndex < st.messageQueue.length) {
+          const newIndex = editingQueueIndex - 1;
+          if (newIndex >= 0) {
             editQueueMessage(editingQueueIndex, inputValue);
             useAppStore.setState({ editingQueueIndex: newIndex });
             setInputValue(st.messageQueue[newIndex]);
@@ -439,9 +439,9 @@ export function ChatScreen({
       if (keyEvent.name === 'down' || keyEvent.name === 'ArrowDown') {
         if (editingQueueIndex >= 0) {
           const st = useAppStore.getState();
-          const newIndex = editingQueueIndex - 1;
+          const newIndex = editingQueueIndex + 1;
           editQueueMessage(editingQueueIndex, inputValue);
-          if (newIndex >= 0) {
+          if (newIndex < st.messageQueue.length) {
             useAppStore.setState({ editingQueueIndex: newIndex });
             setInputValue(st.messageQueue[newIndex]);
           } else {
@@ -662,7 +662,7 @@ export function ChatScreen({
             busy
               ? 'Working…'
               : editingQueueIndex >= 0
-                ? `Editing queued message (${editingQueueIndex + 1}/${messageQueue.length})…`
+                ? `Editing queued message (${messageQueue.length - editingQueueIndex}/${messageQueue.length})…`
                 : 'Type a message or / for commands…'
           }
           value={inputValue}
@@ -696,7 +696,12 @@ export function ChatScreen({
                 {i === editingQueueIndex ? '✎ ' : '  '}
               </text>
               <text fg={i === editingQueueIndex ? theme.headerFg : theme.mutedFg} wrapMode="word">
-                {text.length > 50 ? text.slice(0, 47) + '...' : text}
+                {Array.from(text).length > 50
+                  ? text.slice(
+                      0,
+                      [...text].reduce((acc, ch, idx) => (idx < 50 ? acc + ch.length : acc), 0)
+                    ) + '…'
+                  : text}
               </text>
             </box>
           ))}
