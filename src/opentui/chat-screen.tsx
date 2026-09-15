@@ -641,6 +641,32 @@ export function ChatScreen({
         </box>
       )}
 
+      {/* Queued messages — user messages typed while the agent was busy. */}
+      {messageQueue.length > 0 && (
+        <box
+          flexDirection="column"
+          paddingX={2}
+          paddingY={0}
+          flexShrink={0}
+          backgroundColor={theme.bgPanel}
+        >
+          <text fg={theme.statusThinking}>
+            ◷ {messageQueue.length} message{messageQueue.length === 1 ? '' : 's'} queued
+            {editingQueueIndex >= 0 ? ' (↑/↓ to navigate, Esc to save)' : ' (↑ to edit)'}
+          </text>
+          {messageQueue.map((text, i) => (
+            <box key={i} flexDirection="row">
+              <text fg={i === editingQueueIndex ? theme.warningFg || theme.userFg : theme.mutedFg}>
+                {i === editingQueueIndex ? '✎ ' : '  '}
+              </text>
+              <text fg={i === editingQueueIndex ? theme.headerFg : theme.mutedFg} wrapMode="word">
+                {text.length > 60 ? text.slice(0, 57) + '…' : text}
+              </text>
+            </box>
+          ))}
+        </box>
+      )}
+
       <box
         flexDirection="row"
         paddingX={2}
@@ -676,32 +702,6 @@ export function ChatScreen({
           </text>
         </box>
       </box>
-
-      {/* Queued messages — user messages typed while the agent was busy. */}
-      {messageQueue.length > 0 && (
-        <box
-          flexDirection="column"
-          paddingX={2}
-          paddingY={0}
-          flexShrink={0}
-          backgroundColor={theme.bgPanel}
-        >
-          <text fg={theme.statusThinking}>
-            ◷ {messageQueue.length} message{messageQueue.length === 1 ? '' : 's'} queued
-            {editingQueueIndex >= 0 ? ' (↑/↓ to navigate, Esc to save)' : ' (↑ to edit)'}
-          </text>
-          {messageQueue.map((text, i) => (
-            <box key={i} flexDirection="row">
-              <text fg={i === editingQueueIndex ? theme.warningFg || theme.userFg : theme.mutedFg}>
-                {i === editingQueueIndex ? '✎ ' : '  '}
-              </text>
-              <text fg={i === editingQueueIndex ? theme.headerFg : theme.mutedFg} wrapMode="word">
-                {text.length > 60 ? text.slice(0, 57) + '…' : text}
-              </text>
-            </box>
-          ))}
-        </box>
-      )}
     </box>
   );
 }

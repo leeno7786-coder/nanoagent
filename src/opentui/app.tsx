@@ -270,20 +270,23 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     }
   }, [state]);
 
-  // Auto-drain message queue: when the agent finishes (state → idle), send the
-  // next queued message automatically. This mirrors Claude Code's behavior where
-  // messages typed during a run are processed in order once the agent is free.
-  // Depends on messageQueue.length to drain messages added while idle.
-  useEffect(() => {
-    if (state !== 'idle') return;
+  // Drain the message queue: send the next queued message when the agent is idle.
+  // Called directly from enqueue (when idle), ESC/Ctrl+D (after abort), and
+  // after each queued run completes — NOT via a useEffect, which races with
+  // React's cleanup/re-render cycle and silently drops messages.
+  const drainQueue = useCallback(() => {
     if (drainingRef.current) return;
     const agent = agentRef.current;
     if (!agent) return;
-    const next = store.getState().dequeueFirstMessage();
+    const st = store.getState();
+    const agentState = st.state;
+    if (agentState !== 'idle' && agentState !== 'error' && agentState !== 'waiting_for_user')
+      return;
+    const next = st.dequeueFirstMessage();
     if (!next) return;
     drainingRef.current = true;
     // Small delay so the UI can show the idle state briefly before the next run.
-    const timer = setTimeout(() => {
+    setTimeout(() => {
       if (!agentRef.current) {
         drainingRef.current = false;
         return;
@@ -300,7 +303,6 @@ export function App({ renderer }: { renderer: CliRenderer }) {
                 err.message === 'Aborted' ||
                 err.message.toLowerCase().includes('abort')));
           if (!isAborted && agentRef.current) {
-            // Requeue the failed message so it isn't silently lost.
             store.getState().requeueMessage(next);
             agentRef.current.messages.push({
               id: Math.random().toString(36).slice(2, 10),
@@ -317,13 +319,11 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         })
         .finally(() => {
           drainingRef.current = false;
+          // Chain: process the next queued message if any.
+          drainQueue();
         });
     }, 50);
-    return () => {
-      clearTimeout(timer);
-      drainingRef.current = false;
-    };
-  }, [state, messageQueue.length]);
+  }, []);
 
   useEffect(() => {
     compactTimerRef.current = setInterval(() => {
@@ -698,8 +698,10 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           store.getState().syncFromAgent(agent);
         }
       }
+      // Process next queued message after this run finishes.
+      drainQueue();
     },
-    [state, handleSave, resolvePendingPermission]
+    [state, handleSave, resolvePendingPermission, drainQueue]
   );
 
   const closeOverlay = useCallback(() => setOverlay(null), []);
@@ -717,13 +719,19 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     setSkillCommands(getSkillCommands(loaded, { includeDisabled: true }));
   }, []);
 
-  const handleSkillSelect = useCallback((skillName: string) => {
-    setOverlay(null);
-    const skill = getSkill(skillName);
-    if (skill && agentRef.current) {
-      agentRef.current.run(`/skill-load ${skill.name}`).catch(console.error);
-    }
-  }, []);
+  const handleSkillSelect = useCallback(
+    (skillName: string) => {
+      setOverlay(null);
+      const skill = getSkill(skillName);
+      if (skill && agentRef.current) {
+        agentRef.current
+          .run(`/skill-load ${skill.name}`)
+          .catch(console.error)
+          .finally(() => drainQueue());
+      }
+    },
+    [drainQueue]
+  );
 
   const handleConnectSelect = useCallback(
     async (
@@ -928,6 +936,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         resolvePendingPermission('deny');
         abortControllerRef.current?.abort();
         agentRef.current?.setState('idle');
+        // Immediately process queued message after interrupt.
+        drainQueue();
       }
       keyEvent.preventDefault?.();
       return;
@@ -998,6 +1008,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       if (busy) {
         abortControllerRef.current?.abort();
         agentRef.current?.setState('idle');
+        // Immediately process queued message after interrupt.
+        drainQueue();
       } else if (st.selectedMessageIndex !== null) {
         st.setSelectedMessageIndex(null);
       }
