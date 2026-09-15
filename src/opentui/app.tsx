@@ -64,6 +64,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const selectedMessageIndex = useAppStore((s) => s.selectedMessageIndex);
   const pendingPermissionReq = useAppStore((s) => s.pendingPermissionReq);
   const elapsedMs = useAppStore((s) => s.elapsedMs);
+  const messageQueue = useAppStore((s) => s.messageQueue);
   const skills = useAppStore((s) => s.skills);
 
   const {
@@ -250,6 +251,46 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       }, 500);
     }
   }, [state]);
+
+  // Auto-drain message queue: when the agent finishes (state → idle), send the
+  // next queued message automatically. This mirrors Claude Code's behavior where
+  // messages typed during a run are processed in order once the agent is free.
+  // Depends on messageQueue.length to drain messages added while idle.
+  useEffect(() => {
+    if (state !== 'idle') return;
+    const agent = agentRef.current;
+    if (!agent) return;
+    const next = store.getState().dequeueFirstMessage();
+    if (!next) return;
+    // Small delay so the UI can show the idle state briefly before the next run.
+    const timer = setTimeout(() => {
+      if (!agentRef.current) return;
+      const ctrl = new AbortController();
+      abortControllerRef.current = ctrl;
+      agentRef.current.run(next, ctrl.signal).catch((err) => {
+        const isAborted =
+          ctrl.signal.aborted ||
+          (err instanceof Error &&
+            (err.name === 'AbortError' ||
+              err.message === 'Aborted' ||
+              err.message.toLowerCase().includes('abort')));
+        if (!isAborted && agentRef.current) {
+          agentRef.current.messages.push({
+            id: Math.random().toString(36).slice(2, 10),
+            role: 'assistant',
+            content: `Command error: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: Date.now(),
+          });
+          agentRef.current.setState('idle');
+          store.getState().syncFromAgent(agentRef.current);
+        } else if (isAborted && agentRef.current) {
+          agentRef.current.setState('idle');
+          store.getState().syncFromAgent(agentRef.current);
+        }
+      });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [state, messageQueue.length]);
 
   useEffect(() => {
     compactTimerRef.current = setInterval(() => {
@@ -521,9 +562,19 @@ export function App({ renderer }: { renderer: CliRenderer }) {
 
       const isSlash = text.startsWith('/');
       // Slash commands must work even after errors / while waiting for permission.
-      // Regular chat still waits for a ready state.
+      // Regular chat: if the agent is busy, enqueue the message instead of dropping it.
       const ready = state === 'idle' || state === 'error' || state === 'waiting_for_user';
-      if (!isSlash && !ready) return;
+      if (!isSlash && !ready) {
+        const enqueued = store.getState().enqueueMessage(text);
+        if (!enqueued) {
+          addNoticeMessage(
+            agent,
+            `Message queue full (${store.getState().getQueueSize()} messages). Wait for the agent to finish or press Escape to clear the queue.`
+          );
+        }
+        store.getState().syncFromAgent(agent);
+        return;
+      }
 
       // Only interrupt the agent when the command actually needs to: resolve a
       // pending permission prompt, or abort a busy run when the command will
@@ -562,6 +613,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             cfg: agent.cfg,
             todos: st.todos,
             skills: st.skills,
+            messageQueue: st.messageQueue,
             setMessages: st.setMessages,
             setToolResults: st.setToolResults,
             setTodos: st.setTodos,
@@ -574,6 +626,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             handleSave,
             handleLoad,
             handleRename,
+            clearQueue: st.clearQueue,
           });
           return;
         }
@@ -1128,6 +1181,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
               selectedMessageIndex={selectedMessageIndex}
               todos={todos}
               workspace={agentRef.current?.cfg.workspace || process.cwd()}
+              messageQueue={messageQueue}
             />
           </box>
         </box>

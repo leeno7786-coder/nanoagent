@@ -18,6 +18,7 @@ export interface SlashCommandContext {
   cfg: Config;
   todos: Todo[];
   skills: Map<string, Skill>;
+  messageQueue: string[];
   setMessages: (msgs: Message[]) => void;
   setToolResults: (r: ToolResult[]) => void;
   setTodos: (t: Todo[]) => void;
@@ -30,4 +31,5 @@ export interface SlashCommandContext {
   handleSave: () => void;
   handleLoad: (session: Session) => Promise<void>;
   handleRename: (name: string) => void;
+  clearQueue: () => void;
 }

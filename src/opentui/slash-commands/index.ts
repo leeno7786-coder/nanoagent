@@ -760,6 +760,34 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
     case 'permissions':
       await handlePermissionsCommand(args, ctx);
       return;
+    case 'queue': {
+      const sub = args.split(' ')[0].toLowerCase();
+      if (sub === 'clear') {
+        ctx.clearQueue();
+        pushAssistant(agent, 'Message queue cleared.', setMessages);
+      } else if (sub === 'list' || sub === 'show' || sub === '') {
+        const queue = ctx.messageQueue;
+        if (queue.length === 0) {
+          pushAssistant(agent, 'Message queue is empty.', setMessages);
+        } else {
+          const list = queue
+            .map((msg, i) => `${i + 1}. ${msg.length > 60 ? msg.slice(0, 57) + '...' : msg}`)
+            .join('\n');
+          pushAssistant(
+            agent,
+            `**Message Queue** (${queue.length} messages):\n\n${list}`,
+            setMessages
+          );
+        }
+      } else {
+        pushAssistant(
+          agent,
+          'Usage:\n  `/queue` — Show queued messages\n  `/queue clear` — Clear the queue',
+          setMessages
+        );
+      }
+      return;
+    }
     default: {
       const cleanSkillName = command.replace(/^skill:/, '');
       const targetSkill =

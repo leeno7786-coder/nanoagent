@@ -28,6 +28,9 @@ type Overlay =
 
 const PERMISSION_MODES: PermissionMode[] = ['read_only', 'ask', 'allow_edits', 'always_allow'];
 
+/** Maximum number of messages that can be queued while the agent is busy. */
+const MAX_QUEUE_SIZE = 20;
+
 interface AppState {
   overlay: Overlay;
   showPermissionMode: boolean;
@@ -60,6 +63,13 @@ interface AppState {
    * the exchange is recorded into the message history and this clears.
    */
   bangRun: { command: string; output: string; startedAt: number } | null;
+
+  /** Messages queued while the agent was busy. Drained automatically when idle. */
+  messageQueue: string[];
+  /** Retry count for failed queued messages (message -> retry count). */
+  queueRetryCount: Map<string, number>;
+  /** Index of the queued message being edited (-1 = not editing). */
+  editingQueueIndex: number;
 
   sessions: Session[];
   currentSessionId: string | null;
@@ -98,6 +108,17 @@ interface AppState {
   appendBangOutput: (chunk: string) => void;
   endBangRun: () => void;
 
+  enqueueMessage: (text: string) => boolean;
+  dequeueFirstMessage: () => string | undefined;
+  requeueMessage: (text: string) => boolean;
+  clearQueue: () => void;
+  getQueueSize: () => number;
+  isQueueFull: () => boolean;
+  startEditingQueue: () => void;
+  editQueueMessage: (index: number, newText: string) => void;
+  cancelEditingQueue: () => void;
+  getEditingQueueMessage: () => string | null;
+
   setSessions: (s: Session[]) => void;
   setCurrentSessionId: (id: string | null) => void;
 
@@ -131,6 +152,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
   contextUsage: undefined,
   subAgents: [],
   bangRun: null,
+
+  messageQueue: [],
+  queueRetryCount: new Map(),
+  editingQueueIndex: -1,
 
   sessions: [],
   currentSessionId: null,
@@ -179,6 +204,59 @@ export const useAppStore = create<AppState>()((set, get) => ({
       return { bangRun: { ...st.bangRun, output } };
     }),
   endBangRun: () => set({ bangRun: null }),
+
+  enqueueMessage: (text) => {
+    const st = get();
+    if (st.messageQueue.length >= MAX_QUEUE_SIZE) {
+      return false;
+    }
+    set({ messageQueue: [...st.messageQueue, text] });
+    return true;
+  },
+  dequeueFirstMessage: () => {
+    const queue = get().messageQueue;
+    if (queue.length === 0) return undefined;
+    const [first, ...rest] = queue;
+    set({ messageQueue: rest });
+    return first;
+  },
+  requeueMessage: (text) => {
+    const st = get();
+    if (st.messageQueue.length >= MAX_QUEUE_SIZE) {
+      return false;
+    }
+    const retries = st.queueRetryCount.get(text) ?? 0;
+    if (retries >= 3) {
+      return false;
+    }
+    st.queueRetryCount.set(text, retries + 1);
+    set({
+      messageQueue: [...st.messageQueue, text],
+      queueRetryCount: new Map(st.queueRetryCount),
+    });
+    return true;
+  },
+  clearQueue: () => set({ messageQueue: [], queueRetryCount: new Map(), editingQueueIndex: -1 }),
+  getQueueSize: () => get().messageQueue.length,
+  isQueueFull: () => get().messageQueue.length >= MAX_QUEUE_SIZE,
+  startEditingQueue: () => {
+    const st = get();
+    if (st.messageQueue.length === 0) return;
+    set({ editingQueueIndex: st.messageQueue.length - 1 });
+  },
+  editQueueMessage: (index, newText) => {
+    const st = get();
+    if (index < 0 || index >= st.messageQueue.length) return;
+    const newQueue = [...st.messageQueue];
+    newQueue[index] = newText;
+    set({ messageQueue: newQueue });
+  },
+  cancelEditingQueue: () => set({ editingQueueIndex: -1 }),
+  getEditingQueueMessage: () => {
+    const st = get();
+    if (st.editingQueueIndex < 0 || st.editingQueueIndex >= st.messageQueue.length) return null;
+    return st.messageQueue[st.editingQueueIndex];
+  },
 
   setMessages: (m) => set({ messages: m }),
   setState: (s) => set({ state: s }),

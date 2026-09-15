@@ -36,6 +36,8 @@ interface ChatScreenProps {
   onSubmit: (text: string) => void;
   selectedMessageIndex?: number | null;
   todos?: Array<{ id: string; text: string; done: boolean }>;
+  /** Messages queued while the agent was busy. */
+  messageQueue?: string[];
 }
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -301,6 +303,7 @@ export function ChatScreen({
   selectedMessageIndex = null,
   todos = [],
   workspace,
+  messageQueue = [],
 }: ChatScreenProps) {
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef<ScrollBoxRenderable>(null);
@@ -308,6 +311,10 @@ export function ChatScreen({
   const busy = state !== 'idle' && state !== 'error' && state !== 'waiting_for_user';
   const permissionMode = useAppStore((s) => s.permissionMode);
   const permCfg = PERM_CONFIG[permissionMode] ?? PERM_CONFIG.ask;
+  const editingQueueIndex = useAppStore((s) => s.editingQueueIndex);
+  const startEditingQueue = useAppStore((s) => s.startEditingQueue);
+  const editQueueMessage = useAppStore((s) => s.editQueueMessage);
+  const cancelEditingQueue = useAppStore((s) => s.cancelEditingQueue);
 
   // Live `!` command run — terminal-style streaming block above the input.
   const skillCommands = useAppStore((s) => s.skillCommands);
@@ -404,6 +411,58 @@ export function ChatScreen({
         }
         return;
       }
+
+      // Up arrow: enter edit mode for queued messages when input is empty
+      if (keyEvent.name === 'up' || keyEvent.name === 'ArrowUp') {
+        if (inputValue === '' && messageQueue.length > 0) {
+          startEditingQueue();
+          const msg = useAppStore.getState().getEditingQueueMessage();
+          if (msg) setInputValue(msg);
+          keyEvent.preventDefault?.();
+          return;
+        }
+        // If already editing, move to older message
+        if (editingQueueIndex >= 0) {
+          const st = useAppStore.getState();
+          const newIndex = editingQueueIndex + 1;
+          if (newIndex < st.messageQueue.length) {
+            editQueueMessage(editingQueueIndex, inputValue);
+            useAppStore.setState({ editingQueueIndex: newIndex });
+            setInputValue(st.messageQueue[newIndex]);
+          }
+          keyEvent.preventDefault?.();
+          return;
+        }
+      }
+
+      // Down arrow: navigate to newer message or exit edit mode
+      if (keyEvent.name === 'down' || keyEvent.name === 'ArrowDown') {
+        if (editingQueueIndex >= 0) {
+          const st = useAppStore.getState();
+          const newIndex = editingQueueIndex - 1;
+          editQueueMessage(editingQueueIndex, inputValue);
+          if (newIndex >= 0) {
+            useAppStore.setState({ editingQueueIndex: newIndex });
+            setInputValue(st.messageQueue[newIndex]);
+          } else {
+            cancelEditingQueue();
+            setInputValue('');
+          }
+          keyEvent.preventDefault?.();
+          return;
+        }
+      }
+
+      // Escape: exit edit mode
+      if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
+        if (editingQueueIndex >= 0) {
+          editQueueMessage(editingQueueIndex, inputValue);
+          cancelEditingQueue();
+          setInputValue('');
+          keyEvent.preventDefault?.();
+          return;
+        }
+      }
     },
     { release: false }
   );
@@ -412,6 +471,15 @@ export function ChatScreen({
     (value: string) => {
       const v = value.trim();
       if (!v) return;
+
+      // If editing a queued message, save the edit and exit edit mode
+      if (editingQueueIndex >= 0) {
+        editQueueMessage(editingQueueIndex, v);
+        cancelEditingQueue();
+        setTimeout(() => setInputValue(''), 0);
+        return;
+      }
+
       // Deduplicate when both CommandDropdown and <input onSubmit> fire Enter.
       const now = Date.now();
       const prev = lastSubmitRef.current;
@@ -420,7 +488,7 @@ export function ChatScreen({
       setTimeout(() => setInputValue(''), 0);
       onSubmit(v);
     },
-    [onSubmit]
+    [onSubmit, editingQueueIndex, editQueueMessage, cancelEditingQueue]
   );
 
   const handleDropdownPick = useCallback(
@@ -578,15 +646,25 @@ export function ChatScreen({
         paddingX={2}
         paddingY={0}
         borderStyle="single"
-        borderColor={theme.borderColor}
+        borderColor={
+          editingQueueIndex >= 0 ? theme.warningBorder || theme.borderColor : theme.borderColor
+        }
         height={3}
         flexShrink={0}
         backgroundColor={theme.bgPanel}
       >
-        <text fg={theme.inputFg}>▶ </text>
+        <text fg={editingQueueIndex >= 0 ? theme.warningFg || theme.inputFg : theme.inputFg}>
+          {editingQueueIndex >= 0 ? '✎ ' : '▶ '}
+        </text>
         <input
           flexGrow={1}
-          placeholder={busy ? 'Working…' : 'Type a message or / for commands…'}
+          placeholder={
+            busy
+              ? 'Working…'
+              : editingQueueIndex >= 0
+                ? `Editing queued message (${editingQueueIndex + 1}/${messageQueue.length})…`
+                : 'Type a message or / for commands…'
+          }
           value={inputValue}
           onInput={setInputValue}
           onSubmit={handleInputSubmit}
@@ -598,6 +676,32 @@ export function ChatScreen({
           </text>
         </box>
       </box>
+
+      {/* Queued messages — user messages typed while the agent was busy. */}
+      {messageQueue.length > 0 && (
+        <box
+          flexDirection="column"
+          paddingX={2}
+          paddingY={0}
+          flexShrink={0}
+          backgroundColor={theme.bgPanel}
+        >
+          <text fg={theme.statusThinking}>
+            ◷ {messageQueue.length} message{messageQueue.length === 1 ? '' : 's'} queued
+            {editingQueueIndex >= 0 ? ' (↑/↓ to navigate, Esc to save)' : ' (↑ to edit)'}
+          </text>
+          {messageQueue.map((text, i) => (
+            <box key={i} flexDirection="row">
+              <text fg={i === editingQueueIndex ? theme.warningFg || theme.userFg : theme.mutedFg}>
+                {i === editingQueueIndex ? '✎ ' : '  '}
+              </text>
+              <text fg={i === editingQueueIndex ? theme.headerFg : theme.mutedFg} wrapMode="word">
+                {text.length > 50 ? text.slice(0, 47) + '...' : text}
+              </text>
+            </box>
+          ))}
+        </box>
+      )}
     </box>
   );
 }
