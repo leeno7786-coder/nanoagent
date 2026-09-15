@@ -147,6 +147,13 @@ export interface Config {
   promptPricePerMillion?: number;
   /** Manual USD per 1M completion tokens (file wins over env; never invented). */
   completionPricePerMillion?: number;
+  /**
+   * Tool-choice strategy sent to the LLM: `'auto'` (model decides, default),
+   * `'any'` (force at least one tool call), `'none'` (suppress tools), or
+   * a specific function name string.  Useful for models like Codestral that
+   * opt out of tool calling with `'auto'`.
+   */
+  toolChoice?: 'auto' | 'any' | 'none' | string;
   /** Enable tool execution caching (default: true). */
   toolCacheEnabled?: boolean;
   /** TTL for tool cache entries in milliseconds (default: 30000). */

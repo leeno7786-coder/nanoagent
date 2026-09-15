@@ -40,6 +40,7 @@ const CATALOG_KEYS = [
   'contextSummaryReservedPercent',
   'contextKeepCount',
   'contextMaxHistoryTokens',
+  'toolChoice',
   'toolCacheEnabled',
   'toolCacheTtlMs',
   'toolCacheMaxSize',

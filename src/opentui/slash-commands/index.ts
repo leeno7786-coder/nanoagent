@@ -505,6 +505,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           ...(currentCfg.supportsTools !== undefined
             ? [`- **Supports tools**: \`${currentCfg.supportsTools}\``]
             : []),
+          `- **Tool choice**: \`${currentCfg.toolChoice ?? 'auto'}\``,
           ...(currentCfg.supportsThinking !== undefined
             ? [`- **Supports thinking**: \`${currentCfg.supportsThinking}\``]
             : []),

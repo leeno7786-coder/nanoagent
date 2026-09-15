@@ -33,6 +33,7 @@ export interface DoctorReport {
   completion_price_per_million?: number;
   model_runtime_source?: string;
   supports_tools?: boolean;
+  tool_choice?: string;
   supports_thinking?: boolean;
   supports_prompt_cache?: boolean;
   prompt_cache?: boolean;
@@ -84,6 +85,7 @@ export async function getDoctorReport(cfg?: Config): Promise<DoctorReport> {
     completion_price_per_million: enriched.completionPricePerMillion,
     ...(enriched.modelRuntimeSource ? { model_runtime_source: enriched.modelRuntimeSource } : {}),
     ...(enriched.supportsTools !== undefined ? { supports_tools: enriched.supportsTools } : {}),
+    ...(c.toolChoice !== undefined ? { tool_choice: c.toolChoice } : {}),
     ...(enriched.supportsThinking !== undefined
       ? { supports_thinking: enriched.supportsThinking }
       : {}),
@@ -142,6 +144,9 @@ export function formatDoctorReport(report: DoctorReport): string {
   }
   if (report.supports_tools !== undefined) {
     lines.push(`supports_tools: ${report.supports_tools}`);
+  }
+  if (report.tool_choice !== undefined) {
+    lines.push(`tool_choice: ${report.tool_choice}`);
   }
   if (report.supports_thinking !== undefined) {
     lines.push(`supports_thinking: ${report.supports_thinking}`);

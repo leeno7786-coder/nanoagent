@@ -34,6 +34,7 @@ export type SettingsKey =
   | 'toolCacheTtlMs'
   | 'toolCacheMaxSize'
   | 'commandTimeoutSeconds'
+  | 'toolChoice'
   | 'subAgentModel'
   | 'subAgentBaseURL'
   | 'maxBackgroundSubAgents'
@@ -95,6 +96,7 @@ const SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
   {
     title: 'Tools',
     rows: [
+      { key: 'toolChoice', label: 'Tool choice', mode: 'cycle' },
       { key: 'toolCacheEnabled', label: 'Tool cache', mode: 'cycle' },
       { key: 'toolCacheTtlMs', label: 'Cache TTL ms', mode: 'edit' },
       { key: 'toolCacheMaxSize', label: 'Cache size', mode: 'edit' },
@@ -155,6 +157,7 @@ export function nextSelectableIndex(
 }
 
 const PERMISSION_MODES = ['read_only', 'ask', 'allow_edits', 'always_allow'] as const;
+const TOOL_CHOICE_MODES = ['auto', 'any', 'none'] as const;
 const BOOLEAN_KEYS = new Set<SettingsKey>([
   'promptCache',
   'smallModelMode',
@@ -168,6 +171,7 @@ export function displaySettingsValue(key: SettingsKey, cfg: Config): string {
   if (value === undefined) {
     if (key === 'promptCache') return 'auto';
     if (key === 'effort') return DEFAULT_EFFORT;
+    if (key === 'toolChoice') return 'auto';
     return 'unset';
   }
   if (typeof value === 'boolean') {
@@ -183,6 +187,12 @@ export function cycleSettingsValue(
 ): Config[SettingsKey] {
   if (key === 'effort') {
     return cycleEffort(parseEffort(current) ?? DEFAULT_EFFORT, delta);
+  }
+  if (key === 'toolChoice') {
+    const found =
+      typeof current === 'string' ? TOOL_CHOICE_MODES.findIndex((m) => m === current) : -1;
+    const index = found >= 0 ? found : TOOL_CHOICE_MODES.indexOf('auto');
+    return TOOL_CHOICE_MODES[(index + delta + TOOL_CHOICE_MODES.length) % TOOL_CHOICE_MODES.length];
   }
   if (key === 'permissionMode') {
     const found =

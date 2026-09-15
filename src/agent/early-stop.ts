@@ -19,7 +19,7 @@ const CHECKIN_PATTERNS: RegExp[] = [
 
 /** User-role nudge injected into history (hidden in the TUI via nudge- id). */
 export const EARLY_STOP_CONTINUE_NUDGE =
-  'Continue the task now. Do not ask clarifying questions — pick a reasonable default scope, keep using tools, and deliver findings or completed work. Only stop when the objective is done.';
+  'Continue the task now. Do not ask clarifying questions in prose — use the question tool if you need user input, otherwise pick a reasonable default scope, keep using tools, and deliver findings or completed work. Only stop when the objective is done.';
 
 /**
  * True when assistant text looks like a check-in / clarifying question rather

@@ -105,7 +105,7 @@ export function buildChatCompletionsParams(
   const params: Record<string, unknown> = {
     model: cfg.model,
     messages: flattenChatMessages(messages),
-    tool_choice: tools?.length ? 'auto' : undefined,
+    tool_choice: tools?.length ? (cfg.toolChoice ?? 'auto') : undefined,
   };
   if (reasoningChat) {
     params.max_completion_tokens = maxOut;

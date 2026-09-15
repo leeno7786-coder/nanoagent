@@ -44,6 +44,7 @@ import {
 } from './graph-tools.js';
 import { manageTodosTool, exploreSubagentTool } from './misc-tools.js';
 import { manageMcpTool } from './mcp-manage.js';
+import { questionTool } from './question-tool.js';
 
 /** Shorter tool descriptions for ≤8B models (full params stay in JSON schema). */
 export const SMALL_TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -63,6 +64,7 @@ export const SMALL_TOOL_DESCRIPTIONS: Record<string, string> = {
   change_workspace: 'Change working directory.',
   manage_todos: 'add | complete | remove | list subtasks.',
   manage_mcp: 'add | remove | list MCP servers in the global config.',
+  question: 'Ask the user a question with options to choose from.',
   // Short descriptions for tools excluded from small models (kept for reference)
   grep_search: 'Search text patterns across files.',
   map_project_tree: 'Project structure tree.',
@@ -112,6 +114,7 @@ export const tools: Tool[] = [
   getSurprisingConnectionsTool,
   getAnalysisReportTool,
   exploreSubagentTool,
+  questionTool,
 ];
 
 // Tools excluded for ≤8B models — fewer choices, less wrong-tool drift
@@ -171,6 +174,7 @@ export const SEQUENTIAL_ONLY_TOOLS = new Set([
   'change_workspace',
   'manage_todos',
   'manage_mcp',
+  'question',
   'write_file',
   // Graph build is expensive and mutates state
   'build_memory_graph',

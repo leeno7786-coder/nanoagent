@@ -522,6 +522,10 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   ) {
     cfg.toolCacheEnabled = false;
   }
+  if (cfg.toolChoice === undefined) {
+    const raw = process.env.QWEN_TOOL_CHOICE;
+    if (raw === 'auto' || raw === 'any' || raw === 'none') cfg.toolChoice = raw;
+  }
   if (cfg.promptCache === undefined) {
     const raw = process.env.QWEN_PROMPT_CACHE;
     if (raw === '0' || raw === 'false') cfg.promptCache = false;

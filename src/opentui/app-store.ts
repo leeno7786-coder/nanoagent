@@ -16,7 +16,15 @@ import type { AgentCore } from '../agent.js';
 import { contextUsageFromStats, type ContextUsageSnapshot } from './token-display.js';
 
 type Overlay =
-  'help' | 'history' | 'skills' | 'connect' | 'settings' | 'palette' | 'permission-mode' | null;
+  | 'help'
+  | 'history'
+  | 'skills'
+  | 'connect'
+  | 'settings'
+  | 'palette'
+  | 'permission-mode'
+  | 'question'
+  | null;
 
 const PERMISSION_MODES: PermissionMode[] = ['read_only', 'ask', 'allow_edits', 'always_allow'];
 

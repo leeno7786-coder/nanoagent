@@ -21,6 +21,7 @@ import { SkillsOverlay } from './skills-overlay.js';
 import { ConnectOverlay } from './connect-overlay.js';
 import { CommandPalette } from './command-palette.js';
 import { SettingsOverlay } from './settings-overlay.js';
+import { QuestionOverlay } from './question-overlay.js';
 import { StatusBar } from './status-bar.js';
 import { TodoSidebar } from './todo-sidebar.js';
 import { THEMES, DEFAULT_THEME } from './theme.js';
@@ -112,6 +113,14 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       return new Promise<'allow' | 'always_allow' | 'deny'>((resolve) => {
         store.getState().setPermissionResolver(resolve);
       });
+    };
+
+    // Wire the question tool: when the agent calls `question`, open the overlay
+    // and return a Promise that resolves when the user answers.
+    (globalThis as Record<string, unknown>)['__questionToolNotify'] = () => {
+      store.getState().setOverlay('question');
+      // The resolver is already set by question-tool.ts executeAsync;
+      // the QuestionOverlay will call resolveQuestion() when the user submits.
     };
     // Assign before init so slash commands work while MCP (e.g. Serena) connects.
     // Gate onUpdate until init finishes so partial MCP/tool state doesn't thrash the UI.
@@ -213,6 +222,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         autoSaveSession(agent.messages, agent.todos, agent.cfg.workspace, agent.cfg);
       }
       delete (globalThis as Record<string, unknown>)['__refreshSkills'];
+      delete (globalThis as Record<string, unknown>)['__questionToolNotify'];
     };
   }, [resolvePendingPermission]);
 
@@ -869,7 +879,9 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     }
 
     if (st.overlay) {
-      if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
+      // Let the question overlay handle its own Escape (it calls cancelQuestion
+      // before closing). Other overlays are closed here.
+      if ((keyEvent.name === 'escape' || keyEvent.name === 'Escape') && st.overlay !== 'question') {
         st.setOverlay(null);
         keyEvent.preventDefault?.();
       }
@@ -1043,6 +1055,15 @@ export function App({ renderer }: { renderer: CliRenderer }) {
             onClose={closeOverlay}
             onThemeChange={(next) => useAppStore.getState().setTheme(next)}
           />
+        </box>
+      </ErrorBoundary>
+    );
+  }
+  if (overlay === 'question') {
+    return (
+      <ErrorBoundary theme={theme}>
+        <box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
+          <QuestionOverlay theme={theme} onClose={closeOverlay} />
         </box>
       </ErrorBoundary>
     );

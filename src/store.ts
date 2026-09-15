@@ -41,6 +41,7 @@ export function buildConfigSnapshot(cfg: Config): Partial<Config> {
     maxConcurrentLlmRequests: cfg.maxConcurrentLlmRequests,
     maxTokensPerMinute: cfg.maxTokensPerMinute,
     maxToolResultTokens: cfg.maxToolResultTokens,
+    toolChoice: cfg.toolChoice,
     workspace: cfg.workspace,
     permissionMode: cfg.permissionMode,
     permissionRules: cfg.permissionRules,
