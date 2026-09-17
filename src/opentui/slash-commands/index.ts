@@ -8,13 +8,7 @@ import {
 import { parseEffort, formatEffortAllowed, DEFAULT_EFFORT } from '../../config/effort.js';
 import { getDoctorReport, formatDoctorReport } from '../../cli/reports.js';
 import { buildModelCatalog, formatModelCatalog } from '../../providers/index.js';
-import {
-  autoSaveSession,
-  loadSessions,
-  deleteSession,
-  resumeSession,
-  exportToMarkdown,
-} from '../../store.js';
+import { loadSessions, deleteSession, resumeSession, exportToMarkdown } from '../../store.js';
 import { copyToClipboard } from '../../clipboard.js';
 import { THEMES } from '../theme.js';
 import { build_memory_graph, get_graph_stats, get_analysis_report } from '../../graph/tools.js';
@@ -625,15 +619,8 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
     }
     case 'exit':
       if (agent) {
-        autoSaveSession(
-          agent.messages,
-          agent.todos,
-          cfg.workspace,
-          agent.cfg,
-          useAppStore.getState().messageQueue
-        );
         // Graceful shutdown (same as SIGINT): tear down MCP children etc.
-        await agent.shutdown().catch(() => {});
+        await agent.shutdown(useAppStore.getState().messageQueue).catch(() => {});
       }
       process.exit(0);
       return;
@@ -792,12 +779,6 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
         const removed = useAppStore.getState().removeQueueMessage(idx);
         if (removed) {
           pushAssistant(agent, `Removed queued message #${num}.`, setMessages);
-        } else {
-          pushAssistant(
-            agent,
-            `No message at position #${num}. Use \`/queue\` to see the list.`,
-            setMessages
-          );
         }
       } else if (sub === 'list' || sub === 'show' || sub === '') {
         const queue = useAppStore.getState().messageQueue;

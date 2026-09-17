@@ -879,7 +879,7 @@ export async function agentRun(
             return;
           }
           overflowRetries++;
-          agent.forceCompactContext();
+          agent.forceCompactContext(overflowRetries);
           agent.addNoticeMessage(
             `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
           );

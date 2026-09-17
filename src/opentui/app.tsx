@@ -158,18 +158,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     (globalThis as Record<string, unknown>)['__refreshSkills'] = handleSkillRefresh;
 
     const handleSigint = () => {
-      // Save queue state before shutdown (shutdownAgent's autoSaveSession
-      // doesn't have access to the TUI store).
-      if (agent.messages.length > 0 && agent.cfg.workspace) {
-        autoSaveSession(
-          agent.messages,
-          agent.todos,
-          agent.cfg.workspace,
-          agent.cfg,
-          store.getState().messageQueue
-        );
-      }
-      agent.shutdown().catch(() => {});
+      agent.shutdown(store.getState().messageQueue).catch(() => {});
     };
     process.on('SIGINT', handleSigint);
 
@@ -303,13 +292,19 @@ export function App({ renderer }: { renderer: CliRenderer }) {
                 err.message === 'Aborted' ||
                 err.message.toLowerCase().includes('abort')));
           if (!isAborted && agentRef.current) {
-            store.getState().requeueMessage(next);
+            const requeued = store.getState().requeueMessage(next);
             agentRef.current.messages.push({
               id: Math.random().toString(36).slice(2, 10),
               role: 'assistant',
               content: `Command error: ${err instanceof Error ? err.message : String(err)}`,
               timestamp: Date.now(),
             });
+            if (!requeued) {
+              addNoticeMessage(
+                agentRef.current,
+                `Queued message failed and was dropped after 3 retries: "${next.length > 40 ? next.slice(0, 37) + '...' : next}"`
+              );
+            }
             agentRef.current.setState('idle');
             store.getState().syncFromAgent(agentRef.current);
           } else if (isAborted && agentRef.current) {
@@ -878,15 +873,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         }
         case 'exit':
           if (agent) {
-            autoSaveSession(
-              agent.messages,
-              agent.todos,
-              agent.cfg.workspace,
-              agent.cfg,
-              store.getState().messageQueue
-            );
             agent
-              .shutdown()
+              .shutdown(store.getState().messageQueue)
               .catch(() => {})
               .finally(() => process.exit(0));
           } else {
@@ -1051,16 +1039,9 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       const agent = agentRef.current;
       keyEvent.preventDefault?.();
       if (agent) {
-        autoSaveSession(
-          agent.messages,
-          agent.todos,
-          agent.cfg.workspace,
-          agent.cfg,
-          store.getState().messageQueue
-        );
         // Graceful shutdown (same as SIGINT): tear down MCP children etc.
         agent
-          .shutdown()
+          .shutdown(store.getState().messageQueue)
           .catch(() => {})
           .finally(() => process.exit(0));
       } else {

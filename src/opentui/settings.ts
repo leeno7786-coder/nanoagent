@@ -141,7 +141,7 @@ const ADVANCED_SECTIONS: readonly { title: string; rows: readonly SettingsRow[] 
   },
   {
     title: 'Sub-agents (advanced)',
-    rows: [{ key: 'maxBackgroundSubAgents', label: 'Max sub-agents', mode: 'edit' }],
+    rows: [],
   },
 ];
 
@@ -163,8 +163,21 @@ function readMcpConfig(): Record<string, McpServerConfig> {
   }
 }
 
-export function buildMcpItems(cfg?: Config): SettingsItem[] {
-  const mcp = cfg?.mcp ?? readMcpConfig();
+/** Cached MCP config — invalidated on add/remove via mcpRevision counter. */
+let cachedMcpConfig: Record<string, McpServerConfig> | null = null;
+let cachedMcpRevision = -1;
+
+export function buildMcpItems(cfg?: Config, revision = 0): SettingsItem[] {
+  let mcp = cfg?.mcp;
+  if (!mcp) {
+    if (cachedMcpConfig !== null && cachedMcpRevision === revision) {
+      mcp = cachedMcpConfig;
+    } else {
+      mcp = readMcpConfig();
+      cachedMcpConfig = mcp;
+      cachedMcpRevision = revision;
+    }
+  }
   const entries = Object.entries(mcp);
   const items: SettingsItem[] = [];
 
@@ -194,7 +207,11 @@ export function buildMcpItems(cfg?: Config): SettingsItem[] {
 // Flatten items
 // ---------------------------------------------------------------------------
 
-export function flattenSettingsItems(showAdvanced = false, cfg?: Config): SettingsItem[] {
+export function flattenSettingsItems(
+  showAdvanced = false,
+  cfg?: Config,
+  mcpRevision = 0
+): SettingsItem[] {
   const items: SettingsItem[] = [];
   const sections = showAdvanced ? [...SIMPLE_SECTIONS, ...ADVANCED_SECTIONS] : SIMPLE_SECTIONS;
 
@@ -206,7 +223,7 @@ export function flattenSettingsItems(showAdvanced = false, cfg?: Config): Settin
   }
 
   // MCP section (dynamic)
-  items.push(...buildMcpItems(cfg));
+  items.push(...buildMcpItems(cfg, mcpRevision));
 
   // Advanced toggle at the bottom
   items.push({

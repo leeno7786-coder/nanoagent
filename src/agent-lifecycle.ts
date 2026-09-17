@@ -162,7 +162,6 @@ function extractPreservedFields(cfg: Config) {
     supportsThinking,
     supportsReasoningEffort,
     supportsPromptCache,
-    ...rest
   } = cfg;
   return {
     workspace,
@@ -446,10 +445,10 @@ export async function changeAgentWorkspace(
 }
 
 /** Graceful shutdown: cancel sub-agents, disconnect MCP, save state. */
-export async function shutdownAgent(agent: AgentCore): Promise<void> {
+export async function shutdownAgent(agent: AgentCore, messageQueue?: string[]): Promise<void> {
   const ws = agent.cfg.workspace;
   if (agent.messages.length > 0 && ws) {
-    autoSaveSession(agent.messages, agent.todos, ws);
+    autoSaveSession(agent.messages, agent.todos, ws, agent.cfg, messageQueue);
   }
   try {
     // Await so spawned stdio MCP servers are actually killed before the

@@ -9,6 +9,7 @@ import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
 import { capToolResultForLlm, resolveToolResultTokenBudget } from './llm/tool-result-budget.js';
+import { OVERFLOW_COMPACTION_TARGET_RATIO } from './context/manager.js';
 
 /** UI-only assistant notices (overflow retry, stuck-loop, etc.). Never sent to the LLM. */
 export function isNoticeMessage(m: Message): boolean {
@@ -267,7 +268,12 @@ export function checkAndCompactContext(
     // Escalate aggressiveness: each subsequent overflow recovery uses a
     // smaller keep window and tighter target ratio.
     const keepCount = Math.max(1, 4 - escalationLevel);
-    const targetRatio = escalationLevel >= 2 ? 0.05 : undefined;
+    const targetRatio =
+      escalationLevel >= 2
+        ? 0.05
+        : escalationLevel >= 1
+          ? OVERFLOW_COMPACTION_TARGET_RATIO
+          : undefined;
     result = agent.contextManager.compact({ force: true, keepCount, targetRatio });
   } else {
     result = agent.contextManager.compact();

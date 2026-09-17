@@ -335,7 +335,7 @@ export class AgentCore {
     removeTodo(this, id);
   }
 
-  async shutdown(): Promise<void> {
-    return shutdownAgent(this);
+  async shutdown(messageQueue?: string[]): Promise<void> {
+    return shutdownAgent(this, messageQueue);
   }
 }

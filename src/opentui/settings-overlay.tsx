@@ -75,7 +75,7 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
 
   // Rebuild items list whenever advanced toggle or MCP config changes
   const items: SettingsItem[] = useMemo(
-    () => flattenSettingsItems(showAdvanced, agent.cfg),
+    () => flattenSettingsItems(showAdvanced, agent.cfg, mcpRevision),
     [showAdvanced, mcpRevision, agent.cfg]
   );
 
