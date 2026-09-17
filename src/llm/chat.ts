@@ -108,7 +108,7 @@ export async function chat(
       if (e.name === 'AbortError' || signal?.aborted) {
         throw err;
       }
-      const errStatus = e.status || e.status_code || e.response?.status || 0;
+      const errStatus: number | undefined = e.status ?? e.status_code ?? e.response?.status;
 
       const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
@@ -130,7 +130,7 @@ export async function chat(
         attempt,
         maxAttempts: effectiveMaxRetries,
         delayMs,
-        status: errStatus,
+        status: errStatus ?? 0,
         message: msgStr,
       });
 

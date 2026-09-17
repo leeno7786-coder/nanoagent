@@ -4,6 +4,9 @@
  * - OpenRouter additionally gets usage.include
  * - tool messages without tool_call_id are dropped, not sent with ''
  * - 400 responses are NOT classified as rate limits (endpoint not marked)
+ * Plus retry-loop behavior:
+ * - connection errors (no HTTP status) are retried up to the budget
+ * - a real 500 still retries and keeps its status
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
@@ -11,6 +14,8 @@ import { createServer, type Server } from 'http';
 import OpenAI from 'openai';
 import { streamChat } from './stream.js';
 import { awaitEndpointRateLimit } from './rate-limit.js';
+import { shouldAttemptFailover } from './failover.js';
+import { ApiError } from './types.js';
 import type { ChatMessage } from './types.js';
 import type { Config } from '../types.js';
 
@@ -18,10 +23,15 @@ let server: Server;
 let stubBaseURL = '';
 let lastBody: Record<string, unknown> | undefined;
 let statusOverride: number | undefined;
+let destroySockets = false;
 
 function startStub(): Promise<void> {
   return new Promise((resolvePromise) => {
     server = createServer((req, res) => {
+      if (destroySockets) {
+        req.socket.destroy();
+        return;
+      }
       let body = '';
       req.on('data', (c) => (body += c));
       req.on('end', () => {
@@ -89,6 +99,7 @@ describe('streamChat request shaping', () => {
   beforeEach(async () => {
     lastBody = undefined;
     statusOverride = undefined;
+    destroySockets = false;
     await startStub();
   });
 
@@ -133,5 +144,79 @@ describe('streamChat request shaping', () => {
     const start = Date.now();
     await awaitEndpointRateLimit(cfg.baseURL);
     expect(Date.now() - start).toBeLessThan(500);
+  });
+});
+
+type RetryInfo = { attempt: number; maxAttempts: number; delayMs: number; status: number };
+
+describe('streamChat transient-error retries', () => {
+  let retries: RetryInfo[];
+
+  beforeEach(async () => {
+    lastBody = undefined;
+    statusOverride = undefined;
+    destroySockets = false;
+    retries = [];
+    await startStub();
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  async function runWithRetries(cfg: Config): Promise<never> {
+    const client = new OpenAI({ apiKey: 'k', baseURL: stubBaseURL, maxRetries: 0 });
+    const gen = streamChat(client, cfg, [{ role: 'user', content: 'hi' }], undefined, undefined, {
+      onRetry: (info) => retries.push(info),
+    });
+    let result = await gen.next();
+    while (!result.done) result = await gen.next();
+    throw new Error(`expected streamChat to throw, but it returned ${JSON.stringify(result.value)}`);
+  }
+
+  function cfgWithRetries(): Config {
+    return { ...makeCfg(stubBaseURL), retryCount: 2 } as Config;
+  }
+
+  it('retries connection errors up to the retry budget before throwing an ApiError', async () => {
+    destroySockets = true;
+    let thrown: unknown;
+    try {
+      await runWithRetries(cfgWithRetries());
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ApiError);
+    const apiErr = thrown as ApiError;
+    expect(apiErr.status).toBeUndefined();
+    expect(apiErr.message).toContain('Connection failed');
+    expect(apiErr.message).not.toContain('undefined');
+    expect(retries).toHaveLength(1);
+    expect(retries[0].attempt).toBe(1);
+    expect(retries[0].maxAttempts).toBe(2);
+    expect(retries[0].status).toBe(0);
+    expect(apiErr.cause).toBeTruthy();
+    const cause = apiErr.cause as { status?: number; message?: string };
+    expect(cause.status).toBeUndefined();
+    expect(cause.message).toContain('Connection error');
+    expect(shouldAttemptFailover(apiErr)).toBe(true);
+  });
+
+  it('still retries a real 500 and preserves its status on the final ApiError', async () => {
+    statusOverride = 500;
+    let thrown: unknown;
+    try {
+      await runWithRetries(cfgWithRetries());
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ApiError);
+    const apiErr = thrown as ApiError;
+    expect(apiErr.status).toBe(500);
+    expect(apiErr.message).toContain('Server error (500)');
+    expect(retries).toHaveLength(1);
+    expect(retries[0].status).toBe(500);
+    expect(retries[0].delayMs).toBeGreaterThan(0);
+    expect(shouldAttemptFailover(apiErr)).toBe(false);
   });
 });

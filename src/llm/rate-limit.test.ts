@@ -228,4 +228,20 @@ describe('shouldRetry', () => {
   it('retries other 400s on early attempts', () => {
     expect(shouldRetry(400, 1, { message: 'Bad request' })).toBe(true);
   });
+
+  it('retries a missing status so connection errors are transient', () => {
+    expect(
+      shouldRetry(undefined, 1, { name: 'APIConnectionError', message: 'Connection error.' })
+    ).toBe(true);
+  });
+
+  it('retries a coerced 0 status when the error looks like a connection failure', () => {
+    expect(shouldRetry(0, 1, { message: 'Connection error.' })).toBe(true);
+    expect(shouldRetry(0, 1, { message: 'fetch failed' })).toBe(true);
+    expect(shouldRetry(0, 1, { message: 'socket hang up' })).toBe(true);
+  });
+
+  it('does not retry a 0 status without a connection-ish error', () => {
+    expect(shouldRetry(0, 1, { message: 'Bad request' })).toBe(false);
+  });
 });

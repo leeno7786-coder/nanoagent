@@ -47,6 +47,27 @@ function isTrustSensitiveEnvVar(key: string): boolean {
   );
 }
 
+/**
+ * Security-sensitive config keys (flat keys of Config — there is no nested
+ * `security` sub-config object). A PROJECT-sourced config file is untrusted —
+ * any cloned repo can plant one — so these keys are ignored there, mirroring
+ * the QWEN_SECURITY_* .env scrub above: a cloned repo must not be able to
+ * disable security or grant itself permissions. They are still honored from
+ * trusted sources: the global/home config and explicitly-passed config paths.
+ */
+const PROJECT_CONFIG_SENSITIVE_KEYS = [
+  'securityEnabled',
+  'securityValidateCommands',
+  'securityValidateFileAccess',
+  'securitySanitizeOutput',
+  'securityAllowedPaths',
+  'securityBlockedPaths',
+  'securityMaxFileSize',
+  'securityMaxBatchFiles',
+  'permissionMode',
+  'permissionRules',
+] as const;
+
 // Snapshot of the real environment at module load, before any .env file
 // could have been merged in by loadEnv().
 const REAL_ENV: NodeJS.ProcessEnv = { ...process.env };
@@ -331,6 +352,20 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
           ];
         }
         delete parsed.mcp;
+      }
+      // Project configs are untrusted (a cloned repo can plant one): strip
+      // security-sensitive keys so they cannot disable security or grant
+      // permissions. Running from the home dir makes a "project" file global
+      // and trusted, as with MCP above.
+      if (!isGlobalConfigPath(project.path)) {
+        const stripped = PROJECT_CONFIG_SENSITIVE_KEYS.filter((key) => key in parsed);
+        for (const key of stripped) delete parsed[key];
+        if (stripped.length > 0) {
+          logWarn(
+            `Security warning: ignored security-sensitive key(s) ${stripped.join(', ')} ` +
+              `from untrusted project config ${project.path} — set them in ~/.nanogent.json instead.`
+          );
+        }
       }
       Object.assign(cfg, parsed);
       cfg.configFilePath = project.path;

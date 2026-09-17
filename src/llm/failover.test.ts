@@ -46,6 +46,16 @@ describe('shouldAttemptFailover', () => {
     expect(shouldAttemptFailover({ message: 'connect ECONNREFUSED 127.0.0.1:1234' })).toBe(true);
   });
 
+  it('keeps retry-exhausted connection failures eligible when wrapped in a statusless ApiError', () => {
+    // The retry layer throws ApiError(undefined status, cause = SDK connection error).
+    const wrapped = new ApiError('Connection failed. Maximum retries reached (2).', undefined, {
+      cause: { name: 'APIConnectionError', message: 'Connection error.' },
+    });
+    expect(wrapped.status).toBeUndefined();
+    expect(shouldAttemptFailover(wrapped)).toBe(true);
+    expect(describeFailoverReason(wrapped)).toBe('connection error');
+  });
+
   it('does not trigger on auth, bad request, or user abort', () => {
     expect(shouldAttemptFailover(err(401, 'invalid_api_key'))).toBe(false);
     expect(shouldAttemptFailover(err(403, 'forbidden'))).toBe(false);

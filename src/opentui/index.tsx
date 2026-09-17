@@ -47,5 +47,9 @@ export async function runTui() {
   }
 
   const appRenderer = await createCliRenderer({ useMouse: false });
+  // Yield to the event loop so stdin (setRawMode + data listener) is fully
+  // attached before the React tree renders and the <input> grabs focus.
+  // Without this, early keystrokes on Windows/Bun are silently dropped.
+  await new Promise<void>((r) => setTimeout(r, 50));
   createRoot(appRenderer).render(<App renderer={appRenderer} />);
 }

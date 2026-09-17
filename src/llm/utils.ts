@@ -306,7 +306,15 @@ function parseDelayValue(
   return Math.min(Math.ceil(n * 1000), capMs);
 }
 
-export function calculateBackoffDelay(attempt: number, status: number, err?: unknown): number {
+/**
+ * Backoff tier by status: 400/429/503/529/504 use the aggressive tier; a
+ * missing/unknown status (connection-level failures) uses the default tier.
+ */
+export function calculateBackoffDelay(
+  attempt: number,
+  status: number | undefined,
+  err?: unknown
+): number {
   const explicitDelay = extractRetryAfterDelayMs(err);
   if (explicitDelay !== undefined) {
     return explicitDelay + Math.floor(Math.random() * 600) + 200;

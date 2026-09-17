@@ -25,6 +25,7 @@ import { handlePermissionsCommand } from './permissions.js';
 import { handleMcpCommand, handleMcpAddCommand, handleMcpRemoveCommand } from './mcp.js';
 import { formatUsageReport, hasKnownPrices } from '../../llm/cost.js';
 import { resolveToolResultTokenBudget } from '../../llm/tool-result-budget.js';
+import { applyConfigSetPatch } from '../settings.js';
 
 export { checkAndAutoCompact, pushAssistant } from './utils.js';
 
@@ -556,29 +557,38 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
           return;
         }
 
-        let parsedVal: unknown = valueStr;
-        if (valueStr === 'true') parsedVal = true;
-        else if (valueStr === 'false') parsedVal = false;
-        else if (!isNaN(Number(valueStr))) parsedVal = Number(valueStr);
-
-        const scope = isGlobal ? 'global' : 'local';
-        const { targetPath, config: newConfig } = saveConfigFile(
-          { [key]: parsedVal },
-          scope,
-          agent?.cfg?.workspace
-        );
-
-        if (agent) {
-          await agent.reconfigure(newConfig);
+        const parsed = applyConfigSetPatch(key, valueStr);
+        if (!parsed.ok) {
+          pushAssistant(agent, parsed.error, setMessages);
+          return;
         }
 
-        // Never echo secrets into the chat history (it is autosaved to disk).
-        const displayVal = /key|token|secret|password/i.test(key) ? '••••••' : String(parsedVal);
-        pushAssistant(
-          agent,
-          `✅ Updated \`${key}\` to \`${displayVal}\` in **${targetPath}** (${scope}). Config reloaded.`,
-          setMessages
-        );
+        const scope = isGlobal ? 'global' : 'local';
+        try {
+          const { targetPath, config: newConfig } = saveConfigFile(
+            parsed.patch,
+            scope,
+            agent?.cfg?.workspace
+          );
+
+          if (agent) {
+            await agent.reconfigure(newConfig);
+          }
+
+          // Credentials are refused by applyConfigSetPatch, so echoing is safe.
+          const displayVal = String(Object.values(parsed.patch)[0]);
+          pushAssistant(
+            agent,
+            `✅ Updated \`${key}\` to \`${displayVal}\` in **${targetPath}** (${scope}). Config reloaded.`,
+            setMessages
+          );
+        } catch (err) {
+          pushAssistant(
+            agent,
+            `Failed to save config: ${err instanceof Error ? err.message : String(err)}`,
+            setMessages
+          );
+        }
         return;
       }
 

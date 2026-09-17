@@ -1,5 +1,5 @@
 import { saveConfigFile } from '../config/index.js';
-import { cycleEffort, DEFAULT_EFFORT, parseEffort } from '../config/effort.js';
+import { cycleEffort, DEFAULT_EFFORT, formatEffortAllowed, parseEffort } from '../config/effort.js';
 import type { Config } from '../types.js';
 import { THEMES } from './theme.js';
 
@@ -301,6 +301,62 @@ export function applySettingsPatch(key: SettingsKey, raw: string): SettingsPatch
   const floatRule = FLOAT_RULES[key];
   if (floatRule) return parseNumber(key, value, floatRule, false);
   return { ok: false, error: `${key} is not editable` };
+}
+
+// Token-limit keys contain "token" but are numeric limits, not credentials.
+const SAFE_TOKEN_RULE_KEYS = new Set<SettingsKey>([
+  'maxTokens',
+  'maxTokensPerMinute',
+  'maxToolResultTokens',
+]);
+
+const SETTING_ROW_BY_KEY = new Map<string, SettingsRow>(SETTINGS_ROWS.map((row) => [row.key, row]));
+
+/**
+ * Shared validation for `/config set <key> <value>` (slash commands).
+ * Same rules as the settings overlay: unknown keys and credential-class
+ * keys are refused; scalars parse exactly like applySettingsPatch.
+ */
+export function applyConfigSetPatch(key: string, raw: string): SettingsPatchResult {
+  const value = raw.trim();
+  if (!value) return { ok: false, error: `${key}: value cannot be empty` };
+  if (/key|token|secret|password/i.test(key) && !(SAFE_TOKEN_RULE_KEYS as Set<string>).has(key)) {
+    return {
+      ok: false,
+      error: `"${key}" looks like a credential — set it with \`/connect\`, not /config set.`,
+    };
+  }
+  const row = SETTING_ROW_BY_KEY.get(key);
+  if (!row) {
+    return {
+      ok: false,
+      error: `Unknown setting "${key}" — run \`/config\` to edit interactively.`,
+    };
+  }
+  if (BOOLEAN_KEYS.has(row.key)) {
+    if (value !== 'true' && value !== 'false') {
+      return { ok: false, error: `${row.label} must be true or false, got ${value}` };
+    }
+    return { ok: true, patch: { [row.key]: value === 'true' } };
+  }
+  if (key === 'effort') {
+    const parsed = parseEffort(value);
+    return parsed
+      ? { ok: true, patch: { effort: parsed } }
+      : { ok: false, error: `Effort must be ${formatEffortAllowed()}, got ${value}` };
+  }
+  if (key === 'permissionMode') {
+    const mode = PERMISSION_MODES.find((m) => m === value);
+    return mode
+      ? { ok: true, patch: { permissionMode: mode } }
+      : { ok: false, error: `Permission mode must be one of: ${PERMISSION_MODES.join(', ')}` };
+  }
+  if (key === 'theme') {
+    return THEME_NAMES.includes(value)
+      ? { ok: true, patch: { theme: value } }
+      : { ok: false, error: `Theme must be one of: ${THEME_NAMES.join(', ')}` };
+  }
+  return applySettingsPatch(row.key, value);
 }
 
 export async function persistGlobalSetting(

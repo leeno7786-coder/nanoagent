@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { loadConfig } from '../src/config';
 import { join } from 'path';
 import { homedir } from 'os';
-import { existsSync, renameSync } from 'fs';
+import { existsSync, renameSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 
 /**
  * Tests for configuration loading and API key handling
@@ -26,19 +27,35 @@ function restoreEnvFile(path: string, backupPath: string): void {
 }
 
 describe('config.ts', () => {
-  const envFilePaths = [
-    join(process.cwd(), '.env'),
-    join(homedir(), '.qwen-agent-tui', '.env'),
-    join(homedir(), '.env'),
-  ];
+  const realHomedir = homedir();
+  let fakeHome: string;
+  let envFilePaths: string[];
   let originalEnv: NodeJS.ProcessEnv;
   let backupPaths: (string | null)[] = [];
+  let savedUserprofile: string | undefined;
+  let savedHome: string | undefined;
 
   beforeEach(() => {
     // Save original environment
     originalEnv = { ...process.env };
 
+    // Create a fake home directory so loadConfig doesn't load real config files
+    fakeHome = mkdtempSync(join(tmpdir(), 'nanoagent-test-home-'));
+    const fakeQwenDir = join(fakeHome, '.qwen-agent-tui');
+    mkdirSync(fakeQwenDir, { recursive: true });
+
+    // Redirect HOME / USERPROFILE to the fake home
+    savedUserprofile = process.env.USERPROFILE;
+    savedHome = process.env.HOME;
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+
     // Backup and remove all .env files to prevent loading
+    envFilePaths = [
+      join(process.cwd(), '.env'),
+      join(fakeHome, '.qwen-agent-tui', '.env'),
+      join(fakeHome, '.env'),
+    ];
     backupPaths = envFilePaths.map(backupEnvFile);
 
     // Explicitly delete all API key env vars
@@ -51,8 +68,15 @@ describe('config.ts', () => {
   });
 
   afterEach(() => {
-    // Restore environment
-    process.env = originalEnv;
+    // Restore environment — clear all keys first, then restore saved values.
+    // Never replace process.env wholesale; Bun workers share the object and
+    // replacing it can corrupt concurrent test files.
+    for (const key of Object.keys(process.env)) {
+      if (!(key in originalEnv)) delete process.env[key];
+    }
+    Object.assign(process.env, originalEnv);
+    if (savedUserprofile !== undefined) process.env.USERPROFILE = savedUserprofile;
+    if (savedHome !== undefined) process.env.HOME = savedHome;
 
     // Restore all .env files
     for (let i = 0; i < backupPaths.length; i++) {
@@ -60,6 +84,13 @@ describe('config.ts', () => {
       if (backup) {
         restoreEnvFile(envFilePaths[i], backup);
       }
+    }
+
+    // Clean up fake home
+    try {
+      rmSync(fakeHome, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
     }
   });
 

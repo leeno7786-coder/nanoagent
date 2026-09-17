@@ -1,4 +1,5 @@
 import { sleepWithSignal, extractApiMessage, isLocalProvider, countTokens } from './utils.js';
+import { isTimeoutOrConnectionError } from './failover.js';
 import type { ChatMessage } from './types.js';
 
 const endpointRateLimitedUntil = new Map<string, number>();
@@ -590,6 +591,9 @@ function isRetriable(err?: unknown): boolean {
 function shouldRetry(status?: number, attempt?: number, err?: unknown): boolean {
   if (!isRetriable(err)) return false;
   if (status === undefined) return true;
+  // Belt and braces: legacy callers may coerce a missing status to 0; treat a
+  // connection-level failure as transient regardless of which form arrives.
+  if (status === 0) return isTimeoutOrConnectionError(err);
   if (status === 429) return true;
   if (status === 502 || status === 503 || status === 504 || status === 529) return true;
   if (status === 400 && attempt !== undefined && attempt < 3) return true;
@@ -599,12 +603,20 @@ function shouldRetry(status?: number, attempt?: number, err?: unknown): boolean 
 }
 
 export function errorMessage(
-  status: number,
+  status: number | undefined,
   attempt: number,
   originalErr?: unknown,
   maxAttempts = 3,
   retryDelayMs?: number
 ): string {
+  // Connection-level failures arrive without an HTTP status (or coerced to 0).
+  if (status === undefined || status === 0) {
+    const detail = extractApiMessage(originalErr);
+    const delaySecStr = retryDelayMs ? ` in ${(retryDelayMs / 1000).toFixed(1)}s` : '';
+    return attempt >= maxAttempts
+      ? `Connection failed.${detail ? ' ' + detail : ''} Maximum retries reached (${maxAttempts}).`
+      : `Connection failed.${detail ? ' ' + detail : ''} Retrying${delaySecStr} (attempt ${attempt}/${maxAttempts})...`;
+  }
   if (status === 401) {
     const detail = extractApiMessage(originalErr);
     return detail

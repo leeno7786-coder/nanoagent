@@ -195,7 +195,8 @@ export async function* streamChat(
       };
       if (e.name === 'AbortError' || signal?.aborted) throw err;
 
-      const errStatus = e.status || e.status_code || e.response?.status || 0;
+      const errStatus: number | undefined =
+        e.status ?? e.status_code ?? e.response?.status;
       lastError = err as Error;
       const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529;
       const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
@@ -216,7 +217,7 @@ export async function* streamChat(
         attempt,
         maxAttempts: effectiveMaxRetries,
         delayMs,
-        status: errStatus,
+        status: errStatus ?? 0,
         message: msgStr,
       });
       if (process.env.QWEN_DEBUG_LLM || isRateLimit) logError(`[LLM Retry] ${msgStr}`);

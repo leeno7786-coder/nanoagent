@@ -4,13 +4,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { AgentCore } from '../agent.js';
 import type { Config, Message, Todo } from '../types.js';
 import { PermissionManager } from '../security/permissions.js';
 import { handleSlashCommand, type SlashCommandContext } from './slash-commands.js';
+import { setupFakeHome, teardownFakeHome } from '../test-helpers.js';
 
 function makeConfig(ws: string): Config {
   return {
@@ -152,6 +153,7 @@ describe('handleSlashCommand', () => {
   let h: CtxHarness;
 
   beforeEach(() => {
+    setupFakeHome();
     ws = mkdtempSync(join(tmpdir(), 'slash-cmd-test-'));
     stub = makeAgent(ws);
     h = makeCtx(stub, ws);
@@ -159,6 +161,7 @@ describe('handleSlashCommand', () => {
 
   afterEach(() => {
     rmSync(ws, { recursive: true, force: true });
+    teardownFakeHome();
   });
 
   it('/help opens the help overlay', async () => {
@@ -322,6 +325,46 @@ describe('handleSlashCommand', () => {
   it('/config set with bad usage shows help', async () => {
     await handleSlashCommand('/config set', h.ctx);
     expect(lastAssistantContent(h)).toContain('Usage:');
+  });
+
+  it('/set rejects non-numeric values for numeric settings without saving', async () => {
+    await handleSlashCommand('/set maxIterations abc', h.ctx);
+    const content = lastAssistantContent(h);
+    expect(content).toContain('Max iters');
+    expect(content).toContain('must be between 0 and 10000');
+    expect(stub.reconfigureCalls).toHaveLength(0);
+    expect(existsSync(join(ws, '.nanogent.json'))).toBe(false);
+  });
+
+  it('/set persists valid numeric settings as numbers', async () => {
+    await handleSlashCommand('/set maxIterations 12', h.ctx);
+    expect(lastAssistantContent(h)).toContain('Updated `maxIterations`');
+    expect(stub.reconfigureCalls.length).toBeGreaterThan(0);
+    const written = JSON.parse(readFileSync(join(ws, '.nanogent.json'), 'utf-8'));
+    expect(written.maxIterations).toBe(12);
+  });
+
+  it('/set persists valid boolean settings as booleans', async () => {
+    await handleSlashCommand('/set promptCache false', h.ctx);
+    expect(lastAssistantContent(h)).toContain('Updated `promptCache`');
+    const written = JSON.parse(readFileSync(join(ws, '.nanogent.json'), 'utf-8'));
+    expect(written.promptCache).toBe(false);
+  });
+
+  it('/config set apiKey refuses credentials and points to /connect without saving', async () => {
+    await handleSlashCommand('/config set apiKey sk-test-123', h.ctx);
+    const content = lastAssistantContent(h);
+    expect(content).toContain('/connect');
+    expect(content).not.toContain('sk-test-123');
+    expect(stub.reconfigureCalls).toHaveLength(0);
+    expect(existsSync(join(ws, '.nanogent.json'))).toBe(false);
+  });
+
+  it('/config set unknown-key suggests the /config overlay without saving', async () => {
+    await handleSlashCommand('/config set frobnicate-max 1', h.ctx);
+    expect(lastAssistantContent(h)).toContain('/config');
+    expect(stub.reconfigureCalls).toHaveLength(0);
+    expect(existsSync(join(ws, '.nanogent.json'))).toBe(false);
   });
 
   it('/permissions shows the current mode', async () => {

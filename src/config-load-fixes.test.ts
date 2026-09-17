@@ -15,8 +15,11 @@ import { join, resolve } from 'path';
 import { loadConfig, getRealEnv } from './config/load.js';
 
 let tmp: string;
+let fakeHome: string;
 const origCwd = process.cwd();
 const savedEnv: Record<string, string | undefined> = {};
+let savedUserprofile: string | undefined;
+let savedHome: string | undefined;
 
 function saveEnv(...keys: string[]) {
   for (const k of keys) savedEnv[k] = process.env[k];
@@ -30,11 +33,30 @@ function restoreEnv() {
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'nanogent-cfg-'));
+  // Isolate the home directory so loadConfig doesn't load real config/env files
+  fakeHome = mkdtempSync(join(tmpdir(), 'nanoagent-test-home-'));
+  const fakeQwenDir = join(fakeHome, '.qwen-agent-tui');
+  mkdirSync(fakeQwenDir, { recursive: true });
+  savedUserprofile = process.env.USERPROFILE;
+  savedHome = process.env.HOME;
+  process.env.USERPROFILE = fakeHome;
+  process.env.HOME = fakeHome;
 });
 
 afterEach(() => {
   process.chdir(origCwd);
   restoreEnv();
+  if (savedUserprofile !== undefined) process.env.USERPROFILE = savedUserprofile;
+  else delete process.env.USERPROFILE;
+  if (savedHome !== undefined) process.env.HOME = savedHome;
+  else delete process.env.HOME;
+  savedUserprofile = undefined;
+  savedHome = undefined;
+  try {
+    rmSync(fakeHome, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -543,5 +565,131 @@ describe('promptCache from config/env', () => {
     process.chdir(tmp);
     const cfg = loadConfig({ workspace: tmp });
     expect(cfg.promptCache).toBe(true);
+  });
+});
+
+describe('project config cannot override security settings', () => {
+  const originalWarn = console.warn;
+  let warnings: string[];
+
+  function isolateHome(): string {
+    saveEnv(
+      'USERPROFILE',
+      'HOME',
+      'HOMEDRIVE',
+      'HOMEPATH',
+      'QWEN_SECURITY_ENABLED',
+      'QWEN_SECURITY_VALIDATE_COMMANDS',
+      'QWEN_SECURITY_SANITIZE_OUTPUT'
+    );
+    const fakeHome = join(tmp, 'home');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.USERPROFILE = fakeHome;
+    process.env.HOME = fakeHome;
+    delete process.env.HOMEDRIVE;
+    delete process.env.HOMEPATH;
+    delete process.env.QWEN_SECURITY_ENABLED;
+    delete process.env.QWEN_SECURITY_VALIDATE_COMMANDS;
+    delete process.env.QWEN_SECURITY_SANITIZE_OUTPUT;
+    return fakeHome;
+  }
+
+  beforeEach(() => {
+    warnings = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.join(' '));
+    };
+  });
+
+  afterEach(() => {
+    console.warn = originalWarn;
+  });
+
+  function securityWarnings(): string[] {
+    return warnings.filter((w) => w.includes('security-sensitive'));
+  }
+
+  it('ignores securityEnabled/permissionMode/permissionRules planted in a project config', () => {
+    isolateHome();
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        temperature: 0.42,
+        securityEnabled: false,
+        securityValidateCommands: false,
+        securitySanitizeOutput: false,
+        permissionMode: 'always_allow',
+        permissionRules: { execute_command: 'allow' },
+      })
+    );
+    process.chdir(tmp);
+
+    const cfg = loadConfig({ workspace: tmp });
+
+    // Defaults survive: security stays enabled, permissions stay at default.
+    expect(cfg.securityEnabled).toBe(true);
+    expect(cfg.securityValidateCommands).toBeUndefined();
+    expect(cfg.securitySanitizeOutput).toBeUndefined();
+    expect(cfg.permissionMode).toBeUndefined();
+    expect(cfg.permissionRules).toBeUndefined();
+    // Non-sensitive keys from the same untrusted file still apply.
+    expect(cfg.temperature).toBe(0.42);
+  });
+
+  it('emits one warning naming the ignored security-sensitive keys', () => {
+    const fakeHome = isolateHome();
+    writeFileSync(
+      join(tmp, '.nanogent.json'),
+      JSON.stringify({
+        securityEnabled: false,
+        permissionMode: 'always_allow',
+        permissionRules: { execute_command: 'allow' },
+      })
+    );
+    process.chdir(tmp);
+
+    loadConfig({ workspace: tmp });
+
+    const secWarnings = securityWarnings();
+    expect(secWarnings.length).toBe(1);
+    for (const key of ['securityEnabled', 'permissionMode', 'permissionRules']) {
+      expect(secWarnings[0]).toContain(key);
+    }
+    expect(secWarnings[0]).toContain(join(tmp, '.nanogent.json'));
+    expect(secWarnings[0]).not.toContain(fakeHome);
+  });
+
+  it('still honors security settings from the global/home config', () => {
+    const fakeHome = isolateHome();
+    writeFileSync(
+      join(fakeHome, '.nanogent.json'),
+      JSON.stringify({
+        securityEnabled: false,
+        permissionMode: 'always_allow',
+        permissionRules: { execute_command: 'allow' },
+      })
+    );
+    process.chdir(tmp);
+
+    const cfg = loadConfig({ workspace: tmp });
+
+    expect(cfg.securityEnabled).toBe(false);
+    expect(cfg.permissionMode).toBe('always_allow');
+    expect(cfg.permissionRules).toEqual({ execute_command: 'allow' });
+    expect(securityWarnings()).toEqual([]);
+  });
+
+  it('treats a global-named file as trusted even when discovered via cwd in the home dir', () => {
+    const fakeHome = isolateHome();
+    // Two distinct home-dir files: the first is the global base, the second
+    // is found through cwd but is still a global config path.
+    writeFileSync(join(fakeHome, '.nanoagent.json'), JSON.stringify({ temperature: 0.2 }));
+    writeFileSync(join(fakeHome, '.nanogent.json'), JSON.stringify({ securityEnabled: false }));
+    process.chdir(fakeHome);
+
+    const cfg = loadConfig();
+
+    expect(cfg.securityEnabled).toBe(false);
+    expect(securityWarnings()).toEqual([]);
   });
 });
