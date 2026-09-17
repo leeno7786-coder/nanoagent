@@ -33,6 +33,10 @@ export interface ContextConfig {
  * the next tool call has room for schemas, template overhead, and output. */
 export const DEFAULT_COMPACTION_TARGET_RATIO = 0.2;
 
+/** Aggressive target for overflow recovery: leave more headroom for tool schemas
+ * and output that aren't tracked in message-level token counting. */
+export const OVERFLOW_COMPACTION_TARGET_RATIO = 0.1;
+
 export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
   compactThreshold: DEFAULT_COMPACT_THRESHOLD,
   summaryReservedPercent: DEFAULT_SUMMARY_RESERVED_PERCENT,

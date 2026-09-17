@@ -1,59 +1,23 @@
 import { describe, expect, it } from 'bun:test';
 import type { Config } from '../types.js';
 import {
-  SETTINGS_ITEMS,
-  SETTINGS_ROWS,
   applySettingsPatch,
   cycleSettingsValue,
   displaySettingsValue,
   firstSelectableIndex,
   flattenSettingsItems,
   nextSelectableIndex,
+  SETTINGS_SECTIONS,
   type SettingsItem,
+  type SettingsKey,
 } from './settings.js';
 import { THEMES } from './theme.js';
 
-const CATALOG_KEYS = [
-  'provider',
-  'baseURL',
-  'model',
-  'temperature',
-  'maxTokens',
-  'effort',
-  'promptCache',
-  'smallModelMode',
-  'timeout',
-  'retryCount',
-  'maxIterations',
-  'maxToolRoundsBeforeCheckin',
-  'maxReasoningOnlyRounds',
-  'rateLimitMs',
-  'maxRequestsPerMinute',
-  'maxConcurrentLlmRequests',
-  'maxTokensPerMinute',
-  'maxToolResultTokens',
-  'promptPricePerMillion',
-  'completionPricePerMillion',
-  'permissionMode',
-  'contextManagementEnabled',
-  'contextCompactThreshold',
-  'contextSummaryReservedPercent',
-  'contextKeepCount',
-  'contextMaxHistoryTokens',
-  'toolChoice',
-  'toolCacheEnabled',
-  'toolCacheTtlMs',
-  'toolCacheMaxSize',
-  'commandTimeoutSeconds',
-  'subAgentModel',
-  'subAgentBaseURL',
-  'maxBackgroundSubAgents',
-  'theme',
-] as const;
+/** All settings keys from the combined sections (simple + advanced). */
+const ALL_SECTION_KEYS = SETTINGS_SECTIONS.flatMap((s) => s.rows.map((r) => r.key));
 
 const EXCLUDED_KEYS = [
   'apiKey',
-  'subAgentApiKey',
   'workspace',
   'mcp',
   'profiles',
@@ -80,34 +44,51 @@ describe('cycleSettingsValue', () => {
     expect(cycleSettingsValue('promptCache', true, 1)).toBe(false);
     expect(cycleSettingsValue('promptCache', false, -1)).toBe(true);
   });
+
+  it('cycles maxBackgroundSubAgents 1-4', () => {
+    expect(cycleSettingsValue('maxBackgroundSubAgents', 1, 1)).toBe(2);
+    expect(cycleSettingsValue('maxBackgroundSubAgents', 4, 1)).toBe(1);
+    expect(cycleSettingsValue('maxBackgroundSubAgents', 4, -1)).toBe(3);
+    expect(cycleSettingsValue('maxBackgroundSubAgents', 1, -1)).toBe(4);
+  });
 });
 
 describe('settings catalog', () => {
-  it('lists every user-facing scalar once', () => {
-    const keys = SETTINGS_ROWS.map((row) => row.key);
-    expect(keys).toEqual([...CATALOG_KEYS]);
-  });
-
   it('omits secrets, nested maps, catalog flags, and security toggles', () => {
-    const keys = SETTINGS_ROWS.map((row) => row.key as string);
+    const keys = ALL_SECTION_KEYS.map((k) => k as string);
     for (const excluded of EXCLUDED_KEYS) {
       expect(keys).not.toContain(excluded);
     }
   });
 
-  it('inserts a header before each section', () => {
-    const headers = SETTINGS_ITEMS.filter((item) => item.type === 'header').map(
-      (item) => item.label
-    );
-    expect(headers).toEqual([
-      'Model',
-      'Limits',
-      'Permissions',
-      'Context',
-      'Tools',
-      'Sub-agents',
-      'UI',
-    ]);
+  it('simple view has Model, Behavior, Sub-agents, UI sections', () => {
+    const simple = flattenSettingsItems(false);
+    const headers = simple.filter((item) => item.type === 'header').map((item) => item.label);
+    expect(headers).toContain('Model');
+    expect(headers).toContain('Behavior');
+    expect(headers).toContain('Sub-agents');
+    expect(headers).toContain('UI');
+  });
+
+  it('advanced view adds Limits, Context, Tools sections', () => {
+    const advanced = flattenSettingsItems(true);
+    const headers = advanced.filter((item) => item.type === 'header').map((item) => item.label);
+    expect(headers).toContain('Limits');
+    expect(headers).toContain('Context');
+    expect(headers).toContain('Tools');
+  });
+
+  it('always includes MCP section and advanced toggle', () => {
+    const items = flattenSettingsItems(false);
+    const headers = items.filter((item) => item.type === 'header').map((item) => item.label);
+    expect(headers).toContain('MCP');
+    expect(headers.some((h) => h.includes('Show advanced'))).toBe(true);
+  });
+
+  it('includes Add server row in MCP section', () => {
+    const items = flattenSettingsItems(false);
+    const rows = items.filter((item) => item.type === 'row').map((item) => item.label);
+    expect(rows).toContain('+ Add server');
   });
 });
 
@@ -134,6 +115,16 @@ describe('displaySettingsValue', () => {
     const cfg = {} as Config;
     expect(displaySettingsValue('promptCache', cfg)).toBe('auto');
     expect(displaySettingsValue('model', cfg)).toBe('unset');
+  });
+
+  it('shows masked API key when set', () => {
+    const cfg = { subagents: { enabled: true, endpoints: [{ apiKey: 'sk-abc123xyz' }] } } as Config;
+    expect(displaySettingsValue('subAgentApiKey' as SettingsKey, cfg)).toBe('****3xyz');
+  });
+
+  it('shows max concurrent from config', () => {
+    const cfg = { maxBackgroundSubAgents: 3 } as Config;
+    expect(displaySettingsValue('maxBackgroundSubAgents', cfg)).toBe('3');
   });
 });
 
@@ -197,6 +188,26 @@ describe('applySettingsPatch', () => {
       patch: { maxToolResultTokens: 8000 },
     });
   });
+
+  it('handles maxBackgroundSubAgents with subagents sync', () => {
+    const result = applySettingsPatch('maxBackgroundSubAgents', '2', {} as Config);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.patch.maxBackgroundSubAgents).toBe(2);
+      expect(result.patch.subagents?.endpoints?.[0]?.concurrency).toBe(2);
+    }
+  });
+
+  it('handles subAgentApiKey nested storage', () => {
+    const cfg = {
+      subagents: { enabled: true, endpoints: [{ name: 'ep1', baseURL: 'http://x', model: 'm' }] },
+    } as Config;
+    const result = applySettingsPatch('subAgentApiKey' as SettingsKey, 'sk-test123', cfg);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.patch.subagents?.endpoints?.[0]?.apiKey).toBe('sk-test123');
+    }
+  });
 });
 
 describe('cycleSettingsValue extra keys', () => {
@@ -204,6 +215,8 @@ describe('cycleSettingsValue extra keys', () => {
     expect(cycleSettingsValue('smallModelMode', false, 1)).toBe(true);
     expect(cycleSettingsValue('contextManagementEnabled', true, 1)).toBe(false);
     expect(cycleSettingsValue('toolCacheEnabled', undefined, 1)).toBe(true);
+    expect(cycleSettingsValue('verbose', false, 1)).toBe(true);
+    expect(cycleSettingsValue('verbose', true, -1)).toBe(false);
   });
 
   it('cycles theme names', () => {
@@ -230,10 +243,6 @@ describe('applySettingsPatch extra keys', () => {
     expect(applySettingsPatch('contextCompactThreshold', '0.8')).toEqual({
       ok: true,
       patch: { contextCompactThreshold: 0.8 },
-    });
-    expect(applySettingsPatch('maxBackgroundSubAgents', '4')).toEqual({
-      ok: true,
-      patch: { maxBackgroundSubAgents: 4 },
     });
   });
 

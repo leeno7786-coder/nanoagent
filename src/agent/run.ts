@@ -665,7 +665,7 @@ export async function agentRun(
               return;
             }
             overflowRetries++;
-            const compacted = agent.forceCompactContext();
+            const compacted = agent.forceCompactContext(overflowRetries);
             // Notice (not assistant): mid-loop assistant text poisons Bonsai/Qwen
             // chat templates and makes the retry return empty / stop.
             agent.addNoticeMessage(
@@ -765,7 +765,7 @@ export async function agentRun(
           .filter(Boolean)
           .join(' ');
         const overflowHint =
-          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded/i.test(
+          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded|maximum[\s_-]*retries[\s_-]*reached/i.test(
             msg
           );
         if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
@@ -780,7 +780,7 @@ export async function agentRun(
           }
           agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
           overflowRetries++;
-          agent.forceCompactContext();
+          agent.forceCompactContext(overflowRetries);
           agent.addNoticeMessage(
             `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
           );
@@ -866,7 +866,7 @@ export async function agentRun(
           .filter(Boolean)
           .join(' ');
         const overflowHint =
-          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded/i.test(
+          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded|maximum[\s_-]*retries[\s_-]*reached/i.test(
             msg
           );
         if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
@@ -935,7 +935,7 @@ export async function agentRun(
             return;
           }
           overflowRetries++;
-          const compacted = agent.forceCompactContext();
+          const compacted = agent.forceCompactContext(overflowRetries);
           agent.addNoticeMessage(
             compacted
               ? `Context overflow detected (empty \`${response.finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`

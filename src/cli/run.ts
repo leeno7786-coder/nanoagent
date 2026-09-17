@@ -90,6 +90,10 @@ export async function cmdRun(argv: string[]): Promise<number> {
     const n = parseInt(values['max-iterations'], 10);
     if (!Number.isNaN(n)) cfg.maxIterations = n;
   }
+  // Config-level verbose fallback: if --verbose not passed, use config setting
+  if (!values.verbose && cfg.verbose) {
+    values.verbose = true;
+  }
 
   if (values['permission-mode']) {
     const mode = values['permission-mode'] as PermissionMode;

@@ -62,6 +62,15 @@ export async function reconfigureAgent(agent: AgentCore, newCfg: Partial<Config>
   }
   applySubAgentDefaults(agent.cfg);
 
+  // Propagate verbose toggle to environment
+  if (newCfg.verbose !== undefined) {
+    if (agent.cfg.verbose) {
+      process.env.QWEN_VERBOSE = '1';
+    } else {
+      delete process.env.QWEN_VERBOSE;
+    }
+  }
+
   // Update cache configuration if relevant options changed
   if (
     newCfg.toolCacheEnabled !== undefined ||
@@ -138,49 +147,56 @@ export async function applyRuntimeProfile(agent: AgentCore) {
 }
 
 /**
+ * Extract fields from the current config that must survive a reload-from-disk:
+ * runtime-derived metadata, the workspace path, and the security manager instance.
+ */
+function extractPreservedFields(cfg: Config) {
+  const {
+    workspace,
+    securityManager,
+    modelContextLength,
+    modelMaxContextLength,
+    modelParamBillions,
+    modelRuntimeSource,
+    supportsTools,
+    supportsThinking,
+    supportsReasoningEffort,
+    supportsPromptCache,
+    ...rest
+  } = cfg;
+  return {
+    workspace,
+    securityManager,
+    runtimeFields: {
+      modelContextLength,
+      modelMaxContextLength,
+      modelParamBillions,
+      modelRuntimeSource,
+      supportsTools,
+      supportsThinking,
+      supportsReasoningEffort,
+      supportsPromptCache,
+    },
+  };
+}
+
+/**
  * Reload config from disk and refresh LM Studio model metadata.
  * Keeps the current in-session workspace (e.g. after /cd).
  */
 export async function reloadAgentFromDisk(agent: AgentCore) {
   const fresh = loadConfig();
-  const workspace = agent.cfg.workspace;
-  agent.cfg = {
-    ...agent.cfg,
-    baseURL: fresh.baseURL,
-    model: fresh.model,
-    apiKey: fresh.apiKey,
-    maxIterations: fresh.maxIterations,
-    maxTokens: fresh.maxTokens,
-    temperature: fresh.temperature,
-    smallModelMode: fresh.smallModelMode,
-    provider: fresh.provider,
-    profile: fresh.profile,
-    profiles: fresh.profiles,
-    fallbacks: fresh.fallbacks,
-    maxRequestsPerMinute: fresh.maxRequestsPerMinute,
-    maxConcurrentLlmRequests: fresh.maxConcurrentLlmRequests,
-    maxTokensPerMinute: fresh.maxTokensPerMinute,
-    maxToolResultTokens: fresh.maxToolResultTokens,
-    effort: fresh.effort,
-    promptPricePerMillion: fresh.promptPricePerMillion,
-    completionPricePerMillion: fresh.completionPricePerMillion,
-    subAgentModel: fresh.subAgentModel,
-    subAgentBaseURL: fresh.subAgentBaseURL,
-    subAgentApiKey: fresh.subAgentApiKey,
-    subAgentEnabled: fresh.subAgentEnabled,
-    toolCacheEnabled: fresh.toolCacheEnabled,
-    toolCacheTtlMs: fresh.toolCacheTtlMs,
-    toolCacheMaxSize: fresh.toolCacheMaxSize,
-    workspace,
-  };
+  // Preserve fields that must not be overwritten by the on-disk config:
+  // - workspace: managed by /cd, not config file
+  // - securityManager: runtime instance, not serialisable
+  // - runtime-derived fields: refreshed by applyRuntimeProfile() below
+  const { workspace, securityManager, runtimeFields } = extractPreservedFields(agent.cfg);
+  agent.cfg = { ...fresh, ...runtimeFields, workspace, securityManager };
   applySubAgentDefaults(agent.cfg);
 
   // Recreate cache manager with new config
   agent.toolCache.stopAllWatchers();
   agent.toolCache = createToolCacheManager(agent.cfg, agent.cfg.workspace);
-
-  // Preserve security manager across config reload
-  agent.cfg.securityManager = agent.securityManager;
 
   await agent.applyRuntimeProfile();
 }

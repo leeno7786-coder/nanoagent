@@ -63,5 +63,6 @@ export function getDefault(): Config {
     maxTokens: 4096,
     rateLimitMs: 0,
     securityEnabled: true,
+    verbose: false,
   };
 }

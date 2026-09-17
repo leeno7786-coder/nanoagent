@@ -310,8 +310,8 @@ export class AgentCore {
   }
 
   /** Force-compact after silent context overflow (empty length finish). */
-  public forceCompactContext(): boolean {
-    return forceCompactContext(this);
+  public forceCompactContext(escalationLevel = 0): boolean {
+    return forceCompactContext(this, escalationLevel);
   }
 
   public compactContextIfNeeded(): boolean {

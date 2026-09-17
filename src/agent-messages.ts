@@ -249,15 +249,29 @@ function setCompactionSummaryMessage(agent: AgentCore, summary: string) {
 /**
  * Check if context needs compaction and perform it if necessary.
  * Returns true if compaction was performed.
+ *
+ * @param escalationLevel — increases aggressiveness on repeated overflow
+ *   recovery (0 = normal proactive, 1 = first force, 2+ = escalated)
  */
-export function checkAndCompactContext(agent: AgentCore, force = false): boolean {
+export function checkAndCompactContext(
+  agent: AgentCore,
+  force = false,
+  escalationLevel = 0
+): boolean {
   if (!force && !agent.contextManager.needsCompaction()) {
     return false;
   }
 
-  const result = force
-    ? agent.contextManager.compact({ force: true, keepCount: 4 })
-    : agent.contextManager.compact();
+  let result;
+  if (force) {
+    // Escalate aggressiveness: each subsequent overflow recovery uses a
+    // smaller keep window and tighter target ratio.
+    const keepCount = Math.max(1, 4 - escalationLevel);
+    const targetRatio = escalationLevel >= 2 ? 0.05 : undefined;
+    result = agent.contextManager.compact({ force: true, keepCount, targetRatio });
+  } else {
+    result = agent.contextManager.compact();
+  }
 
   if (result.removedCount > 0) {
     // Preserve non-base system messages (todo context, prior compaction note)
@@ -305,6 +319,6 @@ export function checkAndCompactContext(agent: AgentCore, force = false): boolean
 }
 
 /** Force-compact after a silent context overflow (empty length finish). */
-export function forceCompactContext(agent: AgentCore): boolean {
-  return checkAndCompactContext(agent, true);
+export function forceCompactContext(agent: AgentCore, escalationLevel = 0): boolean {
+  return checkAndCompactContext(agent, true, escalationLevel);
 }

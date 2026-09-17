@@ -91,7 +91,7 @@ export const exploreSubagentTool: Tool = {
         return JSON.stringify({
           ok: false,
           error:
-            'No remote sub-agent pool configured. Set subagents in ~/.qwen-agent.json or REMOTE_LMSTUDIO_URL.',
+            'No remote sub-agent pool configured. Set subagents in config/nanogent.json or REMOTE_LMSTUDIO_URL.',
         });
       }
       const result = await exploreWithSubAgent(

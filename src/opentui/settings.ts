@@ -1,6 +1,8 @@
+import { existsSync, readFileSync } from 'fs';
 import { saveConfigFile } from '../config/index.js';
 import { cycleEffort, DEFAULT_EFFORT, parseEffort } from '../config/effort.js';
-import type { Config } from '../types.js';
+import { GLOBAL_CONFIG_FILE } from '../config/paths.js';
+import type { Config, McpServerConfig } from '../types.js';
 import { THEMES } from './theme.js';
 
 export type SettingsKey =
@@ -37,18 +39,25 @@ export type SettingsKey =
   | 'toolChoice'
   | 'subAgentModel'
   | 'subAgentBaseURL'
+  | 'subAgentApiKey'
   | 'maxBackgroundSubAgents'
+  | 'verbose'
   | 'theme';
 
 export interface SettingsRow {
   key: SettingsKey;
   label: string;
   mode: 'cycle' | 'edit';
+  /** When false, this row is UI-only and not persisted to config. */
+  persist?: boolean;
 }
 
 export type SettingsItem = { type: 'header'; label: string } | ({ type: 'row' } & SettingsRow);
 
-const SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
+// ---------------------------------------------------------------------------
+// Simple sections — shown by default in /config
+// ---------------------------------------------------------------------------
+const SIMPLE_SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
   {
     title: 'Model',
     rows: [
@@ -58,6 +67,39 @@ const SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
       { key: 'temperature', label: 'Temp', mode: 'edit' },
       { key: 'maxTokens', label: 'Max tokens', mode: 'edit' },
       { key: 'effort', label: 'Effort', mode: 'cycle' },
+    ],
+  },
+  {
+    title: 'Behavior',
+    rows: [
+      { key: 'contextManagementEnabled', label: 'Auto-compact', mode: 'cycle' },
+      { key: 'verbose', label: 'Verbose', mode: 'cycle' },
+      { key: 'permissionMode', label: 'Permissions', mode: 'cycle' },
+      { key: 'toolChoice', label: 'Tool choice', mode: 'cycle' },
+    ],
+  },
+  {
+    title: 'Sub-agents',
+    rows: [
+      { key: 'maxBackgroundSubAgents', label: 'Max concurrent', mode: 'cycle' },
+      { key: 'subAgentBaseURL', label: 'Base URL', mode: 'edit' },
+      { key: 'subAgentApiKey', label: 'API key', mode: 'edit' },
+      { key: 'subAgentModel', label: 'Model', mode: 'edit' },
+    ],
+  },
+  {
+    title: 'UI',
+    rows: [{ key: 'theme', label: 'Theme', mode: 'cycle' }],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Advanced sections — behind the "Show advanced" toggle
+// ---------------------------------------------------------------------------
+const ADVANCED_SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
+  {
+    title: 'Model (advanced)',
+    rows: [
       { key: 'promptCache', label: 'Prompt cache', mode: 'cycle' },
       { key: 'smallModelMode', label: 'Small model', mode: 'cycle' },
       { key: 'timeout', label: 'Timeout ms', mode: 'edit' },
@@ -80,13 +122,8 @@ const SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
     ],
   },
   {
-    title: 'Permissions',
-    rows: [{ key: 'permissionMode', label: 'Permissions', mode: 'cycle' }],
-  },
-  {
     title: 'Context',
     rows: [
-      { key: 'contextManagementEnabled', label: 'Context mgmt', mode: 'cycle' },
       { key: 'contextCompactThreshold', label: 'Compact at', mode: 'edit' },
       { key: 'contextSummaryReservedPercent', label: 'Summary reserve', mode: 'edit' },
       { key: 'contextKeepCount', label: 'Keep count', mode: 'edit' },
@@ -96,7 +133,6 @@ const SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
   {
     title: 'Tools',
     rows: [
-      { key: 'toolChoice', label: 'Tool choice', mode: 'cycle' },
       { key: 'toolCacheEnabled', label: 'Tool cache', mode: 'cycle' },
       { key: 'toolCacheTtlMs', label: 'Cache TTL ms', mode: 'edit' },
       { key: 'toolCacheMaxSize', label: 'Cache size', mode: 'edit' },
@@ -104,37 +140,93 @@ const SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[] = [
     ],
   },
   {
-    title: 'Sub-agents',
-    rows: [
-      { key: 'subAgentModel', label: 'Sub model', mode: 'edit' },
-      { key: 'subAgentBaseURL', label: 'Sub base URL', mode: 'edit' },
-      { key: 'maxBackgroundSubAgents', label: 'Max sub-agents', mode: 'edit' },
-    ],
-  },
-  {
-    title: 'UI',
-    rows: [{ key: 'theme', label: 'Theme', mode: 'cycle' }],
+    title: 'Sub-agents (advanced)',
+    rows: [{ key: 'maxBackgroundSubAgents', label: 'Max sub-agents', mode: 'edit' }],
   },
 ];
 
-export const SETTINGS_SECTIONS = SECTIONS;
+// Keep the old combined list for backward compat (e.g. /config show)
+export const SETTINGS_SECTIONS = [...SIMPLE_SECTIONS, ...ADVANCED_SECTIONS];
 
-export function flattenSettingsItems(sections: typeof SECTIONS = SECTIONS): SettingsItem[] {
+// ---------------------------------------------------------------------------
+// Dynamic MCP row generation
+// ---------------------------------------------------------------------------
+
+function readMcpConfig(): Record<string, McpServerConfig> {
+  try {
+    const configPath = GLOBAL_CONFIG_FILE();
+    if (!existsSync(configPath)) return {};
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return parsed?.mcp && typeof parsed.mcp === 'object' ? { ...parsed.mcp } : {};
+  } catch {
+    return {};
+  }
+}
+
+export function buildMcpItems(cfg?: Config): SettingsItem[] {
+  const mcp = cfg?.mcp ?? readMcpConfig();
+  const entries = Object.entries(mcp);
   const items: SettingsItem[] = [];
+
+  items.push({ type: 'header', label: 'MCP' });
+  for (const [name, serverCfg] of entries) {
+    const type = serverCfg.type === 'remote' ? 'remote' : 'local';
+    items.push({
+      type: 'row',
+      key: `mcp:${name}` as SettingsKey,
+      label: `${name} (${type})`,
+      mode: 'cycle',
+      persist: false,
+    });
+  }
+  items.push({
+    type: 'row',
+    key: 'mcp:add' as SettingsKey,
+    label: '+ Add server',
+    mode: 'edit',
+    persist: false,
+  });
+
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// Flatten items
+// ---------------------------------------------------------------------------
+
+export function flattenSettingsItems(showAdvanced = false, cfg?: Config): SettingsItem[] {
+  const items: SettingsItem[] = [];
+  const sections = showAdvanced ? [...SIMPLE_SECTIONS, ...ADVANCED_SECTIONS] : SIMPLE_SECTIONS;
+
   for (const section of sections) {
     items.push({ type: 'header', label: section.title });
     for (const row of section.rows) {
       items.push({ type: 'row', ...row });
     }
   }
+
+  // MCP section (dynamic)
+  items.push(...buildMcpItems(cfg));
+
+  // Advanced toggle at the bottom
+  items.push({
+    type: 'header',
+    label: showAdvanced ? '─── Hide advanced ▾ ───' : '─── Show advanced ▸ ───',
+  });
+  items.push({
+    type: 'row',
+    key: 'showAdvanced' as SettingsKey,
+    label: showAdvanced ? 'Hide advanced' : 'Show advanced',
+    mode: 'cycle',
+    persist: false,
+  });
+
   return items;
 }
 
-export const SETTINGS_ITEMS: readonly SettingsItem[] = flattenSettingsItems();
-
-export const SETTINGS_ROWS: readonly SettingsRow[] = SETTINGS_ITEMS.filter(
-  (item): item is { type: 'row' } & SettingsRow => item.type === 'row'
-).map(({ key, label, mode }) => ({ key, label, mode }));
+// ---------------------------------------------------------------------------
+// Selection helpers
+// ---------------------------------------------------------------------------
 
 export function firstSelectableIndex(items: readonly SettingsItem[]): number {
   const index = items.findIndex((item) => item.type === 'row');
@@ -156,17 +248,33 @@ export function nextSelectableIndex(
   return current;
 }
 
+// ---------------------------------------------------------------------------
+// Display / cycle
+// ---------------------------------------------------------------------------
+
 const PERMISSION_MODES = ['read_only', 'ask', 'allow_edits', 'always_allow'] as const;
 const TOOL_CHOICE_MODES = ['auto', 'any', 'none'] as const;
+const SUB_AGENT_CONCURRENCY = [1, 2, 3, 4] as const;
+const THEME_NAMES = Object.keys(THEMES);
+
 const BOOLEAN_KEYS = new Set<SettingsKey>([
   'promptCache',
   'smallModelMode',
   'contextManagementEnabled',
   'toolCacheEnabled',
+  'verbose',
 ]);
-const THEME_NAMES = Object.keys(THEMES);
 
 export function displaySettingsValue(key: SettingsKey, cfg: Config): string {
+  // Sub-agent API key — masked
+  if (key === ('subAgentApiKey' as SettingsKey)) {
+    const k = cfg.subagents?.endpoints?.[0]?.apiKey ?? cfg.subAgentApiKey;
+    return k ? `****${k.slice(-4)}` : 'not set';
+  }
+  // Max concurrent — read from config
+  if (key === 'maxBackgroundSubAgents') {
+    return String(cfg.maxBackgroundSubAgents ?? 4);
+  }
   const value = cfg[key];
   if (value === undefined) {
     if (key === 'promptCache') return 'auto';
@@ -200,6 +308,14 @@ export function cycleSettingsValue(
     const index = found >= 0 ? found : PERMISSION_MODES.indexOf('ask');
     return PERMISSION_MODES[(index + delta + PERMISSION_MODES.length) % PERMISSION_MODES.length];
   }
+  if (key === 'maxBackgroundSubAgents') {
+    const cur = typeof current === 'number' ? current : 4;
+    const idx = SUB_AGENT_CONCURRENCY.indexOf(cur as 1 | 2 | 3 | 4);
+    const i = idx >= 0 ? idx : SUB_AGENT_CONCURRENCY.indexOf(4);
+    return SUB_AGENT_CONCURRENCY[
+      (i + delta + SUB_AGENT_CONCURRENCY.length) % SUB_AGENT_CONCURRENCY.length
+    ];
+  }
   if (BOOLEAN_KEYS.has(key)) {
     return current !== true;
   }
@@ -210,6 +326,10 @@ export function cycleSettingsValue(
   }
   return current;
 }
+
+// ---------------------------------------------------------------------------
+// Validation & patch application
+// ---------------------------------------------------------------------------
 
 export type SettingsPatchResult =
   { ok: true; patch: Partial<Config> } | { ok: false; error: string };
@@ -250,7 +370,7 @@ const FLOAT_RULES: Partial<Record<SettingsKey, NumberRule>> = {
 const STRING_LABELS: Partial<Record<SettingsKey, string>> = {
   provider: 'Provider',
   model: 'Model',
-  subAgentModel: 'Sub model',
+  subAgentModel: 'Model',
 };
 
 function parseHttpUrl(value: string, label: string): SettingsPatchResult {
@@ -286,8 +406,54 @@ function parseNumber(
   return { ok: true, patch: { [key]: number } };
 }
 
-export function applySettingsPatch(key: SettingsKey, raw: string): SettingsPatchResult {
+export function applySettingsPatch(
+  key: SettingsKey,
+  raw: string,
+  cfg?: Config
+): SettingsPatchResult {
   const value = raw.trim();
+
+  // Sub-agent API key — nested in subagents.endpoints[0].apiKey
+  if (key === ('subAgentApiKey' as SettingsKey)) {
+    if (!value) return { ok: false, error: 'API key cannot be empty' };
+    const currentEndpoints = cfg?.subagents?.endpoints ?? [];
+    const ep = currentEndpoints[0] ?? { name: 'sub-agent-1', baseURL: '', model: '' };
+    return {
+      ok: true,
+      patch: {
+        subagents: {
+          ...(cfg?.subagents ?? { enabled: true, endpoints: [] }),
+          enabled: true,
+          endpoints: [{ ...ep, apiKey: value }],
+        },
+      },
+    };
+  }
+
+  // Max concurrent sub-agents — also sync to subagents.endpoints[0].concurrency
+  if (key === 'maxBackgroundSubAgents') {
+    const num = Number(value);
+    if (!Number.isInteger(num) || num < 1 || num > 16) {
+      return { ok: false, error: 'Max sub-agents must be between 1 and 16' };
+    }
+    const currentEndpoints = cfg?.subagents?.endpoints ?? [];
+    const ep = currentEndpoints[0];
+    const updatedEndpoints = ep
+      ? [{ ...ep, concurrency: num }]
+      : [{ name: 'sub-agent-1', baseURL: '', model: '', concurrency: num }];
+    return {
+      ok: true,
+      patch: {
+        maxBackgroundSubAgents: num,
+        subagents: {
+          ...(cfg?.subagents ?? { enabled: true, endpoints: [] }),
+          enabled: true,
+          endpoints: updatedEndpoints,
+        },
+      },
+    };
+  }
+
   const stringLabel = STRING_LABELS[key];
   if (stringLabel) {
     return value
@@ -295,7 +461,7 @@ export function applySettingsPatch(key: SettingsKey, raw: string): SettingsPatch
       : { ok: false, error: `${stringLabel} cannot be empty` };
   }
   if (key === 'baseURL' || key === 'subAgentBaseURL') {
-    const label = key === 'baseURL' ? 'Base URL' : 'Sub base URL';
+    const label = key === 'baseURL' ? 'Base URL' : 'Base URL';
     if (!value) return { ok: false, error: `${label} cannot be empty` };
     const parsed = parseHttpUrl(value, label);
     return parsed.ok ? { ok: true, patch: { [key]: value } } : parsed;
@@ -312,6 +478,10 @@ export function applySettingsPatch(key: SettingsKey, raw: string): SettingsPatch
   if (floatRule) return parseNumber(key, value, floatRule, false);
   return { ok: false, error: `${key} is not editable` };
 }
+
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
 
 export async function persistGlobalSetting(
   agent: { cfg: Config; reconfigure: (patch: Partial<Config>) => Promise<void> },

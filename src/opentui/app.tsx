@@ -27,7 +27,7 @@ import { TodoSidebar } from './todo-sidebar.js';
 import { THEMES, DEFAULT_THEME } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
 import { hasBaselineSnapshot } from '../snapshots.js';
-import { getProviderBaseURL } from '../providers/index.js';
+import { getProviderBaseURL, invalidateModelCatalog } from '../providers/index.js';
 import { handleSlashCommand, checkAndAutoCompact } from './slash-commands/index.js';
 import { parseBangCommand, runBangCommand, recordBangExchange } from './bang-command.js';
 import { useAppStore } from './app-store.js';
@@ -786,6 +786,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           timestamp: Date.now(),
         });
         setMessages([...agent.messages]);
+        // Invalidate model catalog cache so the next /config or /models shows fresh data
+        invalidateModelCatalog();
       }
     },
     []

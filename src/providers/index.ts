@@ -27,3 +27,10 @@ export {
   fetchOpenRouterModels,
   fetchRemoteModels,
 } from './runtime.js';
+export {
+  buildModelCatalog,
+  getModelIdList,
+  invalidateModelCatalog,
+  formatModelCatalog,
+  type CatalogModel,
+} from './model-catalog.js';

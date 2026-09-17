@@ -74,6 +74,8 @@ export interface Config {
   timeout?: number;
   /** UI theme name. */
   theme?: string;
+  /** Log tool calls to stderr (persistent toggle). */
+  verbose?: boolean;
   /** Optimize for small models (4B or less). */
   smallModelMode?: boolean;
   /** Temperature for completions (small models work better with 0.3-0.7). */

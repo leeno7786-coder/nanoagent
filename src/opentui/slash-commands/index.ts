@@ -6,12 +6,8 @@ import {
   formatProfileList,
 } from '../../config/index.js';
 import { parseEffort, formatEffortAllowed, DEFAULT_EFFORT } from '../../config/effort.js';
-import {
-  getDoctorReport,
-  formatDoctorReport,
-  getModelsList,
-  formatModelsList,
-} from '../../cli/reports.js';
+import { getDoctorReport, formatDoctorReport } from '../../cli/reports.js';
+import { buildModelCatalog, formatModelCatalog } from '../../providers/index.js';
 import {
   autoSaveSession,
   loadSessions,
@@ -120,8 +116,8 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       return;
     }
     case 'models': {
-      const models = await getModelsList(undefined, agent.cfg);
-      const list = formatModelsList(models);
+      const catalog = await buildModelCatalog(agent.cfg);
+      const list = formatModelCatalog(catalog);
       const profileNames = Object.keys(agent.cfg.profiles ?? {});
       const profileNote =
         profileNames.length > 0
