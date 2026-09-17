@@ -53,5 +53,9 @@ export async function runTui() {
   // normal window: Shift+drag bypasses app capture for native selection, and
   // right-click / Ctrl+V paste is handled app-side (see use-clipboard-paste.ts).
   const appRenderer = await createCliRenderer({ useMouse: true, enableMouseMovement: false });
+  // Yield to the event loop so stdin can initialize before React grabs focus.
+  // Without this, keystrokes before the data listener is attached get silently
+  // dropped on Windows/Bun (stdin startup race).
+  await new Promise<void>((r) => setTimeout(r, 50));
   createRoot(appRenderer).render(<App renderer={appRenderer} />);
 }
