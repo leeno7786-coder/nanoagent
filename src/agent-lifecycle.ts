@@ -18,13 +18,14 @@ import {
 import { loadConfig, applySubAgentDefaults } from './config/index.js';
 import { getRealEnv } from './config/load.js';
 import type { Config } from './types.js';
-import { autoSaveSession } from './store.js';
+import { autoSaveSession, setActiveSessionWorkspace } from './store.js';
 import type { AgentCore } from './agent.js';
 import { now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
 import { refreshSystemPrompt, syncContextManagerMessages } from './agent-messages.js';
 import { logDebug, logError, logWarn } from './log.js';
 import { GLOBAL_CONFIG_FILE } from './config/paths.js';
+import { startWorkspaceTracker, stopWorkspaceTracker } from './workspace-history.js';
 
 /** Normalize a path for comparison (forward slashes, lowercase on Windows). */
 function normPath(s: string): string {
@@ -292,6 +293,13 @@ export async function initAgent(agent: AgentCore) {
     logWarn('[init] baseline snapshot not taken:', (err as Error).message);
   }
 
+  try {
+    setActiveSessionWorkspace(agent.cfg.workspace);
+    startWorkspaceTracker(agent.cfg.workspace);
+  } catch (err) {
+    logWarn('[init] workspace history tracker not started:', (err as Error).message);
+  }
+
   rebuildSystemPrompt(agent, ctx, allSkills);
 
   // Debug: log model detection info
@@ -430,6 +438,13 @@ export async function changeAgentWorkspace(
     logWarn('[cd] baseline snapshot not taken:', (err as Error).message);
   }
 
+  try {
+    setActiveSessionWorkspace(nextWorkspace);
+    startWorkspaceTracker(nextWorkspace);
+  } catch (err) {
+    logWarn('[cd] workspace history tracker not started:', (err as Error).message);
+  }
+
   // Wipe session-scoped state that was tied to the old workspace.
   agent.todos = [];
   agent.currentTool = undefined;
@@ -446,6 +461,11 @@ export async function changeAgentWorkspace(
 
 /** Graceful shutdown: cancel sub-agents, disconnect MCP, save state. */
 export async function shutdownAgent(agent: AgentCore, messageQueue?: string[]): Promise<void> {
+  try {
+    stopWorkspaceTracker();
+  } catch {
+    // ignore tracker cleanup errors
+  }
   const ws = agent.cfg.workspace;
   if (agent.messages.length > 0 && ws) {
     autoSaveSession(agent.messages, agent.todos, ws, agent.cfg, messageQueue);

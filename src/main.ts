@@ -4,12 +4,15 @@
  *
  *   nanogent              → TUI
  *   nanogent tui          → TUI
+ *   nanogent --resume HASH
+ *   nanogent --sessions
  *   nanogent run --prompt "…"
  *   nanogent models|doctor
  */
 
 import { runCli } from './cli/index.js';
-import { printRootHelp } from './cli/help.js';
+import { printRootHelp, printTuiHelp } from './cli/help.js';
+import { parseTuiLaunchArgs } from './cli/tui-args.js';
 import { ensureBunAvailable, installBun } from './bun-detect.js';
 import { logCrash } from './log.js';
 
@@ -90,7 +93,8 @@ async function main(): Promise<number> {
   }
 
   try {
-    const isTui = argv.length === 0 || argv[0] === 'tui';
+    const launch = parseTuiLaunchArgs(argv);
+    const isTui = launch.kind !== 'not-tui';
     if (isTui && typeof (globalThis as Record<string, unknown>).Bun === 'undefined') {
       const { spawnSync } = await import('child_process');
       const bunPath = await ensureBunAvailable();
@@ -137,16 +141,29 @@ async function main(): Promise<number> {
       return 1;
     }
 
-    if (argv.length === 0) {
-      const { runTui } = await import('./opentui/index.js');
-      await runTui();
+    if (launch.kind === 'tui-help') {
+      printTuiHelp();
       return 0;
     }
 
-    if (cmd === 'tui') {
-      const { runTui } = await import('./opentui/index.js');
-      await runTui();
+    if (launch.kind === 'list-sessions') {
+      const { loadConfig } = await import('./config/index.js');
+      const { setActiveSessionWorkspace, formatSessionsForCli } = await import('./store.js');
+      const cfg = launch.workspace ? loadConfig({ workspace: launch.workspace }) : loadConfig();
+      setActiveSessionWorkspace(cfg.workspace);
+      console.log(formatSessionsForCli());
       return 0;
+    }
+
+    if (launch.kind === 'tui') {
+      if (launch.resume === '') {
+        console.error('Error: --resume requires a conversation hash.');
+        console.error('  nanogent --sessions');
+        console.error('  nanogent --resume HASH');
+        return 1;
+      }
+      const { runTui } = await import('./opentui/index.js');
+      return await runTui({ resume: launch.resume, workspace: launch.workspace });
     }
 
     return await runCli(argv);

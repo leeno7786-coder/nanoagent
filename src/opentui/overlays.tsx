@@ -59,8 +59,8 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.headerFg}> /todo Toggle todo sidebar (/todo add ...)</text>
       <text fg={theme.headerFg}> /skill List loaded skills</text>
       <text fg={theme.headerFg}> /skills Manage skills (F8) — create, enable, disable</text>
-      <text fg={theme.headerFg}> /sessions List saved sessions</text>
-      <text fg={theme.headerFg}> /resume [id] Resume latest or specific session</text>
+      <text fg={theme.headerFg}> /sessions List saved conversation hashes</text>
+      <text fg={theme.headerFg}> /resume [hash] Resume a conversation (unique prefix ok)</text>
       <text fg={theme.headerFg}> /rename [name] Rename current session</text>
       <text fg={theme.headerFg}> /copy [id] Copy message content to clipboard</text>
       <text fg={theme.headerFg}> /save [name] Save conversation</text>
@@ -70,6 +70,7 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.headerFg}> /snapshot [name] Capture a workspace snapshot</text>
       <text fg={theme.headerFg}> /diffs List saved snapshots, newest first</text>
       <text fg={theme.headerFg}> /rollback [name] Restore a snapshot (no name = baseline)</text>
+      <text fg={theme.headerFg}> /changes List files touched this session</text>
       <text fg={theme.headerFg}> /reload Reload config, skills, and LM Studio metadata</text>
       <text fg={theme.headerFg}> /theme [name] Switch color theme</text>
       <text fg={theme.headerFg}>

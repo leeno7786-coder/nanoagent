@@ -18,12 +18,19 @@ Commands:
   doctor    Check config and runtime connectivity
   todo      Manage your todo list
   tui       Interactive terminal UI (default)
+  resume    Resume a saved conversation by hash (TUI)
 
 Options:
-  -h, --help    Show help
+  -h, --help              Show help
+  -r, --resume <hash>     Load a conversation hash from .nanoagent/sessions
+      --sessions            List conversation hashes for this workspace and exit
+  -w, --workspace <path>  Workspace for TUI resume/list (default: launch dir)
 
 Examples:
   nanogent tui
+  nanogent --resume a1b2c3d4
+  nanogent resume a1b2
+  nanogent --sessions
   nanogent run --prompt "summarize package.json"
   echo "list src files" | nanogent run --stdin --workspace .
   nanogent models --base-url http://127.0.0.1:1234/v1
@@ -98,13 +105,26 @@ Examples:
 
 export function printTuiHelp(): void {
   console.log(`Usage:
-  nanogent tui
+  nanogent tui [options]
+  nanogent --resume <hash>
+  nanogent resume <hash>
+  nanogent --sessions
 
-Launches the full-screen OpenTUI interface.
+Launches the full-screen OpenTUI interface. Conversations are stored as
+8-hex hashes in <workspace>/.nanoagent/sessions.
+
+Options:
+  -r, --resume, --session <hash>  Load a saved conversation (unique prefix ok)
+      --sessions                    List hashes in .nanoagent/sessions and exit
+  -w, --workspace <path>            Project directory (default: launch dir)
+  -h, --help                        Show help
 
 Examples:
   nanogent
   nanogent tui
+  nanogent --resume a1b2c3d4
+  nanogent tui --resume a1b2 -w ./my-project
+  nanogent --sessions -w ./my-project
 `);
 }
 

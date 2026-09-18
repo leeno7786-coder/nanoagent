@@ -2,6 +2,12 @@ import { syncTodoMessage } from '../agent-todos.js';
 import { now } from '../agent-utils.js';
 import type { AgentCore } from '../agent.js';
 import { capToolResultForLlm } from '../llm/tool-result-budget.js';
+import {
+  recordFileChange,
+  startWorkspaceTracker,
+  syncWorkspaceFromDisk,
+} from '../workspace-history.js';
+import { setActiveSessionWorkspace } from '../store.js';
 
 export async function checkSubAgentConsent(
   agent: AgentCore,
@@ -83,6 +89,20 @@ export async function handleSpecialToolResults(
         agent.todos = [];
         syncTodoMessage(agent);
         agent.onUpdate?.();
+        try {
+          const { hasBaselineSnapshot, takeBaselineSnapshot } = await import('../snapshots.js');
+          if (!hasBaselineSnapshot(result.workspace)) {
+            takeBaselineSnapshot(result.workspace);
+          }
+        } catch {
+          /* baseline is best-effort on tool-driven /cd */
+        }
+        try {
+          setActiveSessionWorkspace(result.workspace);
+          startWorkspaceTracker(result.workspace);
+        } catch {
+          /* tracker is best-effort */
+        }
       }
     } catch {
       // ignore parse errors
@@ -91,10 +111,28 @@ export async function handleSpecialToolResults(
 
   if (['write_file', 'edit_file', 'edit_file_lines'].includes(toolName)) {
     agent.toolCache.clear();
+    try {
+      const result = JSON.parse(output) as { ok?: boolean; path?: string; action?: string };
+      if (result.ok && typeof result.path === 'string') {
+        const action = result.action === 'write' ? 'create' : 'update';
+        const source = toolName === 'write_file' ? 'write' : 'edit';
+        recordFileChange(agent.cfg.workspace, result.path, action, source);
+      }
+    } catch {
+      /* ignore parse errors */
+    }
   }
 
   if (toolName === 'git_commit') {
     agent.toolCache.clear();
+  }
+
+  if (toolName === 'execute_command' || toolName === 'git_commit') {
+    try {
+      syncWorkspaceFromDisk(agent.cfg.workspace, 'shell');
+    } catch {
+      /* history sync is best-effort */
+    }
   }
 
   if (toolName === 'manage_todos') {

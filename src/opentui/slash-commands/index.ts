@@ -8,7 +8,14 @@ import {
 import { parseEffort, formatEffortAllowed, DEFAULT_EFFORT } from '../../config/effort.js';
 import { getDoctorReport, formatDoctorReport } from '../../cli/reports.js';
 import { buildModelCatalog, formatModelCatalog } from '../../providers/index.js';
-import { loadSessions, deleteSession, resumeSession, exportToMarkdown } from '../../store.js';
+import {
+  loadSessions,
+  deleteSession,
+  resumeSession,
+  exportToMarkdown,
+  allocateSessionHash,
+  setLiveSessionId,
+} from '../../store.js';
 import { copyToClipboard } from '../../clipboard.js';
 import { THEMES } from '../theme.js';
 import { build_memory_graph, get_graph_stats, get_analysis_report } from '../../graph/tools.js';
@@ -196,7 +203,8 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
         pushAssistant(
           agent,
           `Workspace changed to ${result.workspace}\n` +
-            `baseline snapshot: \`${result.workspace}/.nanoagent/snapshots/init.json\` (use \`/rollback\` to revert)`,
+            `baseline: \`${result.workspace}/.nanoagent/snapshots/init.json\` · worktree: \`.nanoagent/worktree\` · sessions: \`.nanoagent/sessions\`\n` +
+            `Use \`/rollback\` to revert files, \`/changes\` to list this run, \`/sessions\` to resume chat.`,
           setMessages
         );
       } else {
@@ -247,20 +255,20 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       return;
     }
     case 'sessions': {
-      const sessions = loadSessions().filter((s) => !s.id.startsWith('autosave-'));
+      const sessions = loadSessions();
       if (sessions.length > 0) {
         const list = sessions
           .map((s) => `${new Date(s.updatedAt).toLocaleDateString()} - ${s.id}`)
           .join('\n');
         pushAssistant(
           agent,
-          `Available sessions:\n${list}\n\nTo resume: /resume [id]`,
+          `Available sessions in \`${agent.cfg.workspace}/.nanoagent/sessions\`:\n${list}\n\nTo resume: /resume HASH  or  nanoagent --resume HASH`,
           setMessages
         );
       } else {
         pushAssistant(
           agent,
-          'No saved sessions found. Your current session will be auto-saved on exit.',
+          'No saved sessions in this project yet. Conversations auto-save to `.nanoagent/sessions` on exit. Resume later with `nanoagent --resume HASH`.',
           setMessages
         );
       }
@@ -271,7 +279,13 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       agent.todos = [];
       setMessages([]);
       setTodos([]);
-      pushAssistant(agent, 'Started a new session. Previous conversation cleared.', setMessages);
+      const hash = allocateSessionHash();
+      setLiveSessionId(hash);
+      pushAssistant(
+        agent,
+        `Started a new session (${hash}). Previous conversation cleared. Resume later with \`nanoagent --resume ${hash}\`.`,
+        setMessages
+      );
       return;
     }
     case 'delete-session': {
@@ -624,6 +638,29 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       }
       process.exit(0);
       return;
+    case 'changes': {
+      const { listHistory, listTouchedFiles } = await import('../../workspace-history.js');
+      const files = listTouchedFiles(agent.cfg.workspace);
+      if (files.length === 0) {
+        pushAssistant(
+          agent,
+          'No file changes recorded this session. Touched files are copied to `.nanoagent/worktree` automatically.',
+          setMessages
+        );
+        return;
+      }
+      const recent = listHistory(agent.cfg.workspace)
+        .slice(-40)
+        .map((e) => `${e.action.padEnd(6)} ${e.path} (${e.source})`);
+      pushAssistant(
+        agent,
+        `**Touched files (${files.length}):**\n${files.map((f) => `- ${f}`).join('\n')}\n\n` +
+          `**Journal (recent):**\n${recent.join('\n')}\n\n` +
+          `Originals: \`.nanoagent/history/originals\`. \`/rollback\` restores the init baseline.`,
+        setMessages
+      );
+      return;
+    }
     case 'snapshot': {
       const name = args.trim() || undefined;
       const { defaultSnapshotName, captureSnapshot } = await import('../../snapshots.js');

@@ -8,6 +8,9 @@ import {
   GLOBAL_CONFIG_FILE,
   ENV_FILE,
   SKILL_CONFIG_FILE,
+  SESSIONS_DIR_FOR,
+  WORKTREE_DIR_FOR,
+  HISTORY_DIR_FOR,
   __resetPathsCacheForTests,
 } from './config/paths.js';
 
@@ -78,6 +81,14 @@ describe('canonical install root', () => {
     // A planted .nanogent.json in the cwd must not be picked up.
     writeFileSync(join(tmpRoot, 'skills', 'decoy.txt'), 'not a config');
     expect(GLOBAL_CONFIG_FILE()).not.toMatch(/decoy/);
+    cleanup();
+  });
+
+  it('per-workspace history dirs live under <workspace>/.nanoagent', () => {
+    const ws = join(tmpRoot, 'proj');
+    expect(SESSIONS_DIR_FOR(ws)).toBe(join(ws, '.nanoagent', 'sessions'));
+    expect(WORKTREE_DIR_FOR(ws)).toBe(join(ws, '.nanoagent', 'worktree'));
+    expect(HISTORY_DIR_FOR(ws)).toBe(join(ws, '.nanoagent', 'history'));
     cleanup();
   });
 });

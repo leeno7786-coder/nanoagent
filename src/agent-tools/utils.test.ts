@@ -2,18 +2,24 @@
  * Tests for agent-tools/utils.ts special tool result handling.
  */
 
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, afterEach } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 import type { AgentCore } from '../agent.js';
 import { handleSpecialToolResults } from './utils.js';
+import { takeBaselineSnapshot } from '../snapshots.js';
+import { listHistory, startWorkspaceTracker, stopWorkspaceTracker } from '../workspace-history.js';
 
-function makeAgent(todos: Array<{ id: string; text: string; done: boolean }>) {
+function makeAgent(todos: Array<{ id: string; text: string; done: boolean }>, workspace = '') {
   return {
     todos: todos.map((t) => ({ ...t, createdAt: 'now' })),
     messages: [],
     toolCache: { clear: () => {} },
     onUpdate: undefined,
     reconfigure: async () => {},
+    cfg: { workspace },
   } as unknown as AgentCore;
 }
 
@@ -107,5 +113,67 @@ describe('handleSpecialToolResults manage_todos', () => {
     );
     const rewritten = JSON.parse(agent.messages[0].content as string);
     expect(rewritten.todos).toEqual([]);
+  });
+});
+
+describe('handleSpecialToolResults file history', () => {
+  let projectDir: string;
+
+  afterEach(() => {
+    stopWorkspaceTracker();
+    if (projectDir) rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  function seedProject(): string {
+    projectDir = mkdtempSync(join(tmpdir(), 'nanoagent-utils-hist-'));
+    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 1;\n');
+    takeBaselineSnapshot(projectDir);
+    return projectDir;
+  }
+
+  it('records a successful write_file into the worktree', async () => {
+    const ws = seedProject();
+    writeFileSync(join(ws, 'index.ts'), 'export const x = 2;\n');
+    const agent = makeAgent([], ws);
+    await handleSpecialToolResults(
+      agent,
+      'write_file',
+      JSON.stringify({ ok: true, path: 'index.ts', action: 'update' }),
+      'tc1'
+    );
+    expect(readFileSync(join(ws, '.nanoagent', 'worktree', 'index.ts'), 'utf-8')).toBe(
+      'export const x = 2;\n'
+    );
+    expect(listHistory(ws).some((e) => e.path === 'index.ts' && e.source === 'write')).toBe(true);
+  });
+
+  it('does not record a failed write_file', async () => {
+    const ws = seedProject();
+    const agent = makeAgent([], ws);
+    await handleSpecialToolResults(
+      agent,
+      'write_file',
+      JSON.stringify({ ok: false, error: 'nope' }),
+      'tc1'
+    );
+    expect(existsSync(join(ws, '.nanoagent', 'worktree', 'index.ts'))).toBe(false);
+    expect(listHistory(ws)).toEqual([]);
+  });
+
+  it('syncs disk changes after execute_command', async () => {
+    const ws = seedProject();
+    startWorkspaceTracker(ws);
+    writeFileSync(join(ws, 'index.ts'), 'export const x = 77;\n');
+    const agent = makeAgent([], ws);
+    await handleSpecialToolResults(
+      agent,
+      'execute_command',
+      JSON.stringify({ ok: true, code: 0 }),
+      'tc1'
+    );
+    expect(readFileSync(join(ws, '.nanoagent', 'worktree', 'index.ts'), 'utf-8')).toBe(
+      'export const x = 77;\n'
+    );
+    expect(listHistory(ws).some((e) => e.path === 'index.ts')).toBe(true);
   });
 });

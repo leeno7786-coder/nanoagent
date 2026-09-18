@@ -11,6 +11,14 @@ import type { AgentCore } from '../agent.js';
 import type { Config, Message, Todo } from '../types.js';
 import { PermissionManager } from '../security/permissions.js';
 import { handleSlashCommand, type SlashCommandContext } from './slash-commands/index.js';
+import { stopWorkspaceTracker } from '../workspace-history.js';
+import {
+  getLiveSessionId,
+  saveSession,
+  setActiveSessionWorkspace,
+  setLiveSessionId,
+} from '../store.js';
+import type { Session } from '../types.js';
 
 function makeConfig(ws: string): Config {
   return {
@@ -199,6 +207,9 @@ describe('handleSlashCommand', () => {
   });
 
   afterEach(() => {
+    stopWorkspaceTracker();
+    setActiveSessionWorkspace(undefined);
+    setLiveSessionId(undefined);
     rmSync(ws, { recursive: true, force: true });
   });
 
@@ -259,6 +270,49 @@ describe('handleSlashCommand', () => {
     expect(lastAssistantContent(h)).toContain('new session');
     // history cleared: only the announcement remains
     expect(stub.agent.messages.filter((m) => m.role === 'user')).toEqual([]);
+  });
+
+  it('/new allocates a new conversation hash', async () => {
+    setLiveSessionId('aaaaaaaa');
+    await handleSlashCommand('/new', h.ctx);
+    const next = getLiveSessionId();
+    expect(next).toMatch(/^[0-9a-f]{8}$/);
+    expect(next).not.toBe('aaaaaaaa');
+    expect(lastAssistantContent(h)).toContain(next);
+  });
+
+  it('/sessions lists conversation hashes from the project directory', async () => {
+    setActiveSessionWorkspace(ws);
+    saveSession({
+      id: 'a1b2c3d4',
+      messages: [{ id: 'm1', role: 'user', content: 'prior chat', timestamp: 1 }],
+      todos: [],
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    await handleSlashCommand('/sessions', h.ctx);
+    const text = lastAssistantContent(h);
+    expect(text).toContain('a1b2c3d4');
+    expect(text).toContain('--resume');
+  });
+
+  it('/resume HASH loads a saved conversation by unique prefix', async () => {
+    setActiveSessionWorkspace(ws);
+    const saved: Session = {
+      id: 'c0ffee00',
+      messages: [{ id: 'm1', role: 'user', content: 'resume me', timestamp: 1 }],
+      todos: [],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    saveSession(saved);
+    let loaded: Session | undefined;
+    h.ctx.handleLoad = async (session) => {
+      loaded = session;
+    };
+    await handleSlashCommand('/resume c0ff', h.ctx);
+    expect(loaded?.id).toBe('c0ffee00');
+    expect(getLiveSessionId()).toBe('c0ffee00');
   });
 
   it('/cd with no args shows the current workspace', async () => {
@@ -526,6 +580,9 @@ describe('snapshot / rollback slash commands', () => {
   });
 
   afterEach(() => {
+    stopWorkspaceTracker();
+    setActiveSessionWorkspace(undefined);
+    setLiveSessionId(undefined);
     rmSync(ws, { recursive: true, force: true });
   });
 
@@ -576,5 +633,20 @@ describe('snapshot / rollback slash commands', () => {
     await handleSlashCommand('/snapshot known', h.ctx);
     await handleSlashCommand('/rollback ghost', h.ctx);
     expect(lastAssistantContent(h)).toMatch(/snapshot not found|Failed to rollback/);
+  });
+
+  it('/changes lists files recorded in the worktree journal', async () => {
+    const { recordFileChange } = require('../workspace-history.js');
+    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 99;\n');
+    recordFileChange(projectDir, 'index.ts', 'update', 'write');
+    await handleSlashCommand('/changes', h.ctx);
+    const content = lastAssistantContent(h);
+    expect(content).toContain('index.ts');
+    expect(content).toContain('Touched files');
+  });
+
+  it('/changes with no journal reports that nothing was recorded', async () => {
+    await handleSlashCommand('/changes', h.ctx);
+    expect(lastAssistantContent(h)).toContain('No file changes recorded');
   });
 });
