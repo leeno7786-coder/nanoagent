@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.0** (`@omega3_0/nanoagent`) — opening a project now records a live worktree of every file the agent touches under `<workspace>/.nanoagent/worktree`, with originals + a journal for rollback, and saves conversation history as 8-hex hashes in `<workspace>/.nanoagent/sessions` (resume with `nanoagent --resume HASH`). Named `/snapshot` checkpoints remain optional. Builds on 2.6.5's snapshot `EPERM` skip for caches and unreadable dirs.
+Current release: **2.7.1** (`@omega3_0/nanoagent`) — patch release focused on hardening release automation (tag/version verification, deterministic install + CI gate before publish, trusted OIDC npm publishing) while preserving native package assets (`.deb` + Windows zip) on GitHub Releases.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -111,11 +111,11 @@ sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanoagent
 
 ### Release automation
 
-Releases are driven by annotated `v*` tags. After committing a version bump, push both `main` and the matching tag; GitHub Actions runs the CI/package jobs, publishes the npm package through trusted OIDC publishing, builds the Linux `.deb` and Windows zip, and creates the GitHub Release:
+Releases are driven by annotated `v*` tags. After committing a version bump, push both `main` and the matching tag; GitHub Actions validates that the tag version matches `package.json`, runs deterministic install + CI checks, publishes the npm package through trusted OIDC publishing, builds the Linux `.deb` and Windows zip, and creates the GitHub Release:
 
 ```bash
 npm version patch --no-git-tag-version
-git add package.json package-lock.json README.md src
+git add package.json bun.lock README.md .github/workflows/release.yml .github/workflows/ci.yml
 git commit -m "release: v$(node -p \"require('./package.json').version\")"
 git tag -a "v$(node -p \"require('./package.json').version\")" -m "Release v$(node -p \"require('./package.json').version\")"
 git push origin main --follow-tags
@@ -474,6 +474,12 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.1 — Release workflow hardening
+
+- **Safer tag-driven releases.** The release workflow now verifies `v*` tag version = `package.json` version before publish.
+- **Deterministic validation before npm publish.** Tag releases run `bun install --frozen-lockfile` and `npm run ci` before packing/publishing.
+- **Trusted npm publish + native artifacts preserved.** npm publish uses GitHub OIDC trusted publishing with provenance and still attaches the npm tarball, Linux `.deb`, and Windows zip to the GitHub Release.
 
 ### 2.7.0 — Live worktree history and per-project sessions
 
