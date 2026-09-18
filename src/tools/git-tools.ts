@@ -2,7 +2,15 @@ import { spawn, type ChildProcess } from 'child_process';
 
 import type { Config } from '../types.js';
 import type { Tool } from './shared.js';
-import { NULL_BYTE_RE, getSanitizedEnv, commandValidationError } from './shared.js';
+import { NULL_BYTE_RE, commandValidationError, getSanitizedEnv, isNanoagentRel } from './shared.js';
+
+/** Porcelain path from a `git status --porcelain` line (handles renames). */
+function porcelainPath(line: string): string {
+  const rest = line.length >= 3 ? line.slice(3) : line;
+  const unquoted = rest.replace(/^"(.*)"$/, '$1');
+  const parts = unquoted.split(' -> ');
+  return (parts[parts.length - 1] || '').replace(/\\/g, '/');
+}
 
 /**
  * Run a git command directly (bypasses PowerShell translation for speed on Windows).
@@ -132,7 +140,8 @@ export const gitStatusTool: Tool = {
     const fileLines = status.stdout
       .split('\n')
       .map((l) => l.trimEnd())
-      .filter((l) => l.trim());
+      .filter((l) => l.trim())
+      .filter((l) => !isNanoagentRel(porcelainPath(l)));
     const hasChanges = fileLines.length > 0;
     const MAX_FILES = 80;
     const truncated = fileLines.length > MAX_FILES;

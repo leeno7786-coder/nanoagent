@@ -2,7 +2,13 @@ import { existsSync, readdirSync, statSync } from 'fs';
 import { resolve } from 'path';
 
 import type { Tool } from '../shared.js';
-import { rel, safe, isAccessBlocked, sandboxErrorMessage } from '../shared.js';
+import {
+  rel,
+  safe,
+  isAccessBlocked,
+  nanoagentHarnessError,
+  sandboxErrorMessage,
+} from '../shared.js';
 
 export const changeWorkspaceTool: Tool = {
   name: 'change_workspace',
@@ -17,6 +23,10 @@ export const changeWorkspaceTool: Tool = {
   execute: (args, ws) => {
     try {
       const next = resolve(ws, args.path);
+      const harness = nanoagentHarnessError(rel(next, ws));
+      if (harness) {
+        return JSON.stringify({ ok: false, error: harness });
+      }
       if (!existsSync(next) || !statSync(next).isDirectory()) {
         return JSON.stringify({
           ok: false,
@@ -47,13 +57,18 @@ export const listDirTool: Tool = {
   execute: (args, ws, cfg) => {
     try {
       const p = safe(args.path || '.', ws, cfg);
+      const listedRel = rel(p, ws);
+      const harness = nanoagentHarnessError(listedRel);
+      if (harness) {
+        return JSON.stringify({ ok: false, error: harness });
+      }
       const entries = readdirSync(p, { withFileTypes: true })
         .slice(0, Math.max(1, Number(args.limit || 200)))
         .flatMap((e) => {
           const ep = resolve(p, e.name);
           // Hide blocked entries (.env, keys, ...) entirely — read_file and
           // stat_path deny them, so list_dir must not leak their names/sizes.
-          if (isAccessBlocked(ep, cfg)) return [];
+          if (e.name === '.nanoagent' || isAccessBlocked(ep, cfg)) return [];
           let st;
           try {
             st = statSync(ep);
@@ -86,6 +101,10 @@ export const statPathTool: Tool = {
   execute: (args, ws, cfg) => {
     try {
       const p = safe(args.path, ws, cfg);
+      const harness = nanoagentHarnessError(rel(p, ws));
+      if (harness) {
+        return JSON.stringify({ ok: false, error: harness });
+      }
       if (isAccessBlocked(p, cfg)) {
         return JSON.stringify({ ok: false, error: 'Access denied (blocked path)' });
       }

@@ -194,6 +194,16 @@ describe('SecurityManager', () => {
       expect(result.ok).toBe(false);
     });
 
+    it('names .nanoagent as this workspace harness, not an outside project', () => {
+      const result = securityManager.validateFileAccess(
+        '/test/workspace/.nanoagent/sessions/abcd1234.json',
+        'read'
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/this NanoAgent workspace's own harness state/i);
+      expect(result.error).toMatch(/not an outside project folder/i);
+    });
+
     it('should block write access to blocked paths', () => {
       const result = securityManager.validateFileAccess('/test/workspace/.env', 'write');
       expect(result.ok).toBe(false);
@@ -462,5 +472,7 @@ describe('DEFAULT_SECURITY_CONFIG', () => {
     expect(blocked).toContain('**/.git/**');
     expect(blocked).toContain('**/.ssh/**');
     expect(blocked).toContain('**/node_modules/**');
+    expect(blocked).toContain('**/.nanoagent');
+    expect(blocked).toContain('**/.nanoagent/**');
   });
 });

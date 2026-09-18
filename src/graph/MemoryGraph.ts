@@ -70,6 +70,7 @@ export class MemoryGraph {
         'dist',
         'build',
         '.git',
+        '.nanoagent',
         '.qwen-graph',
         '.next',
         '.turbo',

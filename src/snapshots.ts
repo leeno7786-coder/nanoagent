@@ -30,6 +30,7 @@ import {
 } from 'fs';
 import { join, relative, sep } from 'path';
 import { SKIP_DIRS } from './tools/shared.js';
+import { ensureWorkspaceGitignore } from './workspace-history.js';
 
 interface SnapshotManifest {
   name: string;
@@ -213,6 +214,7 @@ export function takeBaselineSnapshot(workspace: string): SnapshotInfo {
   if (!existsSync(treePath)) {
     throw new Error(`[nanoagent] cannot take baseline: workspace does not exist: ${treePath}`);
   }
+  ensureWorkspaceGitignore(workspace);
   const dir = snapshotsDir(workspace);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const files = snapshotTree(treePath);

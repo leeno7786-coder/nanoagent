@@ -35,4 +35,17 @@ describe('tool-batching prompt lines', () => {
     expect(extras).toMatch(/Repeating git_status/);
     expect(extras).toMatch(/stop calling tools/i);
   });
+
+  it('names .nanoagent as this workspace harness, not an outside project', () => {
+    expect(buildSmallModelPrompt(ctx)).toMatch(/this NanoAgent workspace's own harness state/i);
+    expect(buildSmallModelPrompt(ctx)).toMatch(/not an outside project folder/i);
+    expect(buildLargeModelPrompt(ctx)).toMatch(/this NanoAgent workspace's own harness state/i);
+    expect(buildLargeModelPrompt(ctx)).toMatch(/not an outside project folder/i);
+    const extras = appendPromptExtras('Base prompt', ctx);
+    expect(extras).toMatch(/## Harness state/);
+    expect(extras).toMatch(/belongs to this run/i);
+    expect(extras).toMatch(/not an outside project folder/i);
+    expect(extras).toMatch(/not the user project/i);
+    expect(extras).toMatch(/Do not list, read, edit, cd into, or commit it/);
+  });
 });

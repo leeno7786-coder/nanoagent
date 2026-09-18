@@ -26,13 +26,53 @@ import {
   type FSWatcher,
 } from 'fs';
 import { dirname, join, relative, resolve, sep } from 'path';
-import { SKIP_DIRS } from './tools/shared.js';
 import {
   HISTORY_DIR_FOR,
   JOURNAL_FILE_FOR,
   SESSIONS_DIR_FOR,
   WORKTREE_DIR_FOR,
 } from './config/paths.js';
+import { SKIP_DIRS } from './tools/shared.js';
+
+const NANOAGENT_GITIGNORE_LINE = '.nanoagent/';
+const NANOAGENT_GITIGNORE_COMMENT =
+  '# NanoAgent history (sessions, worktree, snapshots) — not project source';
+
+/** True when a .gitignore already names `.nanoagent` (including a negation). */
+export function workspaceGitignoreHasNanoagent(content: string): boolean {
+  return content.split(/\r?\n/).some((line) => {
+    const raw = line.trim();
+    if (!raw || raw.startsWith('#')) return false;
+    const t = raw.startsWith('!') ? raw.slice(1).trim() : raw;
+    return /^(?:\/|\*\*\/)?\.nanoagent\/?$/.test(t);
+  });
+}
+
+/**
+ * Append `.nanoagent/` to `<workspace>/.gitignore` so git status / git add
+ * do not treat agent history as project files. Idempotent.
+ * Returns true when the file was written.
+ */
+export function ensureWorkspaceGitignore(workspace: string): boolean {
+  const file = join(workspace, '.gitignore');
+  let content = '';
+  try {
+    if (existsSync(file)) {
+      content = readFileSync(file, 'utf-8');
+      if (workspaceGitignoreHasNanoagent(content)) return false;
+    }
+  } catch {
+    return false;
+  }
+  const prefix = content.length === 0 || content.endsWith('\n') ? '' : '\n';
+  const block = `${prefix}${NANOAGENT_GITIGNORE_COMMENT}\n${NANOAGENT_GITIGNORE_LINE}\n`;
+  try {
+    writeFileSync(file, content + block, 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const MAX_COPY_BYTES = 10 * 1024 * 1024;
 
@@ -71,6 +111,7 @@ function originalsDir(workspace: string): string {
 }
 
 export function ensureWorkspaceLayout(workspace: string): void {
+  ensureWorkspaceGitignore(workspace);
   mkdirSync(WORKTREE_DIR_FOR(workspace), { recursive: true });
   mkdirSync(originalsDir(workspace), { recursive: true });
   mkdirSync(SESSIONS_DIR_FOR(workspace), { recursive: true });

@@ -123,6 +123,21 @@ describe('tools', () => {
     expect(out.entries.map((e: { name: string }) => e.name)).toContain('foo.txt');
   });
 
+  it('list_dir hides .nanoagent harness state', () => {
+    mkdirSync(join(ws, '.nanoagent', 'sessions'), { recursive: true });
+    writeFileSync(join(ws, '.nanoagent', 'sessions', 'abcd1234.json'), '{}', 'utf-8');
+    writeFileSync(join(ws, 'app.ts'), '', 'utf-8');
+    const listDir = tools.find((t) => t.name === 'list_dir')!;
+    const root = JSON.parse(listDir.execute({ path: '.' }, ws));
+    expect(root.ok).toBe(true);
+    expect(root.entries.map((e: { name: string }) => e.name)).toContain('app.ts');
+    expect(root.entries.map((e: { name: string }) => e.name)).not.toContain('.nanoagent');
+    const inner = JSON.parse(listDir.execute({ path: '.nanoagent' }, ws));
+    expect(inner.ok).toBe(false);
+    expect(inner.error).toMatch(/this NanoAgent workspace's own harness state/i);
+    expect(inner.error).toMatch(/not an outside project folder/i);
+  });
+
   it('git_status returns status in a git repo', async () => {
     execSync('git init', { cwd: ws, stdio: 'ignore' });
     const gitStatus = tools.find((t) => t.name === 'git_status')!;
@@ -148,6 +163,22 @@ describe('tools', () => {
     const listed = (out.files as string[]).join('\n');
     expect(listed).toContain('tracked.txt');
     expect(listed).toContain('new.txt');
+  });
+
+  it('git_status omits .nanoagent harness paths even when unignored', async () => {
+    execSync('git init', { cwd: ws, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: ws, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: ws, stdio: 'ignore' });
+    writeFileSync(join(ws, 'app.ts'), 'export {}\n', 'utf-8');
+    mkdirSync(join(ws, '.nanoagent', 'sessions'), { recursive: true });
+    writeFileSync(join(ws, '.nanoagent', 'sessions', 'abcd1234.json'), '{}', 'utf-8');
+    execSync('git add app.ts && git commit -m "initial"', { cwd: ws, stdio: 'ignore' });
+
+    const gitStatus = tools.find((t) => t.name === 'git_status')!;
+    const out = JSON.parse(await gitStatus.executeAsync!({}, ws));
+    expect(out.ok).toBe(true);
+    const listed = (out.files as string[]).join('\n');
+    expect(listed).not.toMatch(/\.nanoagent/);
   });
 
   it('git_diff returns differences in repo', async () => {
@@ -247,6 +278,15 @@ describe('tools', () => {
     const out = JSON.parse(changeWs.execute({ path: '..' }, ws));
     expect(out.ok).toBe(true);
     expect(out.workspace).toBeDefined();
+  });
+
+  it('change_workspace refuses .nanoagent harness paths', () => {
+    mkdirSync(join(ws, '.nanoagent', 'worktree'), { recursive: true });
+    const changeWs = tools.find((t) => t.name === 'change_workspace')!;
+    const out = JSON.parse(changeWs.execute({ path: '.nanoagent/worktree' }, ws));
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/this NanoAgent workspace's own harness state/i);
+    expect(out.error).toMatch(/not an outside project folder/i);
   });
 
   it('toOpenAI converts tools to OpenAI format', () => {

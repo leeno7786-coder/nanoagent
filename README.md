@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.1** (`@omega3_0/nanoagent`) — patch release focused on hardening release automation (tag/version verification, deterministic install + CI gate before publish, trusted OIDC npm publishing) while preserving native package assets (`.deb` + Windows zip) on GitHub Releases.
+Current release: **2.7.2** (`@omega3_0/nanoagent`) — treats `<workspace>/.nanoagent/` as this workspace's own harness state (gitignore, hidden from discovery/git tools, blocked from the model) so sessions/worktree/snapshots are not mistaken for an outside project.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -290,11 +290,13 @@ Tools **edit the directory you pointed at directly**. `cfg.workspace` is your pr
 
 - On first agent init we capture a baseline snapshot of project files (skipping VCS, dependency, and cache dirs such as `.git`, `node_modules`, and `.pytest_cache`).
 - A watcher plus write/shell hooks then copy **every file touched during the run** into `<workspace>/.nanoagent/worktree`, save the pre-edit original once, and append a journal. You do not need `/snapshot` for that history.
+- **`.nanoagent/` is this NanoAgent workspace's own harness state, not an outside project.** On first init NanoAgent appends `.nanoagent/` to the project's `.gitignore` (idempotent). Tools hide it from `list_dir` / search / `git_status`, block reads/writes/`change_workspace` into it, and the system prompt tells the model the tree belongs to this run (sessions/worktree/snapshots) — not a second workspace and not files to commit. Use `/changes`, `/sessions`, and `/rollback`.
 - Named `/snapshot` checkpoints are still available as extra restore points. Unreadable directories are skipped so a locked cache folder cannot abort capture. `/rollback` reverts to the baseline; `/rollback <name>` reverts to a named one. `/changes` lists files recorded this session.
 
 ```text
 <workspace>/                        # your project (--workspace)
-├── .nanoagent/                     # agent-owned project history
+├── .gitignore                      # auto-gains `.nanoagent/` so git ignores harness state
+├── .nanoagent/                     # this workspace's NanoAgent harness state (not an outside project)
 │   ├── snapshots/
 │   │   ├── init.json               # baseline (taken at agent init)
 │   │   ├── pre-refactor.json       # optional /snapshot pre-refactor
@@ -474,6 +476,10 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.2 — Treat `.nanoagent/` as harness state
+
+- **`.nanoagent/` is this workspace's harness state.** Auto-added to the project `.gitignore`, hidden from discovery/git tools, blocked as a file-access path (including `change_workspace`), and named in the system prompt as part of this NanoAgent run — not an outside project folder.
 
 ### 2.7.1 — Release workflow hardening
 
