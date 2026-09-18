@@ -479,7 +479,7 @@ NANOAGENT_ROOT/
 
 - **Safer tag-driven releases.** The release workflow now verifies `v*` tag version = `package.json` version before publish.
 - **Deterministic validation before npm publish.** Tag releases run `bun install --frozen-lockfile` and `npm run ci` before packing/publishing.
-- **Trusted npm publish + native artifacts preserved.** npm publish uses GitHub OIDC trusted publishing with provenance and still attaches the npm tarball, Linux `.deb`, and Windows zip to the GitHub Release.
+- **Trusted npm publish + native artifacts preserved.** npm publish uses GitHub OIDC trusted publishing and still attaches the npm tarball, Linux `.deb`, and Windows zip to the GitHub Release.
 
 ### 2.7.0 — Live worktree history and per-project sessions
 

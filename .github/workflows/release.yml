@@ -63,7 +63,7 @@ jobs:
             echo "Registry returned an unexpected version: $PUBLISHED" >&2
             exit 1
           else
-            npm publish --provenance --access public
+            npm publish --access public
           fi
 
       - name: Install zip tools
