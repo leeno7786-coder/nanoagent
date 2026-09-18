@@ -11,7 +11,7 @@
 
 Current release: **2.6.4** (`@omega3_0/nanoagent`) — message queue while the agent is busy (auto-drain, in-place edit, `/queue`, session restore), interactive `question` tool with a TUI overlay for mid-run choices, and reliability fixes across 2.6.x: queue drain races and shutdown persistence, `reloadAgentFromDisk` config preservation, settings-overlay catalog sync, and a Windows/Bun stdin race fix after renderer init. Builds on 2.5.8's synchronized context accounting and the 2.5.x TUI polish pass.
 
-An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and other OpenAI-compatible providers). Run locally, think globally.
+An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
 ---
 
@@ -463,7 +463,7 @@ NANOAGENT_ROOT/
 - **Queue data loss on shutdown** — `shutdownAgent` passes `messageQueue` through to `autoSaveSession` so headless/CLI exit paths do not drop queued messages.
 - **Overflow escalation** — non-streaming overflow recovery passes `overflowRetries` to `forceCompactContext`; first overflow targets 10% of the window instead of 20%.
 - **`reloadAgentFromDisk` data loss** — `/config reload` preserves all config keys via spread + `extractPreservedFields()` instead of a cherry-picked field list.
-- **Settings overlay** — MCP config is cached with a revision counter; model catalog index matches on `providerId` + `modelId` to avoid cross-provider collisions.
+- **Settings overlay** — MCP config is cached with a revision counter; model catalog index prefers `providerId` + `modelId` matches to reduce cross-provider collisions.
 - **Queue drain** — user notice when a queued message is dropped after 3 retries; dead code removed from `/queue remove`.
 - **Misc** — stale `explore_subagent` error path updated to `config/nanogent.json`; duplicate `maxBackgroundSubAgents` removed from advanced settings.
 
@@ -474,7 +474,7 @@ NANOAGENT_ROOT/
 
 ### 2.6.1 — Message queue
 
-- **Message queue** — send messages while the agent is busy; up to 20 queued, auto-drained when idle, persisted on session save/restore.
+- **Message queue** — send messages while the agent is busy; up to 20 queued, auto-drained when idle, and restored when present in persisted sessions (including autosave/shutdown saves).
 - **`/queue`** — list, `/queue remove <N>`, and `/queue clear`.
 - **Edit queued messages** — ↑ enters edit mode when the input is empty; save edits in place.
 - **Reliability** — drain/requeue fixes, retry tracking, nav inversion fix, persistence across restore.
