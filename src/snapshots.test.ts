@@ -102,21 +102,20 @@ describe('named snapshots', () => {
 
   it('listSnapshots returns newest first', () => {
     captureSnapshot(projectDir, 'first');
-    // Pin first.createdAt to an older timestamp so first sorts last.
-    const path = join(projectDir, '.nanoagent', 'snapshots', 'first.json');
-    const data = JSON.parse(readFileSync(path, 'utf-8'));
-    data.createdAt = '2020-01-01T00:00:00.000Z';
-    writeFileSync(path, JSON.stringify(data), 'utf-8');
     captureSnapshot(projectDir, 'second');
+    const dir = join(projectDir, '.nanoagent', 'snapshots');
+    const pin = (name: string, createdAt: string) => {
+      const file = join(dir, `${name}.json`);
+      const data = JSON.parse(readFileSync(file, 'utf-8'));
+      data.createdAt = createdAt;
+      writeFileSync(file, JSON.stringify(data), 'utf-8');
+    };
+    // Pin timestamps so order does not depend on same-millisecond captures.
+    pin('init', '2019-01-01T00:00:00.000Z');
+    pin('first', '2020-01-01T00:00:00.000Z');
+    pin('second', '2021-01-01T00:00:00.000Z');
     const list = listSnapshots(projectDir);
-    // init.json (baseline) + first + second = 3 total.
-    expect(list.length).toBe(3);
-    expect(list[0]!.name).toBe('second');
-    // The other two are init (real timestamp) and first (pinned 2020);
-    // order between them is non-deterministic from this test's POV.
-    const others = new Set([list[1]!.name, list[2]!.name]);
-    expect(others.has('init')).toBe(true);
-    expect(others.has('first')).toBe(true);
+    expect(list.map((s) => s.name)).toEqual(['second', 'first', 'init']);
   });
 
   it('deleteSnapshot removes the file', () => {
