@@ -2,6 +2,7 @@
  * Regression tests for run-loop review fixes:
  * - sequential tool results route through ContextManager (no dangling tool_calls)
  * - stuck-loop guard breaks on repeated identical tool-call signatures
+ * - repeating git_status/git_diff is blocked so review tasks can finish
  * - abort mid-stream strips un-executed toolCalls from the assistant message
  * - reasoning-only turns never reach the API as empty assistant messages
  * - tool outputs are sanitized for secrets before entering history
@@ -205,6 +206,62 @@ describe('run-loop review fixes', () => {
       (m.toolCalls ?? []).filter((tc) => !toolResultIds.has(tc.id))
     );
     expect(danglingCalls).toEqual([]);
+  }, 20000);
+
+  it('blocks a second git_status in the same turn and lets the model write findings', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    scripted.push([
+      {
+        toolCalls: [{ id: 'call-gs-1', name: 'git_status', arguments: '{}' }],
+      },
+    ]);
+    scripted.push([
+      {
+        toolCalls: [{ id: 'call-gs-2', name: 'git_status', arguments: '{}' }],
+      },
+    ]);
+    scripted.push([
+      { content: '## Findings\nNothing to review — working tree already inspected.' },
+    ]);
+
+    await agent.run('review the codebase');
+
+    const first = agent.messages.find((m) => m.role === 'tool' && m.toolCallId === 'call-gs-1');
+    const second = agent.messages.find((m) => m.role === 'tool' && m.toolCallId === 'call-gs-2');
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect(second!.content).toMatch(/already|duplicate/i);
+    const last = agent.messages[agent.messages.length - 1];
+    expect(last.role).toBe('assistant');
+    expect(last.content).toContain('Findings');
+    expect(agent.state).toBe('idle');
+  }, 20000);
+
+  it('stops an alternating git_status/git_diff review loop that never writes findings', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    // First pair is genuine discovery. After that the same two tools
+    // alternate — the identical-signature stuck-loop never fires, which is
+    // the live DeepSeek review-the-codebase failure mode.
+    scripted.push([{ toolCalls: [{ id: 'gs-1', name: 'git_status', arguments: '{}' }] }]);
+    scripted.push([{ toolCalls: [{ id: 'gd-1', name: 'git_diff', arguments: '{}' }] }]);
+    for (let i = 0; i < 6; i++) {
+      const name = i % 2 === 0 ? 'git_status' : 'git_diff';
+      scripted.push([{ toolCalls: [{ id: `dup-${i}`, name, arguments: '{}' }] }]);
+    }
+    scripted.push([{ content: 'should not be reached' }]);
+
+    await agent.run('review the codebase');
+
+    const notice = agent.messages.find(
+      (m) => m.role === 'assistant' && /stuck|duplicate|circling/i.test(m.content)
+    );
+    expect(notice).toBeDefined();
+    expect(agent.messages.some((m) => m.content === 'should not be reached')).toBe(false);
+    expect(agent.state).toBe('idle');
   }, 20000);
 
   it('breaks the loop after 3 consecutive identical tool-call signatures', async () => {

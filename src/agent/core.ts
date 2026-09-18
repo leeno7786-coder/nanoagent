@@ -44,6 +44,7 @@ import {
 } from '../agent-messages.js';
 import { agentRun } from './run.js';
 import { estimateUsageCostUsd } from '../llm/cost.js';
+import { createToolRepeatState, type ToolRepeatState } from './tool-repeat.js';
 
 /**
  * Core agent orchestrator: manages conversation state, tool execution,
@@ -186,6 +187,8 @@ export class AgentCore {
   public maxBackgroundSubAgents: number;
   /** Counter for continuous tool rounds before checking in with user. */
   public consecutiveToolRounds = 0;
+  /** Per-user-turn tool-repeat guard (git_status/git_diff/same-read circles). */
+  public toolRepeat: ToolRepeatState = createToolRepeatState();
 
   /**
    * Snapshot of the live background sub-agent handles for the TUI. Returns a

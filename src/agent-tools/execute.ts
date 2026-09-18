@@ -4,6 +4,7 @@ import type { AgentCore } from '../agent.js';
 import { addToolMessage } from '../agent-messages.js';
 import { logDebug, logError } from '../log.js';
 import { parseToolArgs, checkSubAgentConsent, handleSpecialToolResults } from './utils.js';
+import { evaluateToolRepeat } from '../agent/tool-repeat.js';
 
 export async function executeToolDirect(
   agent: AgentCore,
@@ -121,6 +122,20 @@ export async function executeToolSequential(
         agent.currentTool = undefined;
         return;
       }
+    }
+
+    const repeat = evaluateToolRepeat(agent.toolRepeat, tc.name, args);
+    if (repeat.blocked) {
+      output = JSON.stringify({ ok: false, error: repeat.error });
+      addToolMessage(agent, output, tc.id);
+      agent.onToolResult?.({
+        toolCallId: tc.id,
+        name: tc.name,
+        output,
+        duration: performance.now() - start,
+      });
+      agent.currentTool = undefined;
+      return;
     }
 
     const cached = agent.toolCache.get(tc.name, args, agent.cfg.workspace);
@@ -273,6 +288,7 @@ export async function executeToolsParallel(
   agent.setState('executing_tool');
 
   const permissionResults = new Map<string, 'allow' | 'always_allow' | 'deny'>();
+  const blockedByRepeat = new Map<string, string>();
   for (const tc of parallelTools) {
     const args = parseToolArgs(tc);
     const perm = agent.securityManager.permissionManager.checkPermission(tc.name, args);
@@ -301,6 +317,13 @@ export async function executeToolsParallel(
       const consent = await checkSubAgentConsent(agent, tc.id);
       if (consent === 'deny') {
         permissionResults.set(tc.id, 'deny');
+      }
+    }
+
+    if (permissionResults.get(tc.id) !== 'deny') {
+      const repeat = evaluateToolRepeat(agent.toolRepeat, tc.name, args);
+      if (repeat.blocked) {
+        blockedByRepeat.set(tc.id, JSON.stringify({ ok: false, error: repeat.error }));
       }
     }
   }
@@ -332,6 +355,17 @@ export async function executeToolsParallel(
           index: tc.index,
           id: tc.id,
           output,
+          duration: performance.now() - toolStart,
+          wasCached: false,
+        };
+      }
+
+      const blocked = blockedByRepeat.get(tc.id);
+      if (blocked) {
+        return {
+          index: tc.index,
+          id: tc.id,
+          output: blocked,
           duration: performance.now() - toolStart,
           wasCached: false,
         };

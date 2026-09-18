@@ -418,6 +418,19 @@ describe('buildToolDisplayBlock', () => {
     });
   });
 
+  describe('git_status', () => {
+    it('should summarize changed file count from details', () => {
+      expect(
+        buildSummary(
+          'git_status',
+          {},
+          { ok: true, status: 'has changes', details: '2 files changed', files: [' M a', '?? b'] },
+          true
+        )
+      ).toBe('2 files changed');
+    });
+  });
+
   describe('buildSummary', () => {
     it('should summarize list_dir entry counts', () => {
       expect(buildSummary('list_dir', {}, { entries: [1, 2] }, true)).toBe('2 items');

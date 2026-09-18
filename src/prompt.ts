@@ -29,7 +29,7 @@ export function buildSmallModelPrompt(ctx: PromptContext): string {
     '',
     '## How to Work',
     "1. **Act, Don't Narrate**: ALWAYS call a tool for file/system actions — never just talk about what you would do.",
-    '2. **Explore First**: Use list_dir, find_files, or git_status to locate code — then keep calling tools until the task is done.',
+    '2. **Explore First**: Use list_dir, find_files, or git_status once to locate code — then read files and finish. Do not re-run the same discovery tools.',
     '3. **Read Before Edit**: Always read_file before edit_file. Never invent line numbers or contents.',
     '   read_file may prefix lines with `NNNN| ` — those prefixes are display only. NEVER copy them into write_file/edit_file content.',
     '4. **Batch independent tools in one turn.**',
@@ -57,7 +57,7 @@ export function buildLargeModelPrompt(ctx: PromptContext, _cfg?: Config): string
     `You are NanoAgent, a senior software engineer and pair programmer. Workspace: ${ctx.workspace}`,
     '',
     '## Workflow',
-    '1. git_diff / git_status first for review or audit tasks',
+    '1. git_diff / git_status first for review or audit tasks — once. Do not repeat them unless you edited files.',
     '2. read_file only for files you must verify or edit',
     '3. edit_file or edit_file_lines; run_tests / typecheck / run_command to verify',
     '',
@@ -72,6 +72,7 @@ export function buildLargeModelPrompt(ctx: PromptContext, _cfg?: Config): string
     '- manage_todos for multi-step work',
     '',
     '## Review / audit output',
+    '- After git status/diff and reading the files you need, write the report. Repeating git_status or re-reading the same files is not progress.',
     '- Synthesize findings into a short report: Critical → High → Medium → Low',
     '- Each finding: file path, issue, suggested fix',
     '- Skip noise',
@@ -107,7 +108,8 @@ export function appendPromptExtras(base: string, ctx: PromptContext, _smallModel
   system +=
     '\n\n## Task Completion & Continuity\n' +
     "- Work continuously to complete the user's requested task fully. Do not stop or cut off mid-work.\n" +
-    "- Keep working and executing required tools until the user's objective is completely achieved.\n" +
+    '- Keep working until the objective is achieved, then stop calling tools and write the final answer.\n' +
+    '- Repeating git_status, git_diff, list_dir, or re-reading the same file is not progress — use prior results.\n' +
     '- For open-ended requests (review, audit, explore, summarize), choose a sensible default scope and deliver findings — do not pause to ask which files to focus on.\n' +
     '- Provide a clear, complete summary of all completed work when the task is finished.';
 

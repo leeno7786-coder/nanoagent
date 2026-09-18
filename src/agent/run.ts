@@ -7,6 +7,7 @@ import type { Message } from '../types.js';
 import { rnd, now } from '../agent-utils.js';
 import { logError } from '../log.js';
 import { EARLY_STOP_CONTINUE_NUDGE, looksLikePrematureCheckin } from './early-stop.js';
+import { createToolRepeatState, DUPLICATE_TOOL_NUDGE } from './tool-repeat.js';
 import {
   capToolArgumentsForLlm,
   resolveToolCallArgumentTokenBudget,
@@ -267,6 +268,7 @@ export async function agentRun(
 
   if (!skipUserMessage) {
     agent.consecutiveToolRounds = 0;
+    agent.toolRepeat = createToolRepeatState();
     earlyStopContinues = 0;
     agent.addUserMessage(userText);
   }
@@ -290,6 +292,10 @@ export async function agentRun(
   let lastToolSignature: string | undefined;
   let sameSignatureStreak = 0;
   const MAX_SAME_SIGNATURE_STREAK = 3;
+  /** Consecutive rounds where every tool was a duplicate block. */
+  let allDuplicateRoundStreak = 0;
+  const MAX_ALL_DUPLICATE_ROUNDS = 2;
+  let duplicateNudged = false;
   /** Each configured fallback is tried at most once per user turn. */
   const triedFallbacks = new Set<string>();
 
@@ -1017,6 +1023,7 @@ export async function agentRun(
       agent.consecutiveToolRounds = 0;
       sameSignatureStreak = 0;
       lastToolSignature = undefined;
+      allDuplicateRoundStreak = 0;
     } else {
       agent.consecutiveToolRounds++;
 
@@ -1060,12 +1067,38 @@ export async function agentRun(
 
     const { parallel, sequential } = groupToolsForParallelExecution(tcs);
 
+    agent.toolRepeat.blockedThisRound = 0;
     if (parallel.length > 0) {
       await agent.executeToolsParallel(parallel, signal);
     }
 
     for (const tc of sequential) {
       await agent.executeToolSequential(tc, signal);
+    }
+
+    if (tcs.length > 0) {
+      if (agent.toolRepeat.blockedThisRound > 0 && !duplicateNudged) {
+        duplicateNudged = true;
+        agent.addNoticeMessage(
+          '↻ Repeated discovery tools blocked — asking the model to write findings…'
+        );
+        agent.addNudgeMessage(DUPLICATE_TOOL_NUDGE);
+      }
+      if (agent.toolRepeat.blockedThisRound >= tcs.length) {
+        allDuplicateRoundStreak++;
+        if (allDuplicateRoundStreak >= MAX_ALL_DUPLICATE_ROUNDS) {
+          agent.addNoticeMessage(
+            `⚠️ Stuck loop detected: the model kept re-issuing tools it already ran ` +
+              `(git_status / git_diff / the same reads). Stopping here to avoid circling — ` +
+              `rephrase your request or take over manually.`
+          );
+          agent.setState('idle');
+          agent.onUpdate?.();
+          return;
+        }
+      } else {
+        allDuplicateRoundStreak = 0;
+      }
     }
 
     // Yield so abort signals and TUI updates can process between tool rounds.

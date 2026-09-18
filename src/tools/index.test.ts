@@ -131,6 +131,25 @@ describe('tools', () => {
     expect(typeof out.status).toBe('string');
   });
 
+  it('git_status lists modified and untracked files by name', async () => {
+    execSync('git init', { cwd: ws, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: ws, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: ws, stdio: 'ignore' });
+    writeFileSync(join(ws, 'tracked.txt'), 'hello', 'utf-8');
+    execSync('git add tracked.txt && git commit -m "initial"', { cwd: ws, stdio: 'ignore' });
+    writeFileSync(join(ws, 'tracked.txt'), 'hello changed', 'utf-8');
+    writeFileSync(join(ws, 'new.txt'), 'untracked', 'utf-8');
+
+    const gitStatus = tools.find((t) => t.name === 'git_status')!;
+    const out = JSON.parse(await gitStatus.executeAsync!({}, ws));
+    expect(out.ok).toBe(true);
+    expect(out.status).toBe('has changes');
+    expect(Array.isArray(out.files)).toBe(true);
+    const listed = (out.files as string[]).join('\n');
+    expect(listed).toContain('tracked.txt');
+    expect(listed).toContain('new.txt');
+  });
+
   it('git_diff returns differences in repo', async () => {
     execSync('git init', { cwd: ws, stdio: 'ignore' });
     execSync('git config user.email "test@example.com"', { cwd: ws, stdio: 'ignore' });
