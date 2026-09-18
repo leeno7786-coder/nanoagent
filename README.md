@@ -9,9 +9,9 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.5.8** (`@omega3_0/nanoagent`) — context accounting and compaction are synchronized across the agent loop, TUI, and restored sessions. API-reported `prompt_tokens` are used when available, tool-schema overhead is tracked, stale provider reports cannot freeze the context gauge, and compaction preserves system prompts, task/tool-call integrity, and summaries. Session restore and mutable todo/system messages are included in accounting. This release also includes the repeating-analysis fix for thinking models, the workspace-launch-directory default, and the 2.5.x TUI polish pass: six themes, a Ctrl+P command palette, quiet tool rows, tinted diffs, inline markdown, width-aware status bar, and normal-terminal copy/paste. Builds on 2.4.0's snapshot/rollback edit surface and 2.3.0's single canonical install root (`NANOAGENT_ROOT`).
+Current release: **2.6.4** (`@omega3_0/nanoagent`) — message queue while the agent is busy (auto-drain, in-place edit, `/queue`, session restore), interactive `question` tool with a TUI overlay for mid-run choices, and reliability fixes across 2.6.x: queue drain races and shutdown persistence, `reloadAgentFromDisk` config preservation, settings-overlay catalog sync, and a Windows/Bun stdin race fix after renderer init. Builds on 2.5.8's synchronized context accounting and the 2.5.x TUI polish pass.
 
-An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, Anthropic, OpenRouter, DashScope). Run locally, think globally.
+An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to cloud APIs (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and other OpenAI-compatible providers). Run locally, think globally.
 
 ---
 
@@ -36,6 +36,8 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 - **Launch from anywhere** — `nanoagent`, `nanogent`, `nano-agent`, or `npx @omega3_0/nanoagent`
 - **Tiny-model first** — compact prompts, context auto-compact (default 80% of the live window), and small-model tool-call resilience
 - **OpenTUI dashboard** — streaming chat, tool diffs, todos, skills overlay, connect overlay, six themes, and a Ctrl+P command palette
+- **Message queue** — type while the agent runs; messages enqueue (up to 20), drain automatically when idle, edit with ↑, persist across sessions; `/queue` to list, remove, or clear
+- **Ask-user questions** — the `question` tool opens an interactive TUI overlay (single/multi-select, optional custom text) so the agent can clarify choices mid-run
 - **Permissions** — `read_only` / `ask` / `allow_edits` / `always_allow`, plus Shift+Tab to cycle in the TUI
 - **Remote sub-agents** — `explore_subagent` workers against a configured pool or `REMOTE_LMSTUDIO_URL`
 - **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`); only the canonical global config is trusted by default
@@ -330,6 +332,7 @@ The startup banner shows the baseline status (`baseline snapshot: <workspace>/.n
 | `/graph build\|stats\|report`                   | Memory graph                                                                              |
 | `/mcp` `/mcp-add` `/mcp-remove`                 | MCP servers                                                                              |
 | `/permissions`                                  | `read_only` / `ask` / `allow_edits` / `always_allow`                                      |
+| `/queue`                                        | List queued messages; `/queue remove <N>` or `/queue clear`                               |
 | `/cd [path]`                                    | Change tool workspace                                                                     |
 | `/allow [path]`                                 | Extra tool path outside the workspace                                                     |
 | `/theme [name]`                                 | Switch theme — dark, light, warmDark, coolDark, black (OLED), highContrast (F9 cycles)     |
@@ -450,6 +453,37 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.6.4 — Windows/Bun stdin race fix
+
+- **TUI stdin race on Windows/Bun** — yield to the event loop immediately after `createCliRenderer` so keyboard input is not lost on startup.
+
+### 2.6.3 — Queue shutdown persistence and overflow fixes
+
+- **Queue data loss on shutdown** — `shutdownAgent` passes `messageQueue` through to `autoSaveSession` so headless/CLI exit paths do not drop queued messages.
+- **Overflow escalation** — non-streaming overflow recovery passes `overflowRetries` to `forceCompactContext`; first overflow targets 10% of the window instead of 20%.
+- **`reloadAgentFromDisk` data loss** — `/config reload` preserves all config keys via spread + `extractPreservedFields()` instead of a cherry-picked field list.
+- **Settings overlay** — MCP config is cached with a revision counter; model catalog index matches on `providerId` + `modelId` to avoid cross-provider collisions.
+- **Queue drain** — user notice when a queued message is dropped after 3 retries; dead code removed from `/queue remove`.
+- **Misc** — stale `explore_subagent` error path updated to `config/nanogent.json`; duplicate `maxBackgroundSubAgents` removed from advanced settings.
+
+### 2.6.2 — Queue display and drain race
+
+- **Queue drain race** — fix race when draining the message queue after abort or run completion.
+- **Queue UI** — move the queue indicator above the input bar.
+
+### 2.6.1 — Message queue
+
+- **Message queue** — send messages while the agent is busy; up to 20 queued, auto-drained when idle, persisted on session save/restore.
+- **`/queue`** — list, `/queue remove <N>`, and `/queue clear`.
+- **Edit queued messages** — ↑ enters edit mode when the input is empty; save edits in place.
+- **Reliability** — drain/requeue fixes, retry tracking, nav inversion fix, persistence across restore.
+
+### 2.6.0 — Interactive question tool
+
+- **`question` tool** — agent asks the user multiple-choice questions (single or multi-select, optional custom text) during a run.
+- **Question overlay** — TUI overlay with keyboard navigation; Escape cancels; 5-minute timeout.
+- **Wiring** — registered for all models; early-stop nudge encourages use when the agent should clarify instead of guessing.
 
 ### 2.5.8 — Small-model prompt and tool consistency
 
