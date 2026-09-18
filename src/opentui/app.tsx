@@ -12,6 +12,8 @@ import {
   renameSession,
   autoSaveSession,
   buildConfigSnapshot,
+  ensureLiveSessionId,
+  setLiveSessionId,
 } from '../store.js';
 import type { Session, Config } from '../types.js';
 import { ChatScreen, getVisibleMessages } from './chat-screen.js';
@@ -44,7 +46,13 @@ function selectableMessages(agent: AgentCore) {
   return getVisibleMessages(agent.messages, agent.state);
 }
 
-export function App({ renderer }: { renderer: CliRenderer }) {
+export function App({
+  renderer,
+  initialSession,
+}: {
+  renderer: CliRenderer;
+  initialSession?: Session;
+}) {
   const store = useAppStore;
   const overlay = useAppStore((s) => s.overlay);
   useClipboardPaste(overlay === 'connect' ? 'replace' : 'insert');
@@ -134,8 +142,37 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     agentRef.current = agent;
     agent
       .init()
-      .then(() => {
+      .then(async () => {
         initDone.current = true;
+        if (initialSession) {
+          agent.messages = [...initialSession.messages];
+          agent.todos = initialSession.todos || [];
+          const savedConfig = { ...(initialSession.config || {}) };
+          if (!savedConfig.apiKey) delete savedConfig.apiKey;
+          const newModel = initialSession.model || savedConfig.model || agent.cfg.model;
+          const newBaseURL = initialSession.baseURL || savedConfig.baseURL || agent.cfg.baseURL;
+          await agent.reconfigure({
+            ...savedConfig,
+            model: newModel,
+            baseURL: newBaseURL,
+            provider: initialSession.provider || savedConfig.provider || agent.cfg.provider,
+          });
+          setCurrentSessionId(initialSession.id);
+          setLiveSessionId(initialSession.id);
+          if (initialSession.messageQueue && initialSession.messageQueue.length > 0) {
+            useAppStore.setState({ messageQueue: initialSession.messageQueue });
+          }
+          const restoredProvider =
+            initialSession.provider || savedConfig.provider || 'saved settings';
+          agent.messages.push({
+            id: Math.random().toString(36).slice(2, 10),
+            role: 'system',
+            content:
+              `\uD83D\uDD04 **Session restored** \`${initialSession.id}\`: Model \`${newModel}\` on \`${restoredProvider}\` (${initialSession.messages.length} messages). ` +
+              `Boot again with \`nanoagent --resume ${initialSession.id}\`.`,
+            timestamp: Date.now(),
+          });
+        }
         syncFromAgent(agent);
       })
       .catch((err) => {
@@ -162,17 +199,20 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     };
     process.on('SIGINT', handleSigint);
 
-    if (agent.messages.length === 0) {
+    if (!initialSession && agent.messages.length === 0) {
       // Baseline status: was a snapshot of the workspace taken at
       // agent-init time? /rollback (no name) uses it.
       const hasBaseline = hasBaselineSnapshot(agent.cfg.workspace);
+      const hash = ensureLiveSessionId();
+      setCurrentSessionId(hash);
       agent.messages.push({
         id: 'welcome-banner',
         role: 'assistant',
         content:
           `⚡ **NanoAgent** — Tiny Models, Scalable Intelligence\n\n` +
           `workspace: \`${agent.cfg.workspace}\` · ${hasBaseline ? 'baseline snapshot ready (`/rollback` to revert)' : 'no baseline snapshot yet (`/snapshot` to start)'}\n` +
-          `history: \`.nanoagent/worktree\` (\`/changes\`) · sessions: \`.nanoagent/sessions\`\n\n` +
+          `history: \`.nanoagent/worktree\` (\`/changes\`) · sessions: \`.nanoagent/sessions\`\n` +
+          `this chat: \`${hash}\` — resume with \`nanoagent --resume ${hash}\`\n\n` +
           `Tools edit the workspace directly. Type \`/help\` for commands or \`/config\` for settings.`,
         timestamp: Date.now(),
       });
@@ -343,19 +383,13 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     const agent = agentRef.current;
     if (!agent || agent.messages.length <= 2) return;
     const timer = setTimeout(() => {
-      const session: Session = {
-        id: 'autosave',
-        messages: agent.messages,
-        todos: agent.todos.filter((t) => !t.done),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        model: agent.cfg.model,
-        baseURL: agent.cfg.baseURL,
-        provider: agent.cfg.provider,
-        config: buildConfigSnapshot(agent.cfg),
-        messageQueue: store.getState().messageQueue,
-      };
-      saveSession(session);
+      autoSaveSession(
+        agent.messages,
+        agent.todos,
+        agent.cfg.workspace,
+        agent.cfg,
+        store.getState().messageQueue
+      );
     }, 3000);
     return () => clearTimeout(timer);
   }, [messages, todos]);
@@ -396,25 +430,19 @@ export function App({ renderer }: { renderer: CliRenderer }) {
   const handleSave = useCallback(() => {
     const agent = agentRef.current;
     if (!agent) return;
-    const id = `session-${Date.now()}`;
-    const session: Session = {
-      id,
-      messages: agent.messages,
-      todos: agent.todos.filter((t) => !t.done),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      model: agent.cfg.model,
-      baseURL: agent.cfg.baseURL,
-      provider: agent.cfg.provider,
-      config: buildConfigSnapshot(agent.cfg),
-    };
-    saveSession(session);
+    const id = autoSaveSession(
+      agent.messages,
+      agent.todos,
+      agent.cfg.workspace,
+      agent.cfg,
+      store.getState().messageQueue
+    );
     setSessions(loadSessions());
     setCurrentSessionId(id);
     agent.messages.push({
       id: Math.random().toString(36).slice(2, 10),
       role: 'system',
-      content: `Session saved as ${id} (Model: \`${agent.cfg.model}\`).`,
+      content: `Session saved as \`${id}\`. Resume with \`nanoagent --resume ${id}\` or \`/resume ${id}\`.`,
       timestamp: Date.now(),
     });
     setMessages([...agent.messages]);
@@ -439,6 +467,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       const success = renameSession(csId, name);
       if (success) {
         setCurrentSessionId(name);
+        setLiveSessionId(name);
         setSessions(loadSessions());
         agent.messages.push({
           id: Math.random().toString(36).slice(2, 10),
@@ -470,6 +499,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
       saveSession(session);
       setSessions(loadSessions());
       setCurrentSessionId(sessId);
+      setLiveSessionId(sessId);
       agent.messages.push({
         id: Math.random().toString(36).slice(2, 10),
         role: 'system',
@@ -507,6 +537,7 @@ export function App({ renderer }: { renderer: CliRenderer }) {
     syncFromAgent(agent);
     setToolResults([]);
     setCurrentSessionId(session.id);
+    setLiveSessionId(session.id);
 
     // Restore queued messages from the session (if any).
     if (session.messageQueue && session.messageQueue.length > 0) {

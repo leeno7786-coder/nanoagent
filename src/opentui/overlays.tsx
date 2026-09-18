@@ -59,8 +59,8 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.headerFg}> /todo Toggle todo sidebar (/todo add ...)</text>
       <text fg={theme.headerFg}> /skill List loaded skills</text>
       <text fg={theme.headerFg}> /skills Manage skills (F8) — create, enable, disable</text>
-      <text fg={theme.headerFg}> /sessions List saved sessions</text>
-      <text fg={theme.headerFg}> /resume [id] Resume latest or specific session</text>
+      <text fg={theme.headerFg}> /sessions List saved conversation hashes</text>
+      <text fg={theme.headerFg}> /resume [hash] Resume a conversation (unique prefix ok)</text>
       <text fg={theme.headerFg}> /rename [name] Rename current session</text>
       <text fg={theme.headerFg}> /copy [id] Copy message content to clipboard</text>
       <text fg={theme.headerFg}> /save [name] Save conversation</text>

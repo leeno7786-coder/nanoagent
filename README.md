@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.0** (`@omega3_0/nanoagent`) — opening a project now records a live worktree of every file the agent touches under `<workspace>/.nanoagent/worktree`, with originals + a journal for rollback, and saves conversation history in `<workspace>/.nanoagent/sessions`. Named `/snapshot` checkpoints remain optional. Builds on 2.6.5's snapshot `EPERM` skip for caches and unreadable dirs.
+Current release: **2.7.0** (`@omega3_0/nanoagent`) — opening a project now records a live worktree of every file the agent touches under `<workspace>/.nanoagent/worktree`, with originals + a journal for rollback, and saves conversation history as 8-hex hashes in `<workspace>/.nanoagent/sessions` (resume with `nanoagent --resume HASH`). Named `/snapshot` checkpoints remain optional. Builds on 2.6.5's snapshot `EPERM` skip for caches and unreadable dirs.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -129,6 +129,9 @@ git push origin main --follow-tags
 nanoagent          # interactive TUI in the current directory
 nanogent           # same binary
 nanoagent tui      # force TUI
+nanoagent --sessions              # list conversation hashes for this workspace
+nanoagent --resume a1b2c3d4       # load that conversation on boot
+nanoagent a1b2c3d4                # same — a 4–16 hex token is treated as a resume hash
 ```
 
 The launcher prints the resolved layout on first run, something like:
@@ -147,13 +150,15 @@ Set `NANOAGENT_ROOT` before invoking to point at a different install location (p
 
 ### CLI commands
 
-| Command                       | What it does                                             |
-| ----------------------------- | -------------------------------------------------------- |
-| `nanoagent` / `nanoagent tui` | Full-screen OpenTUI session                              |
-| `nanoagent run --prompt "…"`  | One headless task                                        |
-| `nanoagent models`            | List models from the configured runtime                  |
-| `nanoagent doctor`            | Config + runtime health check                            |
-| `nanoagent todo`              | CLI todo list (`add`, `list`, `done`, `delete`, `clear`) |
+| Command                            | What it does                                             |
+| ---------------------------------- | -------------------------------------------------------- |
+| `nanoagent` / `nanoagent tui`      | Full-screen OpenTUI session                              |
+| `nanoagent --resume HASH`          | Open TUI on a saved conversation hash                    |
+| `nanoagent --sessions`             | List hashes in `<workspace>/.nanoagent/sessions`         |
+| `nanoagent run --prompt "…"`       | One headless task                                        |
+| `nanoagent models`                 | List models from the configured runtime                  |
+| `nanoagent doctor`                 | Config + runtime health check                            |
+| `nanoagent todo`                   | CLI todo list (`add`, `list`, `done`, `delete`, `clear`) |
 
 `run` flags: `--prompt` / `--stdin`, `--workspace`, `--model`, `--base-url`, `--profile`, `--max-rounds`, `--max-iterations`, `--json`, `--quiet`, `--verbose`, `--yes` (auto-approve permissions), `--permission-mode <read_only\|ask\|allow_edits\|always_allow>`.
 
@@ -304,7 +309,7 @@ Tools **edit the directory you pointed at directly**. `cfg.workspace` is your pr
 
 The first time the agent runs against a workspace, `init.json` is written automatically (project files only — caches, `node_modules`, and `.git` are skipped). While the agent runs, write/edit tools, `execute_command` / `git_commit`, and a recursive `fs.watch` (best-effort on Linux) keep `.nanoagent/worktree` in sync with files that actually changed. Subsequent `/snapshot <name>` calls capture only the diff against the previous named snapshot, so the snapshot store stays small. `/rollback <name>` walks the chain to compose deletions correctly: a file added after a snapshot and then removed after a later one reverts to "exists in the earlier, gone in the later" with the correct outcome. Rollback never deletes files inside skipped directories.
 
-Chat sessions for the project live in `.nanoagent/sessions` (autosave + `/save` / `/resume`). Older install-global sessions under `$NANOAGENT_ROOT/sessions` that belong to this workspace are copied in once.
+Chat sessions for the project live in `.nanoagent/sessions` as **8-hex hashes** (`a1b2c3d4.json`). Each run allocates a hash (shown in the TUI banner). Autosave and `/save` keep writing that same file. List hashes with `nanoagent --sessions` or `/sessions`; load one on boot with `nanoagent --resume HASH` (unique prefixes work, so does `/resume HASH`). Older install-global sessions under `$NANOAGENT_ROOT/sessions` that belong to this workspace are copied in once.
 
 ### Slash commands
 
@@ -315,7 +320,7 @@ Chat sessions for the project live in `.nanoagent/sessions` (autosave + `/save` 
 | `/diffs`                  | List every saved snapshot for this workspace, newest first.                                            |
 | `/rollback [name]`        | No name: restore the workspace to the baseline (init.json). With name: restore that snapshot, walking the chain so deletions compose correctly. |
 | `/rollback ghost`         | Returns "snapshot not found" so the user knows.                                                        |
-| `/sessions` `/resume`     | List / resume conversations stored in `.nanoagent/sessions`.                                           |
+| `/sessions` `/resume`     | List / resume conversation hashes in `.nanoagent/sessions`. Boot: `nanoagent --resume HASH`. |
 
 The startup banner shows the baseline status plus the worktree and sessions paths, so you always know what `/rollback` will revert to and where history is stored.
 
@@ -474,7 +479,7 @@ NANOAGENT_ROOT/
 
 - **Automatic file history.** Opening a workspace still takes the `init.json` baseline. After that, write/edit tools, `execute_command` / `git_commit`, and a recursive file watcher copy every touched file into `<workspace>/.nanoagent/worktree`, save the pre-edit original once under `.nanoagent/history/originals`, and append `.nanoagent/history/journal.jsonl`. Tools still edit the real project — this is a copy, not the old working-tree redirect.
 - **`/changes`** lists files recorded this run. `/snapshot` remains an optional named checkpoint. `/rollback` still restores the init baseline or a named snapshot.
-- **Per-project sessions.** `/save`, autosave, `/sessions`, and `/resume` write to `<workspace>/.nanoagent/sessions`. Matching older sessions from `$NANOAGENT_ROOT/sessions` are copied in once. API keys and MCP config are still omitted from session JSON.
+- **Per-project sessions.** Conversations are stored as 8-hex hashes in `<workspace>/.nanoagent/sessions`. `/save` and autosave keep the live hash; `/sessions` and `/resume HASH` (unique prefix ok) load them. On boot: `nanoagent --resume HASH`, `nanoagent resume HASH`, a bare hex token, or `nanoagent --sessions` to list. Matching older sessions from `$NANOAGENT_ROOT/sessions` are copied in once. API keys and MCP config are still omitted from session JSON.
 - Tests: worktree journal (originals, create/update/delete, skip lists), project-local session save/migrate, write_file + execute_command hooks, `/changes`.
 
 ### 2.6.5 — Snapshot capture survives unreadable caches

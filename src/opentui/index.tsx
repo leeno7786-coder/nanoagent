@@ -4,17 +4,32 @@ import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { loadConfig, getApiKey } from '../config/index.js';
 import { setTuiActive } from '../log.js';
+import {
+  setActiveSessionWorkspace,
+  resolveSessionId,
+  loadSession,
+  setLiveSessionId,
+  formatSessionResolveError,
+  formatSessionsForCli,
+  ensureLiveSessionId,
+} from '../store.js';
 import { App } from './app.js';
+import type { Session } from '../types.js';
+
+export interface TuiRunOptions {
+  resume?: string;
+  workspace?: string;
+}
 
 /**
  * Interactive TUI — default when you run `bun run start` or `qwen-agent` with no args.
  * Headless commands (run, doctor, models) live in src/main.ts and share src/cli/reports.ts.
  */
-export async function runTui() {
+export async function runTui(opts: TuiRunOptions = {}): Promise<number> {
   setTuiActive(true);
   let cfg;
   try {
-    cfg = loadConfig();
+    cfg = opts.workspace ? loadConfig({ workspace: opts.workspace }) : loadConfig();
   } catch (err) {
     const renderer = await createCliRenderer();
     const { TextRenderable } = await import('@opentui/core');
@@ -25,7 +40,29 @@ export async function runTui() {
           `${err instanceof Error ? err.message : String(err)}`,
       })
     );
-    return;
+    return 1;
+  }
+
+  setActiveSessionWorkspace(cfg.workspace);
+
+  let initialSession: Session | undefined;
+  if (opts.resume) {
+    const resolved = resolveSessionId(opts.resume);
+    if (!resolved.ok) {
+      console.error(formatSessionResolveError(resolved));
+      const listing = formatSessionsForCli();
+      if (listing) console.error(`\n${listing}`);
+      return 1;
+    }
+    const loaded = loadSession(resolved.id);
+    if (!loaded) {
+      console.error(`Conversation '${resolved.id}' not found.`);
+      return 1;
+    }
+    initialSession = loaded;
+    setLiveSessionId(resolved.id);
+  } else {
+    ensureLiveSessionId();
   }
 
   const isLocal = /localhost|127\.0\.0\.1/i.test(cfg.baseURL);
@@ -43,7 +80,7 @@ export async function runTui() {
           cfg.baseURL,
       })
     );
-    return;
+    return 1;
   }
 
   // Mouse capture is ON so the chat scrollbox gets wheel scrolling — but
@@ -57,5 +94,6 @@ export async function runTui() {
   // Without this, keystrokes before the data listener is attached get silently
   // dropped on Windows/Bun (stdin startup race).
   await new Promise<void>((r) => setTimeout(r, 50));
-  createRoot(appRenderer).render(<App renderer={appRenderer} />);
+  createRoot(appRenderer).render(<App renderer={appRenderer} initialSession={initialSession} />);
+  return 0;
 }

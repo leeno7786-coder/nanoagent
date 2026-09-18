@@ -18,6 +18,13 @@ import {
   loadSessions,
   autoSaveSession,
   setActiveSessionWorkspace,
+  allocateSessionHash,
+  setLiveSessionId,
+  getLiveSessionId,
+  ensureLiveSessionId,
+  resolveSessionId,
+  formatSessionsForCli,
+  resumeSession,
 } from './store.js';
 import { __resetPathsCacheForTests } from './config/paths.js';
 import type { Config, Session } from './types.js';
@@ -36,6 +43,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setActiveSessionWorkspace(undefined);
+  setLiveSessionId(undefined);
   rmSync(tmpRoot, { recursive: true, force: true });
   // Restore the preload's root, not `priorRoot` (which is this test's own
   // tmpRoot) — the preload is the one responsible for the canonical value.
@@ -58,6 +66,7 @@ describe('sanitizeSessionId', () => {
 
   it('keeps normal ids intact', () => {
     expect(sanitizeSessionId('autosave-1a2b3c4d')).toBe('autosave-1a2b3c4d');
+    expect(sanitizeSessionId('a1b2c3d4')).toBe('a1b2c3d4');
   });
 });
 
@@ -140,14 +149,14 @@ describe('project-local sessions under .nanoagent', () => {
     expect(raw.id).toBe('chat-1');
   });
 
-  it('autoSaveSession writes autosave into the project sessions dir', () => {
+  it('autoSaveSession writes a hashed conversation into the project sessions dir', () => {
     const id = autoSaveSession(
       [{ id: 'm1', role: 'user', content: 'hi', timestamp: 1 }],
       [],
       projectDir
     );
-    expect(id).toBe('autosave');
-    expect(existsSync(join(projectDir, '.nanoagent', 'sessions', 'autosave.json'))).toBe(true);
+    expect(id).toMatch(/^[0-9a-f]{8}$/);
+    expect(existsSync(join(projectDir, '.nanoagent', 'sessions', `${id}.json`))).toBe(true);
   });
 
   it('loadSessions lists project sessions and not unrelated global ones', () => {
@@ -168,21 +177,153 @@ describe('project-local sessions under .nanoagent', () => {
     expect(ids).not.toContain('global-only');
   });
 
-  it('migrates a matching global autosave into the project dir', () => {
+  it('migrates a matching global conversation into the project dir', () => {
     setActiveSessionWorkspace(undefined);
+    setLiveSessionId(undefined);
     const hashed = autoSaveSession(
       [{ id: 'm1', role: 'user', content: 'old', timestamp: 1 }],
       [],
-      projectDir
+      projectDir,
+      { workspace: projectDir } as Config
     );
-    expect(hashed.startsWith('autosave-')).toBe(true);
+    expect(hashed).toMatch(/^[0-9a-f]{8}$/);
     const globalPath = join(tmpRoot, 'sessions', `${hashed}.json`);
     expect(existsSync(globalPath)).toBe(true);
 
+    setLiveSessionId(undefined);
+    setActiveSessionWorkspace(projectDir);
+    const migrated = loadSession(hashed);
+    expect(migrated).not.toBeNull();
+    expect(migrated?.messages[0]?.content).toBe('old');
+    expect(existsSync(join(projectDir, '.nanoagent', 'sessions', `${hashed}.json`))).toBe(true);
+  });
+
+  it('migrates a legacy global autosave-* file into the project dir', () => {
+    setActiveSessionWorkspace(undefined);
+    const legacyId = 'autosave-deadbeef';
+    const globalPath = join(tmpRoot, 'sessions', `${legacyId}.json`);
+    writeFileSync(
+      globalPath,
+      JSON.stringify({
+        id: legacyId,
+        messages: [{ id: 'm1', role: 'user', content: 'legacy', timestamp: 1 }],
+        todos: [],
+        createdAt: 1,
+        updatedAt: 1,
+        config: { workspace: projectDir },
+      })
+    );
     setActiveSessionWorkspace(projectDir);
     const migrated = loadSession('autosave');
     expect(migrated).not.toBeNull();
-    expect(migrated?.messages[0]?.content).toBe('old');
-    expect(existsSync(join(projectDir, '.nanoagent', 'sessions', 'autosave.json'))).toBe(true);
+    expect(migrated?.messages[0]?.content).toBe('legacy');
+  });
+});
+
+describe('conversation hashes', () => {
+  let projectDir: string;
+
+  beforeEach(() => {
+    projectDir = join(tmpRoot, 'proj');
+    mkdirSync(projectDir, { recursive: true });
+    setActiveSessionWorkspace(projectDir);
+    setLiveSessionId(undefined);
+  });
+
+  function sampleSession(id: string, updatedAt = 2): Session {
+    return {
+      id,
+      messages: [{ id: 'm1', role: 'user', content: `hello ${id}`, timestamp: 1 }],
+      todos: [],
+      createdAt: 1,
+      updatedAt,
+      model: 'qwen',
+    };
+  }
+
+  it('allocateSessionHash returns 8 lowercase hex chars', () => {
+    expect(allocateSessionHash()).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it('allocateSessionHash returns a different id than one already on disk', () => {
+    const first = allocateSessionHash();
+    saveSession(sampleSession(first));
+    const second = allocateSessionHash();
+    expect(second).toMatch(/^[0-9a-f]{8}$/);
+    expect(second).not.toBe(first);
+  });
+
+  it('ensureLiveSessionId is stable until reset', () => {
+    const a = ensureLiveSessionId();
+    const b = ensureLiveSessionId();
+    expect(a).toBe(b);
+    expect(getLiveSessionId()).toBe(a);
+    setLiveSessionId(undefined);
+    const c = ensureLiveSessionId();
+    expect(c).not.toBe(a);
+  });
+
+  it('autoSaveSession reuses the live hash and preserves createdAt', () => {
+    const id1 = autoSaveSession(
+      [{ id: 'm1', role: 'user', content: 'first', timestamp: 1 }],
+      [],
+      projectDir
+    );
+    const first = loadSession(id1);
+    expect(first?.createdAt).toBeGreaterThan(0);
+    const id2 = autoSaveSession(
+      [
+        { id: 'm1', role: 'user', content: 'first', timestamp: 1 },
+        { id: 'm2', role: 'assistant', content: 'ok', timestamp: 2 },
+      ],
+      [],
+      projectDir
+    );
+    expect(id2).toBe(id1);
+    const second = loadSession(id2);
+    expect(second?.createdAt).toBe(first?.createdAt);
+    expect(second?.messages).toHaveLength(2);
+  });
+
+  it('resolveSessionId matches a unique prefix case-insensitively', () => {
+    saveSession(sampleSession('a1b2c3d4'));
+    const hit = resolveSessionId('A1B2');
+    expect(hit).toEqual({ ok: true, id: 'a1b2c3d4' });
+  });
+
+  it('resolveSessionId reports ambiguous prefixes', () => {
+    saveSession(sampleSession('aaaa1111'));
+    saveSession(sampleSession('aaaa2222'));
+    const result = resolveSessionId('aaaa');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected ambiguous');
+    expect(result.reason).toBe('ambiguous');
+    expect(result.matches).toEqual(expect.arrayContaining(['aaaa1111', 'aaaa2222']));
+  });
+
+  it('resolveSessionId returns not_found for unknown hashes', () => {
+    const result = resolveSessionId('deadbeef');
+    expect(result).toEqual({ ok: false, reason: 'not_found', query: 'deadbeef' });
+  });
+
+  it('resolveSessionId with no query returns the latest conversation', () => {
+    saveSession(sampleSession('11111111', 10));
+    saveSession(sampleSession('22222222', 20));
+    expect(resolveSessionId()).toEqual({ ok: true, id: '22222222' });
+    expect(resolveSessionId('')).toEqual({ ok: true, id: '22222222' });
+  });
+
+  it('resumeSession loads by unique prefix', () => {
+    saveSession(sampleSession('c0ffee00'));
+    const session = resumeSession('c0ff');
+    expect(session?.id).toBe('c0ffee00');
+    expect(session?.messages[0]?.content).toBe('hello c0ffee00');
+  });
+
+  it('formatSessionsForCli lists hashes and a boot resume hint', () => {
+    saveSession(sampleSession('abcd1234', 50));
+    const text = formatSessionsForCli();
+    expect(text).toContain('abcd1234');
+    expect(text).toContain('--resume');
   });
 });
