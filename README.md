@@ -279,7 +279,7 @@ Triggers in the frontmatter or `Use when: ...` clauses in the description auto-l
 
 ## Working tree & rollback
 
-Tools **edit the directory you pointed at directly**. `cfg.workspace` is your project; `read_file`, `write_file`, `edit_file`, etc. all read and write inside it. Rollback is the safety net: on first agent init we capture a baseline snapshot of every file in the workspace, and named snapshots record additional checkpoints. `/rollback` reverts to the baseline; `/rollback <name>` reverts to a named one.
+Tools **edit the directory you pointed at directly**. `cfg.workspace` is your project; `read_file`, `write_file`, `edit_file`, etc. all read and write inside it. Rollback is the safety net: on first agent init we capture a baseline snapshot of project files (skipping VCS, dependency, and cache dirs such as `.git`, `node_modules`, and `.pytest_cache`), and named snapshots record additional checkpoints. Unreadable directories are skipped so a locked cache folder cannot abort the snapshot. `/rollback` reverts to the baseline; `/rollback <name>` reverts to a named one.
 
 ```text
 <workspace>/                        # your project (--workspace)
@@ -291,7 +291,7 @@ Tools **edit the directory you pointed at directly**. `cfg.workspace` is your pr
 └── … your files                    # tools edit these directly
 ```
 
-The first time the agent runs against a workspace, `init.json` is written automatically (full capture of every file). Subsequent `/snapshot <name>` calls capture only the diff against the previous named snapshot, so the snapshot store stays small. `/rollback <name>` walks the chain to compose deletions correctly: a file added after a snapshot and then removed after a later one reverts to "exists in the earlier, gone in the later" with the correct outcome.
+The first time the agent runs against a workspace, `init.json` is written automatically (project files only — caches, `node_modules`, and `.git` are skipped). Subsequent `/snapshot <name>` calls capture only the diff against the previous named snapshot, so the snapshot store stays small. `/rollback <name>` walks the chain to compose deletions correctly: a file added after a snapshot and then removed after a later one reverts to "exists in the earlier, gone in the later" with the correct outcome. Rollback never deletes files inside skipped directories.
 
 ### Slash commands
 

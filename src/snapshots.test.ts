@@ -7,7 +7,16 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -179,6 +188,73 @@ describe('restoreBaseline', () => {
 
   it('throws when no baseline exists', () => {
     expect(() => restoreBaseline(projectDir)).toThrow(/no baseline snapshot/);
+  });
+});
+
+describe('snapshot walk skips caches and unreadable dirs', () => {
+  it('does not capture files under .pytest_cache or node_modules', () => {
+    mkdirSync(join(projectDir, '.pytest_cache'), { recursive: true });
+    writeFileSync(join(projectDir, '.pytest_cache', 'v.json'), '{"x":1}\n');
+    mkdirSync(join(projectDir, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(projectDir, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;\n');
+    mkdirSync(join(projectDir, '.git', 'objects'), { recursive: true });
+    writeFileSync(join(projectDir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+
+    takeBaselineSnapshot(projectDir);
+    const manifest = JSON.parse(readFileSync(baselineSnapshotPath(projectDir), 'utf-8')) as {
+      files: Record<string, string>;
+    };
+    expect(manifest.files['index.ts']).toBeDefined();
+    expect(manifest.files['README.md']).toBeDefined();
+    expect(manifest.files['.pytest_cache/v.json']).toBeUndefined();
+    expect(manifest.files['node_modules/pkg/index.js']).toBeUndefined();
+    expect(manifest.files['.git/HEAD']).toBeUndefined();
+  });
+
+  it('skips a directory that cannot be scanned instead of failing the snapshot', () => {
+    const locked = join(projectDir, 'locked-dir');
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'secret.txt'), 'nope\n');
+    chmodSync(locked, 0);
+    let unreadable = false;
+    try {
+      readdirSync(locked);
+    } catch {
+      unreadable = true;
+    }
+    if (!unreadable) {
+      chmodSync(locked, 0o700);
+      // Windows (and root) cannot simulate EPERM/EACCES via chmod; skip.
+      return;
+    }
+    try {
+      expect(() => takeBaselineSnapshot(projectDir)).not.toThrow();
+      expect(hasBaselineSnapshot(projectDir)).toBe(true);
+      const manifest = JSON.parse(readFileSync(baselineSnapshotPath(projectDir), 'utf-8')) as {
+        files: Record<string, string>;
+      };
+      expect(manifest.files['index.ts']).toBeDefined();
+      expect(manifest.files['locked-dir/secret.txt']).toBeUndefined();
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+  });
+
+  it('restore does not delete files inside skipped directories', () => {
+    mkdirSync(join(projectDir, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(projectDir, 'node_modules', 'pkg', 'index.js'), 'keep\n');
+    mkdirSync(join(projectDir, '.pytest_cache'), { recursive: true });
+    writeFileSync(join(projectDir, '.pytest_cache', 'v.json'), '{"keep":true}\n');
+    takeBaselineSnapshot(projectDir);
+    writeFileSync(join(projectDir, 'index.ts'), 'mutated\n');
+    restoreBaseline(projectDir);
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
+    expect(readFileSync(join(projectDir, 'node_modules', 'pkg', 'index.js'), 'utf-8')).toBe(
+      'keep\n'
+    );
+    expect(readFileSync(join(projectDir, '.pytest_cache', 'v.json'), 'utf-8')).toBe(
+      '{"keep":true}\n'
+    );
   });
 });
 

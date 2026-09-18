@@ -289,7 +289,7 @@ export async function initAgent(agent: AgentCore) {
   } catch (err) {
     // The workspace path may not exist yet (e.g. first-run against an
     // empty cwd). That's fine — /rollback will just report no baseline.
-    logDebug('[init] baseline snapshot not taken:', (err as Error).message);
+    logWarn('[init] baseline snapshot not taken:', (err as Error).message);
   }
 
   rebuildSystemPrompt(agent, ctx, allSkills);
@@ -427,7 +427,7 @@ export async function changeAgentWorkspace(
       takeBaselineSnapshot(nextWorkspace);
     }
   } catch (err) {
-    logDebug('[cd] baseline snapshot not taken:', (err as Error).message);
+    logWarn('[cd] baseline snapshot not taken:', (err as Error).message);
   }
 
   // Wipe session-scoped state that was tied to the old workspace.
