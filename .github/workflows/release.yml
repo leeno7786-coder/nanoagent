@@ -10,7 +10,7 @@ permissions:
 
 env:
   BUN_VERSION: "1.4.0"
-  NODE_VERSION: "22"
+  NODE_VERSION: "24"
 
 jobs:
   publish:
