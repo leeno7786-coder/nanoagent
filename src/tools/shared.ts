@@ -81,6 +81,8 @@ export const SKIP_DIRS = new Set([
   '.git',
   '.svn',
   '.hg',
+  // Agent-owned project history (sessions, worktree, snapshots)
+  '.nanoagent',
   // Node.js
   'node_modules',
   'dist',
@@ -295,6 +297,21 @@ export function truncate(
 export function isAccessBlocked(p: string, cfg: Config | undefined): boolean {
   if (!cfg?.securityManager) return false;
   return !cfg.securityManager.validateFileAccess(p, 'read').ok;
+}
+
+/** True when `relPath` is the per-workspace NanoAgent state tree. */
+export function isNanoagentRel(relPath: string): boolean {
+  const n = relPath.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  return n === '.nanoagent' || n.startsWith('.nanoagent/');
+}
+
+/** Short tool/prompt line: this tree is ours, not another project. */
+export const NANOAGENT_HARNESS_HINT =
+  "`.nanoagent/` is this NanoAgent workspace's own harness state (sessions, worktree copies, snapshots). It belongs to this run — not an outside project folder. Stay in the workspace root. Use /changes, /sessions, /rollback.";
+
+/** Error text when a tool path is inside `.nanoagent/`; otherwise null. */
+export function nanoagentHarnessError(relPath: string): string | null {
+  return isNanoagentRel(relPath) ? NANOAGENT_HARNESS_HINT : null;
 }
 
 /** Validate a subprocess command against the active security policy. */

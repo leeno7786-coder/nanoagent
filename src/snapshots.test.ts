@@ -76,12 +76,12 @@ describe('named snapshots', () => {
 
   it('first named snapshot captures the diff against the baseline', () => {
     // No prior named snapshot: prev is empty, so the diff IS the current
-    // workspace minus anything pre-existing. With a fresh project of 3
-    // files, all 3 are "adds" relative to prev.
+    // workspace minus skipped dirs. Fresh project is 3 source files plus
+    // the auto-written `.gitignore` that ignores `.nanoagent/`.
     const info = captureSnapshot(projectDir, 'first');
     expect(info.name).toBe('first');
     expect(snapshotExists(projectDir, 'first')).toBe(true);
-    expect(info.filesChanged).toBe(3);
+    expect(info.filesChanged).toBe(4);
   });
 
   it('edits after the named snapshot are captured by the next one', () => {
@@ -205,6 +205,7 @@ describe('snapshot walk skips caches and unreadable dirs', () => {
     };
     expect(manifest.files['index.ts']).toBeDefined();
     expect(manifest.files['README.md']).toBeDefined();
+    expect(manifest.files['.gitignore']).toMatch(/\.nanoagent\//);
     expect(manifest.files['.pytest_cache/v.json']).toBeUndefined();
     expect(manifest.files['node_modules/pkg/index.js']).toBeUndefined();
     expect(manifest.files['.git/HEAD']).toBeUndefined();

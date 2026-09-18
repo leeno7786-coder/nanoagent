@@ -47,6 +47,12 @@ describe('subagents.ts - Sub-agent Management', () => {
       expect(context).toContain('RELATIVE to the workspace root');
     });
 
+    it('names .nanoagent as this workspace harness, not an outside project', async () => {
+      const context = await buildSubAgentContext(mockConfig);
+      expect(context).toMatch(/this NanoAgent workspace's own harness state/i);
+      expect(context).toMatch(/not an outside project folder/i);
+    });
+
     it('should list file tree', async () => {
       const context = await buildSubAgentContext(mockConfig);
       expect(context).toContain('FILE TREE');

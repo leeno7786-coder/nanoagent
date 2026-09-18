@@ -75,13 +75,16 @@ Security settings can be configured via:
 ### Default Blocked Paths
 
 The following paths are blocked by default (secrets, credentials, VCS internals,
-and dependency lockfiles — project manifests like `package.json`, `go.mod`,
-`requirements.txt`, and `tsconfig.json` stay readable/editable):
+NanoAgent harness state under `.nanoagent/` (this workspace's own sessions/worktree/snapshots, not an outside project), and dependency lockfiles — project
+manifests like `package.json`, `go.mod`, `requirements.txt`, and `tsconfig.json`
+stay readable/editable):
 
 ```
 **/.env
 **/.env.*
 **/.git/**
+**/.nanoagent
+**/.nanoagent/**
 **/.ssh/**
 **/node_modules/**
 **/secrets/**

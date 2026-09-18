@@ -78,6 +78,9 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
     '**/resolv.conf',
     // VCS
     '**/.git/**',
+    // Agent-owned project history (not the user's source tree)
+    '**/.nanoagent',
+    '**/.nanoagent/**',
     // Dependencies / lock files (write-protection; manifests like
     // package.json, go.mod, requirements.txt stay editable)
     '**/node_modules/**',
@@ -210,6 +213,13 @@ export class SecurityManager {
     if (!isExplicitlyAllowed) {
       for (const pattern of this.config.blockedPaths) {
         if (this.pathMatchesPattern(relPath, pattern)) {
+          if (pattern.includes('.nanoagent')) {
+            return {
+              ok: false,
+              error:
+                "Access denied: `.nanoagent/` is this NanoAgent workspace's own harness state (sessions, worktree copies, snapshots) — not an outside project folder. Stay in the workspace root. Use /changes, /sessions, /rollback.",
+            };
+          }
           return { ok: false, error: `Access denied: path matches blocked pattern (${pattern})` };
         }
       }

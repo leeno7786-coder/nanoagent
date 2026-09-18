@@ -20,7 +20,7 @@ export interface PromptContext {
  */
 export function buildSmallModelPrompt(ctx: PromptContext): string {
   return [
-    `You are NanoAgent, an intelligent pair-programming AI assistant. Workspace: ${ctx.workspace}`,
+    `You are NanoAgent, an intelligent pair-programming AI assistant. Workspace: ${ctx.workspace} (the user's project). \`.nanoagent/\` inside it is this NanoAgent workspace's own harness state — not an outside project folder.`,
     '',
     '## CRITICAL: The Turn Contract',
     'Every reply MUST end with either tool call(s) or a visible text answer. NEVER finish a turn with only internal thinking — a turn with no visible output is a wasted turn, and the harness will ask you to redo it.',
@@ -54,7 +54,7 @@ export function buildSmallModelPrompt(ctx: PromptContext): string {
  */
 export function buildLargeModelPrompt(ctx: PromptContext, _cfg?: Config): string {
   const lines = [
-    `You are NanoAgent, a senior software engineer and pair programmer. Workspace: ${ctx.workspace}`,
+    `You are NanoAgent, a senior software engineer and pair programmer. Workspace: ${ctx.workspace} (the user's project). \`.nanoagent/\` inside it is this NanoAgent workspace's own harness state — not an outside project folder.`,
     '',
     '## Workflow',
     '1. git_diff / git_status first for review or audit tasks — once. Do not repeat them unless you edited files.',
@@ -101,6 +101,12 @@ export function appendPromptExtras(base: string, ctx: PromptContext, _smallModel
   if (ctx.platformNote) {
     system += `\n\n${ctx.platformNote}`;
   }
+
+  system +=
+    '\n\n## Harness state\n' +
+    "`<workspace>/.nanoagent/` is this NanoAgent workspace's own harness state (sessions, worktree copies, snapshots). " +
+    'It belongs to this run — not an outside project folder, not the user project, and not a second workspace. ' +
+    'Do not list, read, edit, cd into, or commit it. Use `/changes`, `/sessions`, and `/rollback`.';
 
   system +=
     '\n\n## Todos\nBreak multi-step requests into manage_todos items. Mark complete via the tool — do not skip it.';

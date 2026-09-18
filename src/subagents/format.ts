@@ -31,6 +31,9 @@ export async function buildSubAgentContext(cfg: Config): Promise<string> {
     `Use paths RELATIVE to the workspace root. Example: "src/agent.ts" not "G:\\project\\src\\agent.ts".`
   );
   lines.push(
+    `\`.nanoagent/\` is this NanoAgent workspace's own harness state (sessions, worktree copies, snapshots) — part of this run, not an outside project folder. Do not explore, edit, or cd into it.`
+  );
+  lines.push(
     `DO NOT call list_dir, git_status, or stat_path — the file tree is provided below. Go straight to batch_read_files.`
   );
 
@@ -38,6 +41,7 @@ export async function buildSubAgentContext(cfg: Config): Promise<string> {
     'node_modules',
     'dist',
     '.git',
+    '.nanoagent',
     '__pycache__',
     '.next',
     '.cache',

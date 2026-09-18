@@ -25,7 +25,11 @@ import { syncTodoMessage } from './agent-todos.js';
 import { refreshSystemPrompt, syncContextManagerMessages } from './agent-messages.js';
 import { logDebug, logError, logWarn } from './log.js';
 import { GLOBAL_CONFIG_FILE } from './config/paths.js';
-import { startWorkspaceTracker, stopWorkspaceTracker } from './workspace-history.js';
+import {
+  ensureWorkspaceGitignore,
+  startWorkspaceTracker,
+  stopWorkspaceTracker,
+} from './workspace-history.js';
 
 /** Normalize a path for comparison (forward slashes, lowercase on Windows). */
 function normPath(s: string): string {
@@ -282,6 +286,7 @@ export async function initAgent(agent: AgentCore) {
   // the snapshot is the rollback machinery.
   const { takeBaselineSnapshot, hasBaselineSnapshot } = await import('./snapshots.js');
   try {
+    ensureWorkspaceGitignore(agent.cfg.workspace);
     if (hasBaselineSnapshot(agent.cfg.workspace)) {
       logDebug('[init] baseline snapshot already present, not overwriting');
     } else {

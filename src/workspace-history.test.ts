@@ -10,6 +10,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { takeBaselineSnapshot } from './snapshots.js';
 import {
+  ensureWorkspaceGitignore,
   listHistory,
   listTouchedFiles,
   recordFileChange,
@@ -17,6 +18,7 @@ import {
   startWorkspaceTracker,
   stopWorkspaceTracker,
   syncWorkspaceFromDisk,
+  workspaceGitignoreHasNanoagent,
 } from './workspace-history.js';
 
 let tmpRoot: string;
@@ -145,12 +147,38 @@ describe('restoreOriginal', () => {
   });
 });
 
+describe('ensureWorkspaceGitignore', () => {
+  it('is written when the baseline snapshot is taken', () => {
+    const text = readFileSync(join(projectDir, '.gitignore'), 'utf-8');
+    expect(workspaceGitignoreHasNanoagent(text)).toBe(true);
+    expect(text).toContain('.nanoagent/');
+  });
+
+  it('appends to an existing .gitignore without duplicating', () => {
+    writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\n', 'utf-8');
+    expect(ensureWorkspaceGitignore(projectDir)).toBe(true);
+    expect(ensureWorkspaceGitignore(projectDir)).toBe(false);
+    const text = readFileSync(join(projectDir, '.gitignore'), 'utf-8');
+    expect(text.startsWith('node_modules/\n')).toBe(true);
+    expect(text.match(/\.nanoagent\//g)?.length).toBe(1);
+  });
+
+  it('leaves an explicit !.nanoagent/ rule alone', () => {
+    writeFileSync(join(projectDir, '.gitignore'), '!.nanoagent/\n', 'utf-8');
+    expect(ensureWorkspaceGitignore(projectDir)).toBe(false);
+    expect(readFileSync(join(projectDir, '.gitignore'), 'utf-8')).toBe('!.nanoagent/\n');
+  });
+});
+
 describe('startWorkspaceTracker', () => {
   it('creates the worktree and history directories', () => {
     startWorkspaceTracker(projectDir);
     expect(existsSync(join(projectDir, '.nanoagent', 'worktree'))).toBe(true);
     expect(existsSync(join(projectDir, '.nanoagent', 'history'))).toBe(true);
     expect(existsSync(join(projectDir, '.nanoagent', 'sessions'))).toBe(true);
+    expect(
+      workspaceGitignoreHasNanoagent(readFileSync(join(projectDir, '.gitignore'), 'utf-8'))
+    ).toBe(true);
   });
 
   it('stopWorkspaceTracker is safe to call twice', () => {
