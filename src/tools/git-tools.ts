@@ -106,7 +106,7 @@ export const gitDiffTool: Tool = {
 // Git and Version Control Tools
 export const gitStatusTool: Tool = {
   name: 'git_status',
-  description: 'Show git repository status',
+  description: 'Git status with changed and untracked file names',
   parameters: { type: 'object', properties: {} },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
   executeAsync: async (_args, ws, cfg) => {
@@ -116,9 +116,8 @@ export const gitStatusTool: Tool = {
       return JSON.stringify({ ok: true, status: 'not a git repository', isGit: false });
     }
 
-    // Get porcelain status (skip untracked files for speed)
     const status = await execGit(
-      ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'],
+      ['--no-optional-locks', 'status', '--porcelain'],
       ws,
       { timeout: 10000 },
       cfg
@@ -130,15 +129,21 @@ export const gitStatusTool: Tool = {
       });
     }
 
-    const lines = status.stdout.trim();
-    const hasChanges = lines.length > 0;
+    const fileLines = status.stdout
+      .split('\n')
+      .map((l) => l.trimEnd())
+      .filter((l) => l.trim());
+    const hasChanges = fileLines.length > 0;
+    const MAX_FILES = 80;
+    const truncated = fileLines.length > MAX_FILES;
+    const files = truncated ? fileLines.slice(0, MAX_FILES) : fileLines;
     return JSON.stringify({
       ok: true,
       status: hasChanges ? 'has changes' : 'clean',
       isGit: true,
-      details: hasChanges
-        ? lines.split('\n').filter((l) => l.trim()).length + ' files changed'
-        : 'no changes',
+      details: hasChanges ? fileLines.length + ' files changed' : 'no changes',
+      files,
+      ...(truncated ? { truncated: true } : {}),
     });
   },
 };

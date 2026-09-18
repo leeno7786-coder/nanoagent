@@ -173,6 +173,11 @@ export function buildSummary(
     return (result?.message as string) || 'clean working tree';
   }
 
+  if (toolName === 'git_status') {
+    if (typeof result?.details === 'string' && result.details) return result.details;
+    if (typeof result?.status === 'string') return result.status;
+  }
+
   if (result?.stdout != null || result?.stderr != null || result?.code != null) {
     const rc = (result?.code ?? result?.returncode) as number | undefined;
     if (rc != null && rc !== 0) return `exit ${rc}`;
