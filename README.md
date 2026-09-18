@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.6.4** (`@omega3_0/nanoagent`) — message queue while the agent is busy (auto-drain, in-place edit, `/queue`, session restore), interactive `question` tool with a TUI overlay for mid-run choices, and reliability fixes across 2.6.x: queue drain races and shutdown persistence, `reloadAgentFromDisk` config preservation, settings-overlay catalog sync, and a Windows/Bun stdin race fix after renderer init. Builds on 2.5.8's synchronized context accounting and the 2.5.x TUI polish pass.
+Current release: **2.6.5** (`@omega3_0/nanoagent`) — workspace snapshots skip VCS, dependency, and cache directories (`.git`, `node_modules`, `.pytest_cache`, …) and skip folders that cannot be scanned, so Windows `EPERM` on a pytest cache no longer aborts `/snapshot` or the init baseline. `/rollback` uses the same walk and does not delete those trees. Builds on 2.6.4's message queue, `question` tool, and reliability fixes, plus 2.5.8's synchronized context accounting.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -281,7 +281,7 @@ Triggers in the frontmatter or `Use when: ...` clauses in the description auto-l
 
 ## Working tree & rollback
 
-Tools **edit the directory you pointed at directly**. `cfg.workspace` is your project; `read_file`, `write_file`, `edit_file`, etc. all read and write inside it. Rollback is the safety net: on first agent init we capture a baseline snapshot of every file in the workspace, and named snapshots record additional checkpoints. `/rollback` reverts to the baseline; `/rollback <name>` reverts to a named one.
+Tools **edit the directory you pointed at directly**. `cfg.workspace` is your project; `read_file`, `write_file`, `edit_file`, etc. all read and write inside it. Rollback is the safety net: on first agent init we capture a baseline snapshot of project files (skipping VCS, dependency, and cache dirs such as `.git`, `node_modules`, and `.pytest_cache`), and named snapshots record additional checkpoints. Unreadable directories are skipped so a locked cache folder cannot abort the snapshot. `/rollback` reverts to the baseline; `/rollback <name>` reverts to a named one.
 
 ```text
 <workspace>/                        # your project (--workspace)
@@ -293,7 +293,7 @@ Tools **edit the directory you pointed at directly**. `cfg.workspace` is your pr
 └── … your files                    # tools edit these directly
 ```
 
-The first time the agent runs against a workspace, `init.json` is written automatically (full capture of every file). Subsequent `/snapshot <name>` calls capture only the diff against the previous named snapshot, so the snapshot store stays small. `/rollback <name>` walks the chain to compose deletions correctly: a file added after a snapshot and then removed after a later one reverts to "exists in the earlier, gone in the later" with the correct outcome.
+The first time the agent runs against a workspace, `init.json` is written automatically (project files only — caches, `node_modules`, and `.git` are skipped). Subsequent `/snapshot <name>` calls capture only the diff against the previous named snapshot, so the snapshot store stays small. `/rollback <name>` walks the chain to compose deletions correctly: a file added after a snapshot and then removed after a later one reverts to "exists in the earlier, gone in the later" with the correct outcome. Rollback never deletes files inside skipped directories.
 
 ### Slash commands
 
@@ -453,6 +453,13 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.6.5 — Snapshot capture survives unreadable caches
+
+- **`/snapshot` and the init baseline no longer die on `EPERM`.** Capture skips VCS, dependency, and cache directories (same list as tool search: `.git`, `node_modules`, `.pytest_cache`, …) and continues past directories that cannot be scanned instead of aborting the whole snapshot.
+- **`/rollback` does not delete skipped trees.** Restore uses the same walk, so caches and `node_modules` are left alone.
+- Init/`/cd` now warn if a baseline still cannot be taken (was debug-only).
+- Tests: 3 new snapshot-walk cases; `listSnapshots` newest-first order is pinned so same-millisecond captures cannot flake. Suite: 995 pass.
 
 ### 2.6.4 — Windows/Bun stdin race fix
 

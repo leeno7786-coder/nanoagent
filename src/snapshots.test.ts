@@ -7,7 +7,16 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -93,21 +102,20 @@ describe('named snapshots', () => {
 
   it('listSnapshots returns newest first', () => {
     captureSnapshot(projectDir, 'first');
-    // Pin first.createdAt to an older timestamp so first sorts last.
-    const path = join(projectDir, '.nanoagent', 'snapshots', 'first.json');
-    const data = JSON.parse(readFileSync(path, 'utf-8'));
-    data.createdAt = '2020-01-01T00:00:00.000Z';
-    writeFileSync(path, JSON.stringify(data), 'utf-8');
     captureSnapshot(projectDir, 'second');
+    const dir = join(projectDir, '.nanoagent', 'snapshots');
+    const pin = (name: string, createdAt: string) => {
+      const file = join(dir, `${name}.json`);
+      const data = JSON.parse(readFileSync(file, 'utf-8'));
+      data.createdAt = createdAt;
+      writeFileSync(file, JSON.stringify(data), 'utf-8');
+    };
+    // Pin timestamps so order does not depend on same-millisecond captures.
+    pin('init', '2019-01-01T00:00:00.000Z');
+    pin('first', '2020-01-01T00:00:00.000Z');
+    pin('second', '2021-01-01T00:00:00.000Z');
     const list = listSnapshots(projectDir);
-    // init.json (baseline) + first + second = 3 total.
-    expect(list.length).toBe(3);
-    expect(list[0]!.name).toBe('second');
-    // The other two are init (real timestamp) and first (pinned 2020);
-    // order between them is non-deterministic from this test's POV.
-    const others = new Set([list[1]!.name, list[2]!.name]);
-    expect(others.has('init')).toBe(true);
-    expect(others.has('first')).toBe(true);
+    expect(list.map((s) => s.name)).toEqual(['second', 'first', 'init']);
   });
 
   it('deleteSnapshot removes the file', () => {
@@ -179,6 +187,73 @@ describe('restoreBaseline', () => {
 
   it('throws when no baseline exists', () => {
     expect(() => restoreBaseline(projectDir)).toThrow(/no baseline snapshot/);
+  });
+});
+
+describe('snapshot walk skips caches and unreadable dirs', () => {
+  it('does not capture files under .pytest_cache or node_modules', () => {
+    mkdirSync(join(projectDir, '.pytest_cache'), { recursive: true });
+    writeFileSync(join(projectDir, '.pytest_cache', 'v.json'), '{"x":1}\n');
+    mkdirSync(join(projectDir, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(projectDir, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;\n');
+    mkdirSync(join(projectDir, '.git', 'objects'), { recursive: true });
+    writeFileSync(join(projectDir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+
+    takeBaselineSnapshot(projectDir);
+    const manifest = JSON.parse(readFileSync(baselineSnapshotPath(projectDir), 'utf-8')) as {
+      files: Record<string, string>;
+    };
+    expect(manifest.files['index.ts']).toBeDefined();
+    expect(manifest.files['README.md']).toBeDefined();
+    expect(manifest.files['.pytest_cache/v.json']).toBeUndefined();
+    expect(manifest.files['node_modules/pkg/index.js']).toBeUndefined();
+    expect(manifest.files['.git/HEAD']).toBeUndefined();
+  });
+
+  it('skips a directory that cannot be scanned instead of failing the snapshot', () => {
+    const locked = join(projectDir, 'locked-dir');
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'secret.txt'), 'nope\n');
+    chmodSync(locked, 0);
+    let unreadable = false;
+    try {
+      readdirSync(locked);
+    } catch {
+      unreadable = true;
+    }
+    if (!unreadable) {
+      chmodSync(locked, 0o700);
+      // Windows (and root) cannot simulate EPERM/EACCES via chmod; skip.
+      return;
+    }
+    try {
+      expect(() => takeBaselineSnapshot(projectDir)).not.toThrow();
+      expect(hasBaselineSnapshot(projectDir)).toBe(true);
+      const manifest = JSON.parse(readFileSync(baselineSnapshotPath(projectDir), 'utf-8')) as {
+        files: Record<string, string>;
+      };
+      expect(manifest.files['index.ts']).toBeDefined();
+      expect(manifest.files['locked-dir/secret.txt']).toBeUndefined();
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+  });
+
+  it('restore does not delete files inside skipped directories', () => {
+    mkdirSync(join(projectDir, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(projectDir, 'node_modules', 'pkg', 'index.js'), 'keep\n');
+    mkdirSync(join(projectDir, '.pytest_cache'), { recursive: true });
+    writeFileSync(join(projectDir, '.pytest_cache', 'v.json'), '{"keep":true}\n');
+    takeBaselineSnapshot(projectDir);
+    writeFileSync(join(projectDir, 'index.ts'), 'mutated\n');
+    restoreBaseline(projectDir);
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
+    expect(readFileSync(join(projectDir, 'node_modules', 'pkg', 'index.js'), 'utf-8')).toBe(
+      'keep\n'
+    );
+    expect(readFileSync(join(projectDir, '.pytest_cache', 'v.json'), 'utf-8')).toBe(
+      '{"keep":true}\n'
+    );
   });
 });
 

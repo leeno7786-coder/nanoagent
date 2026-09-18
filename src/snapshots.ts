@@ -3,10 +3,12 @@
  *
  * Storage model: a snapshot is a JSON file under
  * `<workspace>/.nanoagent/snapshots/<name>.json` that records the FULL
- * content of every file that changed since the previous snapshot. The
- * first snapshot of a tree captures every file (so a /rollback before
- * any edits brings the user back to the source state). Subsequent
- * snapshots capture only the diff against the previous one.
+ * content of every project file that changed since the previous
+ * snapshot (VCS, dependency, and cache directories are skipped). The
+ * first snapshot of a tree captures every remaining file (so a
+ * /rollback before any edits brings the user back to the source
+ * state). Subsequent snapshots capture only the diff against the
+ * previous one.
  *
  * Rollback: /rollback <name> restores the working tree from a snapshot
  * by writing each recorded file's content back. /rollback (no name)
@@ -17,8 +19,17 @@
  * at time T" for the changes. We don't try to be a real VCS.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  type Dirent,
+} from 'fs';
 import { join, relative, sep } from 'path';
+import { SKIP_DIRS } from './tools/shared.js';
 
 interface SnapshotManifest {
   name: string;
@@ -85,15 +96,32 @@ export function listSnapshots(workspace: string): SnapshotInfo[] {
   return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-/** Walk the working tree and capture every file's content. */
+function skipSnapshotEntry(name: string): boolean {
+  // Never snapshot the rollback store, VCS, deps, or caches (.pytest_cache,
+  // node_modules, .git, ...). The skip list matches tool search so rollback
+  // cannot delete those trees either.
+  return name === '.nanoagent' || SKIP_DIRS.has(name);
+}
+
+function readDirEntries(dir: string): Dirent[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch {
+    // EPERM/EACCES (Windows pytest cache, locked folders) — skip the dir
+    // instead of aborting the whole snapshot.
+    return [];
+  }
+}
+
+/** Walk the working tree and capture every project file's content. */
 function snapshotTree(treePath: string): Map<string, string> {
   const out = new Map<string, string>();
   if (!existsSync(treePath)) return out;
   const stack: string[] = [treePath];
   while (stack.length) {
     const dir = stack.pop()!;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === '.nanoagent') continue; // never snapshot the metadata dir
+    for (const entry of readDirEntries(dir)) {
+      if (skipSnapshotEntry(entry.name)) continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         stack.push(full);
@@ -176,9 +204,9 @@ export function hasBaselineSnapshot(workspace: string): boolean {
 }
 
 /**
- * Take (or refresh) the baseline snapshot: a full capture of every file
- * in the workspace at agent-init time. `/rollback` (no name) restores
- * from this snapshot. Safe to call repeatedly — overwrites.
+ * Take (or refresh) the baseline snapshot: a full capture of project
+ * files at agent-init time (VCS/deps/caches skipped). `/rollback` (no
+ * name) restores from this snapshot. Safe to call repeatedly — overwrites.
  */
 export function takeBaselineSnapshot(workspace: string): SnapshotInfo {
   const treePath = workspace;
@@ -257,25 +285,7 @@ export function restoreSnapshot(
   let applied = 0;
   let removed = 0;
   if (existsSync(workspace)) {
-    const live = new Map<string, string>();
-    const stack: string[] = [workspace];
-    while (stack.length) {
-      const dir = stack.pop()!;
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name === '.nanoagent') continue;
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          stack.push(full);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        try {
-          live.set(relative(workspace, full).split(sep).join('/'), readFileSync(full, 'utf-8'));
-        } catch {
-          /* skip */
-        }
-      }
-    }
+    const live = snapshotTree(workspace);
     for (const [relPath, content] of merged) {
       const target = join(workspace, relPath);
       mkdirSync(join(target, '..'), { recursive: true });
@@ -349,25 +359,7 @@ export function restoreBaseline(workspace: string): {
   // Deletions: any file currently on disk that isn't in the baseline.
   let removed = 0;
   if (existsSync(workspace)) {
-    const live = new Map<string, string>();
-    const stack: string[] = [workspace];
-    while (stack.length) {
-      const dir = stack.pop()!;
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name === '.nanoagent') continue; // never touch the rollback store
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          stack.push(full);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        try {
-          live.set(relative(workspace, full).split(sep).join('/'), readFileSync(full, 'utf-8'));
-        } catch {
-          /* skip */
-        }
-      }
-    }
+    const live = snapshotTree(workspace);
     for (const [relPath] of live) {
       if (!(relPath in manifest.files)) {
         try {
