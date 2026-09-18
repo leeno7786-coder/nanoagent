@@ -6,12 +6,21 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, mkdirSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { sanitizeSessionId, loadSession, deleteSession, buildConfigSnapshot } from './store.js';
+import {
+  sanitizeSessionId,
+  loadSession,
+  deleteSession,
+  buildConfigSnapshot,
+  saveSession,
+  loadSessions,
+  autoSaveSession,
+  setActiveSessionWorkspace,
+} from './store.js';
 import { __resetPathsCacheForTests } from './config/paths.js';
-import type { Config } from './types.js';
+import type { Config, Session } from './types.js';
 
 let tmpRoot: string;
 const PRELOAD_ROOT = process.env.NANOAGENT_ROOT;
@@ -26,6 +35,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setActiveSessionWorkspace(undefined);
   rmSync(tmpRoot, { recursive: true, force: true });
   // Restore the preload's root, not `priorRoot` (which is this test's own
   // tmpRoot) — the preload is the one responsible for the canonical value.
@@ -98,5 +108,81 @@ describe('session load/delete with hostile ids', () => {
   it('deleteSession is a no-op for traversal attempts', () => {
     expect(() => deleteSession('../../package')).not.toThrow();
     expect(() => deleteSession('')).not.toThrow();
+  });
+});
+
+describe('project-local sessions under .nanoagent', () => {
+  let projectDir: string;
+
+  beforeEach(() => {
+    projectDir = join(tmpRoot, 'proj');
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, 'readme.md'), '# p\n');
+    setActiveSessionWorkspace(projectDir);
+  });
+
+  function sampleSession(id: string): Session {
+    return {
+      id,
+      messages: [{ id: 'm1', role: 'user', content: 'hi', timestamp: 1 }],
+      todos: [],
+      createdAt: 1,
+      updatedAt: 2,
+      model: 'qwen',
+    };
+  }
+
+  it('saveSession writes into <workspace>/.nanoagent/sessions', () => {
+    saveSession(sampleSession('chat-1'));
+    const file = join(projectDir, '.nanoagent', 'sessions', 'chat-1.json');
+    expect(existsSync(file)).toBe(true);
+    const raw = JSON.parse(readFileSync(file, 'utf-8')) as { id: string };
+    expect(raw.id).toBe('chat-1');
+  });
+
+  it('autoSaveSession writes autosave into the project sessions dir', () => {
+    const id = autoSaveSession(
+      [{ id: 'm1', role: 'user', content: 'hi', timestamp: 1 }],
+      [],
+      projectDir
+    );
+    expect(id).toBe('autosave');
+    expect(existsSync(join(projectDir, '.nanoagent', 'sessions', 'autosave.json'))).toBe(true);
+  });
+
+  it('loadSessions lists project sessions and not unrelated global ones', () => {
+    const globalFile = join(tmpRoot, 'sessions', 'global-only.json');
+    writeFileSync(
+      globalFile,
+      JSON.stringify({
+        id: 'global-only',
+        messages: [],
+        todos: [],
+        createdAt: 1,
+        updatedAt: 1,
+      })
+    );
+    saveSession(sampleSession('local-chat'));
+    const ids = loadSessions().map((s) => s.id);
+    expect(ids).toContain('local-chat');
+    expect(ids).not.toContain('global-only');
+  });
+
+  it('migrates a matching global autosave into the project dir', () => {
+    setActiveSessionWorkspace(undefined);
+    const hashed = autoSaveSession(
+      [{ id: 'm1', role: 'user', content: 'old', timestamp: 1 }],
+      [],
+      projectDir
+    );
+    expect(hashed.startsWith('autosave-')).toBe(true);
+    const globalPath = join(tmpRoot, 'sessions', `${hashed}.json`);
+    expect(existsSync(globalPath)).toBe(true);
+
+    setActiveSessionWorkspace(projectDir);
+    const migrated = loadSession('autosave');
+    expect(migrated).not.toBeNull();
+    expect(migrated?.messages[0]?.content).toBe('old');
+    expect(existsSync(join(projectDir, '.nanoagent', 'sessions', 'autosave.json'))).toBe(true);
   });
 });

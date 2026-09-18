@@ -26,6 +26,7 @@ export const PALETTE_ACTIONS: PaletteAction[] = [
   { id: 'snapshot', label: 'Snapshot workspace' },
   { id: 'diffs', label: 'List snapshots' },
   { id: 'rollback', label: 'Rollback to a snapshot…' },
+  { id: 'changes', label: 'List file changes this session' },
   { id: 'todo', label: 'Toggle todo sidebar', hint: 'F4' },
   { id: 'save', label: 'Save session', hint: 'F5' },
   { id: 'history', label: 'Session history', hint: 'F6' },

@@ -11,6 +11,8 @@ import type { AgentCore } from '../agent.js';
 import type { Config, Message, Todo } from '../types.js';
 import { PermissionManager } from '../security/permissions.js';
 import { handleSlashCommand, type SlashCommandContext } from './slash-commands/index.js';
+import { stopWorkspaceTracker } from '../workspace-history.js';
+import { setActiveSessionWorkspace } from '../store.js';
 
 function makeConfig(ws: string): Config {
   return {
@@ -199,6 +201,8 @@ describe('handleSlashCommand', () => {
   });
 
   afterEach(() => {
+    stopWorkspaceTracker();
+    setActiveSessionWorkspace(undefined);
     rmSync(ws, { recursive: true, force: true });
   });
 
@@ -526,6 +530,8 @@ describe('snapshot / rollback slash commands', () => {
   });
 
   afterEach(() => {
+    stopWorkspaceTracker();
+    setActiveSessionWorkspace(undefined);
     rmSync(ws, { recursive: true, force: true });
   });
 
@@ -576,5 +582,20 @@ describe('snapshot / rollback slash commands', () => {
     await handleSlashCommand('/snapshot known', h.ctx);
     await handleSlashCommand('/rollback ghost', h.ctx);
     expect(lastAssistantContent(h)).toMatch(/snapshot not found|Failed to rollback/);
+  });
+
+  it('/changes lists files recorded in the worktree journal', async () => {
+    const { recordFileChange } = require('../workspace-history.js');
+    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 99;\n');
+    recordFileChange(projectDir, 'index.ts', 'update', 'write');
+    await handleSlashCommand('/changes', h.ctx);
+    const content = lastAssistantContent(h);
+    expect(content).toContain('index.ts');
+    expect(content).toContain('Touched files');
+  });
+
+  it('/changes with no journal reports that nothing was recorded', async () => {
+    await handleSlashCommand('/changes', h.ctx);
+    expect(lastAssistantContent(h)).toContain('No file changes recorded');
   });
 });

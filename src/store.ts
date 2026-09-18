@@ -1,10 +1,96 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'fs';
-import { join } from 'path';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+  rmSync,
+  copyFileSync,
+} from 'fs';
+import { join, resolve } from 'path';
 import type { Todo, Session, Message, Config } from './types.js';
 import { VersionedStore } from './storage.js';
-import { SESSIONS_DIR, INPUT_HISTORY_FILE, nanoagentPaths } from './config/paths.js';
+import {
+  SESSIONS_DIR,
+  SESSIONS_DIR_FOR,
+  INPUT_HISTORY_FILE,
+  nanoagentPaths,
+} from './config/paths.js';
 
 const SESSION_VERSION = 1;
+
+let activeSessionWorkspace: string | undefined;
+
+function normWorkspace(s: string): string {
+  const fwd = resolve(s).replace(/\\/g, '/');
+  return process.platform === 'win32' ? fwd.toLowerCase() : fwd;
+}
+
+/**
+ * Direct subsequent session reads/writes at
+ * `<workspace>/.nanoagent/sessions`. Pass `undefined` to fall back to the
+ * install-global sessions dir. Matching global sessions are copied in once.
+ */
+export function setActiveSessionWorkspace(workspace: string | undefined): void {
+  activeSessionWorkspace = workspace && workspace.length > 0 ? workspace : undefined;
+  if (activeSessionWorkspace) {
+    migrateGlobalSessions(activeSessionWorkspace);
+  }
+}
+
+function migrateGlobalSessions(workspace: string): void {
+  let globalDir: string;
+  try {
+    globalDir = SESSIONS_DIR();
+  } catch {
+    return;
+  }
+  if (!existsSync(globalDir)) return;
+  const destDir = SESSIONS_DIR_FOR(workspace);
+  if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+  const hashedAutosave = `autosave-${hashWorkspace(workspace)}`;
+  const wsNorm = normWorkspace(workspace);
+  let names: string[] = [];
+  try {
+    names = readdirSync(globalDir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json') || name.endsWith('.bak')) continue;
+    const id = name.slice(0, -5);
+    const src = join(globalDir, name);
+    let destName = name;
+    if (id === hashedAutosave) {
+      destName = 'autosave.json';
+    } else {
+      try {
+        const raw = JSON.parse(readFileSync(src, 'utf-8')) as {
+          config?: { workspace?: string };
+          workspace?: string;
+        };
+        const cfgWs = raw.config?.workspace ?? raw.workspace;
+        if (!cfgWs || normWorkspace(String(cfgWs)) !== wsNorm) continue;
+        if (id === 'autosave' || id.startsWith('autosave-')) destName = 'autosave.json';
+      } catch {
+        continue;
+      }
+    }
+    const dest = join(destDir, destName);
+    if (existsSync(dest)) continue;
+    try {
+      if (destName === 'autosave.json' && id !== 'autosave') {
+        const raw = JSON.parse(readFileSync(src, 'utf-8')) as Session & { id: string };
+        raw.id = 'autosave';
+        writeFileSync(dest, JSON.stringify(raw, null, 2), 'utf-8');
+      } else {
+        copyFileSync(src, dest);
+      }
+    } catch {
+      /* best-effort migrate */
+    }
+  }
+}
 
 export function buildConfigSnapshot(cfg: Config): Partial<Config> {
   // apiKey and MCP configuration are deliberately excluded: session files are
@@ -52,6 +138,9 @@ export function buildConfigSnapshot(cfg: Config): Partial<Config> {
 // Resolved lazily — a top-level SESSIONS_DIR() call throws at import time
 // when NANOAGENT_ROOT is unset, breaking `--help` outside the launcher.
 function sessionDir(): string {
+  if (activeSessionWorkspace) {
+    return SESSIONS_DIR_FOR(activeSessionWorkspace);
+  }
   return SESSIONS_DIR();
 }
 
@@ -95,8 +184,7 @@ export function autoSaveSession(
   messageQueue?: string[]
 ): string {
   ensureDir();
-  const hash = hashWorkspace(workspace);
-  const id = `autosave-${hash}`;
+  const id = activeSessionWorkspace ? 'autosave' : `autosave-${hashWorkspace(workspace)}`;
   const session: Session = {
     id,
     messages,

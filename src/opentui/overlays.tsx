@@ -70,6 +70,7 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.headerFg}> /snapshot [name] Capture a workspace snapshot</text>
       <text fg={theme.headerFg}> /diffs List saved snapshots, newest first</text>
       <text fg={theme.headerFg}> /rollback [name] Restore a snapshot (no name = baseline)</text>
+      <text fg={theme.headerFg}> /changes List files touched this session</text>
       <text fg={theme.headerFg}> /reload Reload config, skills, and LM Studio metadata</text>
       <text fg={theme.headerFg}> /theme [name] Switch color theme</text>
       <text fg={theme.headerFg}>

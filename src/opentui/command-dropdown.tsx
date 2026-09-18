@@ -37,6 +37,7 @@ const BUILTIN_COMMANDS: Command[] = [
   { name: '/snapshot', description: 'Capture a workspace snapshot (optional name)' },
   { name: '/diffs', description: 'List saved snapshots, newest first' },
   { name: '/rollback', description: 'Restore a snapshot (no name = baseline)' },
+  { name: '/changes', description: 'List files touched this session (worktree history)' },
   { name: '/cd', description: 'Change tool workspace' },
   { name: '/allow', description: 'Approve extra tool path' },
   { name: '/export', description: 'Export chat to markdown' },

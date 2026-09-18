@@ -134,6 +134,29 @@ export function SNAPSHOTS_DIR_FOR(workspace: string): string {
   return join(WORKSPACE_META_DIR_FOR(workspace), 'snapshots');
 }
 
+/**
+ * Latest copies of files the agent touched during this run.
+ * Tools still edit the real workspace; this tree is history only.
+ */
+export function WORKTREE_DIR_FOR(workspace: string): string {
+  return join(WORKSPACE_META_DIR_FOR(workspace), 'worktree');
+}
+
+/** Originals + journal for files touched during the current run. */
+export function HISTORY_DIR_FOR(workspace: string): string {
+  return join(WORKSPACE_META_DIR_FOR(workspace), 'history');
+}
+
+/** Per-project conversation history. */
+export function SESSIONS_DIR_FOR(workspace: string): string {
+  return join(WORKSPACE_META_DIR_FOR(workspace), 'sessions');
+}
+
+/** JSONL journal of file changes for the given workspace. */
+export function JOURNAL_FILE_FOR(workspace: string): string {
+  return join(HISTORY_DIR_FOR(workspace), 'journal.jsonl');
+}
+
 /** config/todos.json — persistent todos. */
 export const TODO_FILE = () => installPath('config', 'todos.json');
 

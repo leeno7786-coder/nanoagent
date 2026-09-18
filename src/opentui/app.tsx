@@ -171,7 +171,8 @@ export function App({ renderer }: { renderer: CliRenderer }) {
         role: 'assistant',
         content:
           `⚡ **NanoAgent** — Tiny Models, Scalable Intelligence\n\n` +
-          `workspace: \`${agent.cfg.workspace}\` · ${hasBaseline ? 'baseline snapshot ready (`/rollback` to revert)' : 'no baseline snapshot yet (`/snapshot` to start)'}\n\n` +
+          `workspace: \`${agent.cfg.workspace}\` · ${hasBaseline ? 'baseline snapshot ready (`/rollback` to revert)' : 'no baseline snapshot yet (`/snapshot` to start)'}\n` +
+          `history: \`.nanoagent/worktree\` (\`/changes\`) · sessions: \`.nanoagent/sessions\`\n\n` +
           `Tools edit the workspace directly. Type \`/help\` for commands or \`/config\` for settings.`,
         timestamp: Date.now(),
       });
@@ -851,6 +852,9 @@ export function App({ renderer }: { renderer: CliRenderer }) {
           break;
         case 'diffs':
           void handleSubmit('/diffs');
+          break;
+        case 'changes':
+          void handleSubmit('/changes');
           break;
         case 'rollback':
           // Never execute bare — a no-name rollback restores the workspace

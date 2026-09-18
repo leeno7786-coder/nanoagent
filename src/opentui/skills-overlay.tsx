@@ -36,6 +36,7 @@ export const BUILTIN_COMMANDS: { name: string; description: string }[] = [
   { name: '/reload', description: 'Reload configuration' },
   { name: '/sessions', description: 'List saved sessions' },
   { name: '/resume', description: 'Resume latest or specific session. Usage: /resume [id]' },
+  { name: '/changes', description: 'List files touched this session' },
   { name: '/settings', description: 'Open settings' },
   { name: '/skills', description: 'Manage skills (F8)' },
   { name: '/unload', description: 'Unload a skill. Usage: /unload [name]' },
