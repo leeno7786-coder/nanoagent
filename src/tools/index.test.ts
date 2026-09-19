@@ -103,11 +103,7 @@ describe('tools', () => {
 
   it('read_file caps small models and tells them the next start_line', () => {
     const file = join(ws, 'small-cap.txt');
-    writeFileSync(
-      file,
-      Array.from({ length: 150 }, (_, i) => `line ${i + 1}`).join('\n'),
-      'utf-8'
-    );
+    writeFileSync(file, Array.from({ length: 150 }, (_, i) => `line ${i + 1}`).join('\n'), 'utf-8');
     const readFile = tools.find((t) => t.name === 'read_file')!;
     const cfg = {
       baseURL: 'http://127.0.0.1:1234/v1',
