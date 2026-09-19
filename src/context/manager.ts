@@ -29,13 +29,8 @@ export interface ContextConfig {
   enabled: boolean;
 }
 
-/** Target live-prompt fill after compaction. Keep this well below the trigger so
- * the next tool call has room for schemas, template overhead, and output. */
+/** Fraction of the loaded window spent on the compact-summary completion. */
 export const DEFAULT_COMPACTION_TARGET_RATIO = 0.2;
-
-/** Aggressive target for overflow recovery: leave more headroom for tool schemas
- * and output that aren't tracked in message-level token counting. */
-export const OVERFLOW_COMPACTION_TARGET_RATIO = 0.1;
 
 export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
   compactThreshold: DEFAULT_COMPACT_THRESHOLD,
@@ -443,6 +438,28 @@ export class ContextManager {
   }
 
   /**
+   * True when history is already the post-compact shape: kept system
+   * messages, optional handoff summary, and the original user task.
+   * Auto-compact must not loop on that form even if fill is still high
+   * (huge system prompt on a small loaded window).
+   */
+  isAlreadyCompacted(): boolean {
+    let sawUser = false;
+    for (const m of this.messages) {
+      if (m.id.startsWith('notice-')) continue;
+      if (m.id === 'system-base' || m.id === 'system-todos' || m.id === 'system-compaction') {
+        continue;
+      }
+      if (m.role === 'user' && !sawUser) {
+        sawUser = true;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * Check if compaction is needed.
    */
   needsCompaction(): boolean {
@@ -452,14 +469,14 @@ export class ContextManager {
   }
 
   /**
-   * Compact the conversation history to free up context space.
-   * Removes oldest messages while preserving important context.
+   * Compact conversation history when fill exceeds ~80% of the loaded window
+   * (or when `force` / `/compact`).
    *
-   * @param opts.force — compact even when under the normal threshold (overflow recovery)
-   * @param opts.keepCount — override how many trailing messages to keep (force uses a lower default)
-   * @param opts.targetRatio — fraction of context to land under (default: 20%)
+   * Replaces the conversation with: kept system messages, a summary of
+   * everything that happened, and the original user task. `keepCount` /
+   * `targetRatio` are ignored — those were the old drop-oldest path.
    */
-  compact(opts?: { force?: boolean; keepCount?: number; targetRatio?: number }): {
+  compact(opts?: { force?: boolean; keepCount?: number; targetRatio?: number; summary?: string }): {
     removedCount: number;
     summary?: string;
   } {
@@ -468,164 +485,90 @@ export class ContextManager {
     }
 
     const force = opts?.force === true;
-    const stats = this.getStats();
-    if (!force && !stats.needsCompaction) {
+    if (!force && (this.isAlreadyCompacted() || !this.getStats().needsCompaction)) {
       return { removedCount: 0 };
     }
 
-    // Calculate how many tokens we need to free
-    const contextSize = this.getContextWindowSize();
-
-    // Determine the post-compaction target. An explicit targetRatio is useful
-    // for callers with a model-specific policy; otherwise use the safe default.
-    let targetTokens: number;
-    if (opts?.targetRatio !== undefined) {
-      targetTokens = Math.floor(contextSize * opts.targetRatio);
-    } else {
-      // Reset aggressively after either an automatic compaction or an overflow
-      // recovery. A 20% target is intentional: the next turn may add tool
-      // schemas, template overhead, and a large completion before we can
-      // observe usage again.
-      targetTokens = Math.floor(contextSize * DEFAULT_COMPACTION_TARGET_RATIO);
+    const keptSystem: Message[] = [];
+    let i = 0;
+    while (i < this.messages.length && this.messages[i]!.role === 'system') {
+      const msg = this.messages[i]!;
+      if (msg.id === 'system-base' || msg.id === 'system-todos') {
+        keptSystem.push(msg);
+      }
+      i++;
+    }
+    while (i < this.messages.length && this.messages[i]!.role === 'system') {
+      i++;
     }
 
-    const tokensToRemove = Math.max(0, stats.currentTokens - targetTokens);
-
-    if (tokensToRemove <= 0 && !force) {
-      return { removedCount: 0 };
-    }
-    // When forcing with nothing to free by token math, still drop old history —
-    // provider token counts (esp. with large tool schemas) often exceed ours.
-    if (tokensToRemove <= 0 && force) {
-      // Fall through and remove everything except system + last few messages
-    }
-
-    // Don't remove leading system messages (main prompt, todo context, skills)
-    let firstRemovable = 0;
-    while (
-      firstRemovable < this.messages.length &&
-      this.messages[firstRemovable].role === 'system'
-    ) {
-      firstRemovable++;
-    }
-
-    // Pin the original user request so compaction cannot erase the task.
-    if (firstRemovable < this.messages.length && this.messages[firstRemovable].role === 'user') {
-      firstRemovable++;
-    }
-
-    // Don't remove the last keepCount messages (force uses a tighter keep window)
-    const effectiveKeep =
-      opts?.keepCount ?? (force ? Math.min(4, this.config.keepCount) : this.config.keepCount);
-    const minKeep = Math.min(effectiveKeep, this.messages.length);
-    const lastRemovable = Math.max(firstRemovable, this.messages.length - minKeep);
-
-    // Walk a contiguous cut point forward from the first removable message
-    let cut = firstRemovable;
-    let removedTokens = 0;
-    const mustRemove = force && tokensToRemove <= 0;
-    while (cut < lastRemovable) {
-      const msgTokens = this.countMessageTokens([this.messages[cut]]);
-      if (!mustRemove && removedTokens + msgTokens > tokensToRemove && cut > firstRemovable) {
+    let originalUser: Message | undefined;
+    for (; i < this.messages.length; i++) {
+      const msg = this.messages[i]!;
+      if (msg.id.startsWith('notice-')) continue;
+      if (msg.role === 'user') {
+        originalUser = msg;
         break;
       }
-      removedTokens += msgTokens;
-      cut++;
-      // When mustRemove, drop everything up to lastRemovable
-      if (mustRemove && cut >= lastRemovable) break;
-    }
-    if (cut === firstRemovable && lastRemovable > firstRemovable) {
-      // First removable message is too large — remove it anyway to make progress
-      removedTokens += this.countMessageTokens([this.messages[cut]]);
-      cut++;
     }
 
-    // Never split an assistant tool_calls group from its tool responses:
-    // if the cut lands right before `tool` messages, advance past them.
-    while (cut < this.messages.length && this.messages[cut].role === 'tool') {
-      removedTokens += this.countMessageTokens([this.messages[cut]]);
-      cut++;
+    const keepIds = new Set(keptSystem.map((m) => m.id));
+    if (originalUser) keepIds.add(originalUser.id);
+    const removed = this.messages.filter((m) => !keepIds.has(m.id));
+    if (removed.length === 0 && !opts?.summary?.trim()) {
+      return { removedCount: 0 };
     }
 
-    const messagesToRemove = this.messages.slice(firstRemovable, cut);
-    const removedCount = messagesToRemove.length;
-
-    // Remove the messages (system prefix is preserved)
-    if (messagesToRemove.length > 0) {
-      this.messages = [...this.messages.slice(0, firstRemovable), ...this.messages.slice(cut)];
-      // Update cached totals and remove stale cache entries
-      for (const msg of messagesToRemove) {
-        const tokens = this.messageTokenCache.get(msg.id);
-        if (tokens !== undefined) {
-          this.cachedTotalTokens -= tokens;
-          this.messageTokenCache.delete(msg.id);
-        }
-      }
-      this.compactionCount++;
-      // History changed — drop stale API prompt count; next LLM call will re-baseline
-      this.lastApiPromptTokens = undefined;
-      this.tokensAddedSinceApiReport = 0;
+    const summaryText = (opts?.summary?.trim() || this.generateCompactionSummary(removed)).trim();
+    if (!summaryText) {
+      return { removedCount: 0 };
     }
 
-    // Generate a summary if we removed any messages
-    let summary: string | undefined;
-    if (removedCount > 0 && messagesToRemove.length > 0) {
-      summary = this.generateCompactionSummary(messagesToRemove);
-    }
+    const next: Message[] = [...keptSystem];
+    next.push({
+      id: 'system-compaction',
+      role: 'system',
+      content: summaryText.startsWith('[Context compacted')
+        ? summaryText
+        : `[Context compacted]\n${summaryText}`,
+      timestamp: Date.now(),
+    });
+    if (originalUser) next.push(originalUser);
 
-    this.stats = null; // Invalidate cached stats
+    this.messages = next;
+    this.reseedTokenCache();
+    this.lastApiPromptTokens = undefined;
+    this.tokensAddedSinceApiReport = 0;
+    this.compactionCount++;
+    this.stats = null;
 
-    return { removedCount, summary };
+    return {
+      removedCount: removed.length,
+      summary: next.find((m) => m.id === 'system-compaction')?.content,
+    };
   }
 
   /**
-   * Generate a summary of removed messages for context.
+   * Local fallback when the compact-summary inference is skipped or fails.
    */
   private generateCompactionSummary(removedMessages: Message[]): string {
-    const summaries: string[] = [];
-
+    const files = new Set<string>();
+    const notes: string[] = [];
     for (const msg of removedMessages) {
-      if (msg.role === 'user') {
-        // Summarize user messages
-        const content = msg.content || '';
-        if (content.length > 100) {
-          summaries.push(`User: ${content.slice(0, 100)}...`);
-        } else if (content) {
-          summaries.push(`User: ${content}`);
-        }
-      } else if (msg.role === 'assistant') {
-        // Summarize assistant messages
-        const content = msg.content || '';
-        if (content.length > 100) {
-          summaries.push(`Assistant: ${content.slice(0, 100)}...`);
-        } else if (content) {
-          summaries.push(`Assistant: ${content}`);
-        }
-      } else if (msg.role === 'tool') {
-        // Summarize tool results
-        const content = msg.content || '';
+      if (msg.role === 'tool' && msg.content) {
         try {
-          const result = JSON.parse(content);
-          if (result.ok !== false && result.path) {
-            summaries.push(`Tool: Read ${result.path}`);
-          } else if (result.ok !== false) {
-            summaries.push(`Tool: ${JSON.stringify(result).slice(0, 100)}`);
-          }
+          const result = JSON.parse(msg.content) as { path?: unknown };
+          if (typeof result.path === 'string' && result.path) files.add(result.path);
         } catch {
-          if (content.length > 100) {
-            summaries.push(`Tool: ${content.slice(0, 100)}...`);
-          } else if (content) {
-            summaries.push(`Tool: ${content}`);
-          }
+          /* ignore */
         }
+      } else if ((msg.role === 'assistant' || msg.role === 'user') && msg.content) {
+        if (notes.length < 5) notes.push(msg.content.slice(0, 160));
       }
     }
-
-    if (summaries.length === 0) {
-      return '';
-    }
-
-    return `[Conversation history compacted - ${removedMessages.length} messages removed. Summary: ${summaries.slice(0, 3).join(' | ')}]`;
+    const fileList = [...files].slice(0, 24).join(', ');
+    const progress = notes.length > 0 ? notes.join(' | ') : '';
+    return `[Context compacted — ${removedMessages.length} messages removed. Files: ${fileList || 'none'}.${progress ? ` ${progress}` : ''}]`;
   }
 
   /**

@@ -9,8 +9,7 @@ import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
 import { capToolResultForLlm, resolveToolResultTokenBudget } from './llm/tool-result-budget.js';
-import { OVERFLOW_COMPACTION_TARGET_RATIO } from './context/manager.js';
-
+import { compactOutputBudget, llmCompactSummary } from './context/summarize.js';
 /** UI-only assistant notices (overflow retry, stuck-loop, etc.). Never sent to the LLM. */
 export function isNoticeMessage(m: Message): boolean {
   return m.id.startsWith('notice-');
@@ -177,8 +176,9 @@ function pushNotice(agent: AgentCore, id: string, content: string) {
     content,
     timestamp: now(),
   };
+  // Notices are UI-only: never count against the loaded-window fill and
+  // never enter the compact/LLM history.
   agent.messages.push(msg);
-  agent.contextManager.addMessage(msg);
   agent.onUpdate?.();
 }
 
@@ -265,66 +265,57 @@ function setCompactionSummaryMessage(agent: AgentCore, summary: string) {
 }
 
 /**
- * Check if context needs compaction and perform it if necessary.
- * Returns true if compaction was performed.
- *
- * @param escalationLevel — increases aggressiveness on repeated overflow
- *   recovery (0 = normal proactive, 1 = first force, 2+ = escalated)
+ * When fill exceeds ~80% of the loaded context window, ask the model to
+ * write a handoff using the leftover ~20%, wipe conversation history, and
+ * keep: system prompt, original task, and that summary.
+ * `force` is `/compact`.
  */
-export function checkAndCompactContext(
+export async function checkAndCompactContext(
   agent: AgentCore,
   force = false,
-  escalationLevel = 0
-): boolean {
+  signal?: AbortSignal
+): Promise<boolean> {
+  if (agent._compacting) return false;
   if (!force && !agent.contextManager.needsCompaction()) {
     return false;
   }
-
-  let result;
-  if (force) {
-    // Escalate aggressiveness: each subsequent overflow recovery uses a
-    // smaller keep window and tighter target ratio.
-    const keepCount = Math.max(1, 4 - escalationLevel);
-    const targetRatio =
-      escalationLevel >= 2
-        ? 0.05
-        : escalationLevel >= 1
-          ? OVERFLOW_COMPACTION_TARGET_RATIO
-          : undefined;
-    result = agent.contextManager.compact({ force: true, keepCount, targetRatio });
-  } else {
-    result = agent.contextManager.compact();
+  if (!force && agent.contextManager.isAlreadyCompacted()) {
+    return false;
   }
 
-  if (result.removedCount > 0) {
-    // Preserve non-base system messages (todo context, prior compaction note)
-    // that live only in AgentCore.messages, then re-sync from the pruned
-    // context manager (which holds system-base + conversation history).
-    // Drop a stale system-compaction — replaced below when a new summary exists.
-    const extraSystem = agent.messages.filter(
-      (m) => m.role === 'system' && m.id !== 'system-base' && m.id !== 'system-compaction'
-    );
-    const synced = agent.contextManager.getMessages();
-    const firstNonSystem = synced.findIndex((m) => m.role !== 'system');
-    const insertAt = firstNonSystem === -1 ? synced.length : firstNonSystem;
-    synced.splice(insertAt, 0, ...extraSystem);
-    agent.messages = synced;
+  agent._compacting = true;
+  try {
+    const notices = agent.messages.filter(isNoticeMessage);
+    const statsBefore = agent.contextManager.getStats();
+    const budget = compactOutputBudget(statsBefore.maxTokens, statsBefore.currentTokens);
+    let summary: string | undefined;
+    if (agent.cfg.contextCompactLlm !== false && agent.client && budget > 0) {
+      const handoff = await llmCompactSummary({
+        client: agent.client,
+        cfg: agent.cfg,
+        history: toChatMessages(agent),
+        maxOutputTokens: budget,
+        signal,
+      });
+      if (handoff.usage) agent.recordUsage(handoff.usage);
+      summary = handoff.text;
+    }
+
+    const result = agent.contextManager.compact({ force, summary });
+    if (result.removedCount <= 0) return false;
+
+    agent.messages = agent.contextManager.getMessages();
     ensureSystemBase(agent);
     refreshSystemPrompt(agent);
     syncTodoMessage(agent);
 
-    // Compaction summary must NOT be an assistant turn: Bonsai/Qwen Jinja
-    // templates treat a trailing assistant as a finished response and the next
-    // model call often returns empty / stops. Merge it into the system block.
     if (result.summary) {
       setCompactionSummaryMessage(agent, result.summary);
-      // The summary is part of the system prompt sent on the next turn, so it
-      // must also be included in token accounting and future compactions.
       syncContextManagerMessages(agent);
     }
 
-    // UI-only notice — keep out of ContextManager so it doesn't inflate the
-    // fill we just reduced. Still excluded from the LLM payload via notice-*.
+    agent.messages.push(...notices);
+
     const stats = agent.contextManager.getStats();
     const pct = Math.min(100, Math.round(stats.usagePercent * 100));
     const src = stats.tokenSource === 'api' ? 'api' : 'est';
@@ -336,12 +327,16 @@ export function checkAndCompactContext(
     });
     agent.onUpdate?.();
     return true;
+  } finally {
+    agent._compacting = false;
   }
-
-  return false;
 }
 
-/** Force-compact after a silent context overflow (empty length finish). */
-export function forceCompactContext(agent: AgentCore, escalationLevel = 0): boolean {
-  return checkAndCompactContext(agent, true, escalationLevel);
+/** User `/compact` — may run below the auto 80% threshold. */
+export async function forceCompactContext(
+  agent: AgentCore,
+  _escalationLevel = 0,
+  signal?: AbortSignal
+): Promise<boolean> {
+  return checkAndCompactContext(agent, true, signal);
 }

@@ -116,6 +116,7 @@ function makeConfig(workspace: string, extra: Partial<Config> = {}): Config {
     rateLimitMs: 0,
     toolCacheEnabled: false,
     mcp: {},
+    contextCompactLlm: false,
     ...extra,
   } as Config;
 }
@@ -151,7 +152,7 @@ describe('run-loop review fixes', () => {
   it('routes sequential tool results through ContextManager; no dangling tool_calls after compaction', async () => {
     // Tools write into cfg.workspace directly (the user's project), so
     // verify the file lands there — no working tree in between.
-    const agent = newAgent(makeConfig(ws, { modelContextLength: 1200 }));
+    const agent = newAgent(makeConfig(ws, { modelContextLength: 256000 }));
     await agent.init();
     agent.onPermissionRequest = async () => 'allow';
 
@@ -187,7 +188,7 @@ describe('run-loop review fixes', () => {
       agent.messages.push(m);
       agent.contextManager.addMessage(m);
     }
-    agent.forceCompactContext();
+    await agent.forceCompactContext();
 
     // Invariant: no tool message references a tool_call that no longer exists
     const assistantCallIds = new Set(

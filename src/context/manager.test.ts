@@ -322,29 +322,7 @@ describe('ContextManager', () => {
   });
 
   describe('compact', () => {
-    it('should preserve minimum number of messages', () => {
-      const keepCount = contextManager.getConfig().keepCount;
-
-      // Add messages
-      for (let i = 0; i < keepCount + 10; i++) {
-        contextManager.addMessage({
-          id: String(i),
-          role: 'user',
-          content: `Message ${i}`,
-          timestamp: Date.now(),
-        });
-      }
-
-      // Trigger compaction
-      contextManager.compact();
-
-      // Should keep at least keepCount messages
-      const messages = contextManager.getMessages();
-      expect(messages.length).toBeGreaterThanOrEqual(keepCount);
-    });
-
-    it('should do nothing when compaction is not needed', () => {
-      // Add only a few messages
+    it('does nothing when compaction is not needed', () => {
       contextManager.addMessage({ id: '1', role: 'user', content: 'Test', timestamp: Date.now() });
 
       const result = contextManager.compact();
@@ -353,8 +331,41 @@ describe('ContextManager', () => {
       expect(result.summary).toBeUndefined();
     });
 
-    // Note: Testing compaction with actual removal requires complex model configuration
-    // which is better tested in integration tests
+    it('wipes history to system + original task + summary when forced', () => {
+      contextManager.addMessage({
+        id: 'system-base',
+        role: 'system',
+        content: 'SYS',
+        timestamp: Date.now(),
+      });
+      contextManager.addMessage({
+        id: 'user-0',
+        role: 'user',
+        content: 'build a todo app',
+        timestamp: Date.now(),
+      });
+      for (let i = 0; i < 8; i++) {
+        contextManager.addMessage({
+          id: String(i),
+          role: i % 2 === 0 ? 'assistant' : 'user',
+          content: `turn ${i}`,
+          timestamp: Date.now(),
+        });
+      }
+
+      const result = contextManager.compact({ force: true });
+      expect(result.removedCount).toBeGreaterThan(0);
+      const ids = contextManager.getMessages().map((m) => m.id);
+      expect(ids[0]).toBe('system-base');
+      expect(ids).toContain('system-compaction');
+      expect(ids).toContain('user-0');
+      expect(
+        ids.filter(
+          (id) => id.startsWith('user-0') || id === 'system-base' || id === 'system-compaction'
+        ).length
+      ).toBe(ids.length);
+      expect(result.summary).toContain('compacted');
+    });
   });
 
   describe('clear', () => {
@@ -575,5 +586,93 @@ describe('ContextManager long-context compaction', () => {
     expect(messages[0].id).toBe('system-base');
     expect(messages.some((m) => m.id === 'user-0')).toBe(true);
     expect(messages.find((m) => m.id === 'user-0')?.content).toContain('ORIGINAL TASK');
+  });
+
+  it('does not auto-compact again once history is already the compacted form', () => {
+    const mgr = createContextManager({
+      model: 'test-model',
+      baseURL: 'http://127.0.0.1:1234/v1',
+      workspace: '/test',
+      maxIterations: 10,
+      apiKey: 'test',
+      modelContextLength: 1000,
+    });
+    mgr.addMessage({
+      id: 'system-base',
+      role: 'system',
+      content: 'SYS',
+      timestamp: Date.now(),
+    });
+    mgr.addMessage({
+      id: 'user-0',
+      role: 'user',
+      content: 'ORIGINAL TASK',
+      timestamp: Date.now(),
+    });
+    for (let i = 0; i < 12; i++) {
+      mgr.addMessage({
+        id: `m${i}`,
+        role: i % 2 === 0 ? 'assistant' : 'user',
+        content: ('pad-' + i + '-').repeat(40),
+        timestamp: Date.now(),
+      });
+    }
+    const first = mgr.compact({ force: true });
+    expect(first.removedCount).toBeGreaterThan(0);
+    expect(mgr.isAlreadyCompacted()).toBe(true);
+
+    mgr.reportApiUsage({ input_tokens: 900 });
+    expect(mgr.getStats().usagePercent).toBeGreaterThan(0.8);
+    expect(mgr.getStats().needsCompaction).toBe(true);
+    expect(mgr.isAlreadyCompacted()).toBe(true);
+
+    const idsBefore = mgr.getMessages().map((m) => m.id);
+    const second = mgr.compact();
+    expect(second.removedCount).toBe(0);
+    expect(mgr.getMessages().map((m) => m.id)).toEqual(idsBefore);
+  });
+
+  it('does not auto-compact a nearly empty 512k window', () => {
+    const mgr = createContextManager({
+      model: 'test-model',
+      baseURL: 'https://openrouter.ai/api/v1',
+      workspace: '/test',
+      maxIterations: 10,
+      apiKey: 'test',
+      modelContextLength: 512000,
+      contextKeepCount: 12,
+      contextCompactThreshold: 0.8,
+    });
+    mgr.addMessage({
+      id: 'system-base',
+      role: 'system',
+      content: 'SYS',
+      timestamp: Date.now(),
+    });
+    mgr.addMessage({
+      id: 'user-0',
+      role: 'user',
+      content: 'lets build a basic todo app',
+      timestamp: Date.now(),
+    });
+    for (let i = 0; i < 11; i++) {
+      mgr.addMessage({
+        id: `m${i}`,
+        role: i % 2 === 0 ? 'assistant' : 'tool',
+        content:
+          i % 2 === 0
+            ? 'I will use write_file to gather the needed context.'
+            : '{"ok":false,"error":"Missing or invalid content"}',
+        timestamp: Date.now(),
+      });
+    }
+    mgr.reportApiUsage({ input_tokens: 25651, output_tokens: 40 });
+    expect(mgr.getStats().usagePercent).toBeLessThan(0.1);
+    expect(mgr.needsCompaction()).toBe(false);
+
+    const result = mgr.compact();
+    expect(result.removedCount).toBe(0);
+    expect(mgr.getMessages().some((m) => m.id === 'user-0')).toBe(true);
+    expect(mgr.getMessages()).toHaveLength(13);
   });
 });

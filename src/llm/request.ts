@@ -100,7 +100,7 @@ export function buildChatCompletionsParams(
 ): Record<string, unknown> {
   const enableThinking = shouldSendThinkingExtra(cfg, options);
   const effort = resolveEffort(cfg);
-  const maxOut = getMaxOutputTokens(cfg.model, cfg.maxTokens);
+  const maxOut = getMaxOutputTokens(cfg.model, options?.maxTokens ?? cfg.maxTokens);
   const reasoningChat = usesMaxCompletionTokens(cfg.model);
   const params: Record<string, unknown> = {
     model: cfg.model,

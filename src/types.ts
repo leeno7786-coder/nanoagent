@@ -166,6 +166,12 @@ export interface Config {
   contextManagementEnabled?: boolean;
   /** Threshold for context compaction (0-1, default: 0.8). */
   contextCompactThreshold?: number;
+  /**
+   * When true (default), auto-compact asks the model to write a handoff
+   * summary using the leftover ~20% of the window. Tests set false so a
+   * stub server is not consumed by that extra inference.
+   */
+  contextCompactLlm?: boolean;
   /** Percentage of context to reserve for response (0-1, default: 0.15). */
   contextSummaryReservedPercent?: number;
   /** Minimum number of messages to keep (default: varies by model). */

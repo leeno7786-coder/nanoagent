@@ -73,9 +73,11 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       return;
     case 'compact': {
       if (!agent) return;
-      // Force so /compact always attempts; checkAndCompactContext already
-      // emits a UI notice with ContextManager fill when anything was removed.
-      const did = agent.forceCompactContext?.() ?? agent.checkAndCompactContext?.() ?? false;
+      const did = agent.forceCompactContext
+        ? await agent.forceCompactContext()
+        : agent.checkAndCompactContext
+          ? await agent.checkAndCompactContext()
+          : false;
       setMessages([...agent.messages]);
       if (!did) {
         const stats = agent.contextManager?.getStats?.();

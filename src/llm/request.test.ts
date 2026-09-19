@@ -130,6 +130,20 @@ describe('buildChatCompletionsParams', () => {
     expect(body.temperature).toBe(0.2);
   });
 
+  it('honors a per-call maxTokens override for compaction summaries', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'gpt-4o',
+        maxTokens: 4096,
+        baseURL: 'https://api.openai.com/v1',
+      }),
+      messages,
+      undefined,
+      { maxTokens: 20000 }
+    );
+    expect(body.max_tokens).toBe(20000);
+  });
+
   it('sends max_completion_tokens and omits sampling params for Azure GPT-5.6 Luna', () => {
     const body = buildChatCompletionsParams(
       cfg({

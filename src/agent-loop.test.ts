@@ -116,6 +116,7 @@ function makeConfig(workspace: string, extra: Partial<Config> = {}): Config {
     toolCacheEnabled: false,
     // Keep tests hermetic — don't pull MCP servers from ~/.nanogent.json
     mcp: {},
+    contextCompactLlm: false,
     ...extra,
   } as Config;
 }
@@ -318,10 +319,10 @@ describe('AgentCore run loop (behavioral)', () => {
   });
 
   it('recovers from silent context overflow (finish_reason=length, 0 output)', async () => {
-    const agent = newAgent(makeConfig(ws, { modelContextLength: 2000, rateLimitMs: 0 }));
+    const agent = newAgent(makeConfig(ws, { modelContextLength: 128000, rateLimitMs: 0 }));
     await agent.init();
 
-    // Seed enough history so forceCompact has something to remove
+    // Seed history so compact has something to wipe after the API reports >80%.
     for (let i = 0; i < 8; i++) {
       const u: Message = {
         id: `seed-u${i}`,
@@ -341,9 +342,10 @@ describe('AgentCore run loop (behavioral)', () => {
     }
     const beforeLen = agent.messages.length;
 
-    // First LLM call: silent overflow. Second: real reply after compact+retry.
+    // First LLM call: silent overflow with API fill over 80% of 128k.
+    // Second: real reply after compact+retry.
     scripted.push([
-      { finishReason: 'length', usage: { prompt_tokens: 9000, completion_tokens: 0 } },
+      { finishReason: 'length', usage: { prompt_tokens: 110000, completion_tokens: 0 } },
     ]);
     scripted.push([{ content: 'Recovered after compact.' }]);
 
@@ -357,7 +359,7 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(agent.state).toBe('idle');
   });
 
-  it('keeps the system prompt through context compaction', () => {
+  it('keeps the system prompt through context compaction', async () => {
     const agent = newAgent(makeConfig(ws, { modelContextLength: 2000 }));
 
     const sys: Message = {
@@ -369,9 +371,6 @@ describe('AgentCore run loop (behavioral)', () => {
     agent.messages = [sys];
     agent.contextManager.setMessages([sys]);
 
-    // Push enough history to force compaction (context size 2000 tokens,
-    // large-model keepCount is 12 so we need well over 12 messages).
-    // Random content so the tokenizer can't compress it away.
     for (let i = 0; i < 25; i++) {
       const m: Message = {
         id: `u${i}`,
@@ -383,20 +382,17 @@ describe('AgentCore run loop (behavioral)', () => {
       agent.contextManager.addMessage(m);
     }
 
-    const compacted = agent.checkAndCompactContext();
+    const compacted = await agent.checkAndCompactContext();
     expect(compacted).toBe(true);
 
-    // system prompt survives and stays first
     expect(agent.messages[0].id).toBe('system-base');
     expect(agent.messages[0].content).toBe('SYS-PROMPT');
-    // history got shorter (keepCount=12 + pinned original user request; tiny
-    // 2000-token test context means compaction stops at the keep boundary)
-    const remainingUsers = agent.messages.filter((m) => m.role === 'user').length;
-    expect(remainingUsers).toBeLessThan(25);
-    expect(remainingUsers).toBeLessThanOrEqual(13);
+    const remainingUsers = agent.messages.filter((m) => m.role === 'user');
+    expect(remainingUsers).toHaveLength(1);
+    expect(remainingUsers[0]!.id).toBe('u0');
   });
 
-  it('merges compaction summary into system — never a trailing assistant in the LLM payload', () => {
+  it('merges compaction summary into system — never a trailing assistant in the LLM payload', async () => {
     const agent = newAgent(makeConfig(ws, { modelContextLength: 2000 }));
 
     const sys: Message = {
@@ -419,7 +415,7 @@ describe('AgentCore run loop (behavioral)', () => {
       agent.contextManager.addMessage(m);
     }
 
-    expect(agent.checkAndCompactContext()).toBe(true);
+    expect(await agent.checkAndCompactContext()).toBe(true);
 
     const summary = agent.messages.find((m) => m.id === 'system-compaction');
     expect(summary).toBeDefined();
@@ -499,7 +495,7 @@ describe('AgentCore run loop (behavioral)', () => {
   });
 
   it('does not feed overflow-retry notices back to the model as assistant turns', async () => {
-    const agent = newAgent(makeConfig(ws, { modelContextLength: 2000, rateLimitMs: 0 }));
+    const agent = newAgent(makeConfig(ws, { modelContextLength: 128000, rateLimitMs: 0 }));
     await agent.init();
 
     for (let i = 0; i < 8; i++) {
@@ -521,7 +517,7 @@ describe('AgentCore run loop (behavioral)', () => {
     }
 
     scripted.push([
-      { finishReason: 'length', usage: { prompt_tokens: 9000, completion_tokens: 0 } },
+      { finishReason: 'length', usage: { prompt_tokens: 110000, completion_tokens: 0 } },
     ]);
     scripted.push([{ content: 'Recovered after compact.' }]);
 
@@ -538,13 +534,16 @@ describe('AgentCore run loop (behavioral)', () => {
         (m) => m.role === 'assistant' && (m.content || '').includes('Context overflow detected')
       )
     ).toBe(false);
-    // Notice still visible in the session for the user.
     expect(
-      agent.messages.some((m) => m.id.startsWith('notice-') && m.content.includes('overflow'))
+      agent.messages.some(
+        (m) =>
+          m.id.startsWith('notice-') &&
+          (m.content.includes('overflow') || m.content.toLowerCase().includes('compacted'))
+      )
     ).toBe(true);
   });
 
-  it('never splits assistant tool_calls from their tool results during compaction', () => {
+  it('never splits assistant tool_calls from their tool results during compaction', async () => {
     const agent = newAgent(makeConfig(ws, { modelContextLength: 1200 }));
 
     const sys: Message = {
@@ -580,7 +579,7 @@ describe('AgentCore run loop (behavioral)', () => {
       });
     }
 
-    agent.checkAndCompactContext();
+    await agent.checkAndCompactContext();
 
     // Invariant: no tool message may reference a tool_call that is missing
     const assistantCallIds = new Set(

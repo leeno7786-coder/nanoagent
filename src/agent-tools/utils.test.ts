@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 import type { AgentCore } from '../agent.js';
-import { handleSpecialToolResults } from './utils.js';
+import { handleSpecialToolResults, parseToolArgs } from './utils.js';
 import { takeBaselineSnapshot } from '../snapshots.js';
 import { listHistory, startWorkspaceTracker, stopWorkspaceTracker } from '../workspace-history.js';
 
@@ -175,5 +175,16 @@ describe('handleSpecialToolResults file history', () => {
       'export const x = 77;\n'
     );
     expect(listHistory(ws).some((e) => e.path === 'index.ts')).toBe(true);
+  });
+});
+
+describe('parseToolArgs', () => {
+  it('recovers write_file content when the model emits raw newlines', () => {
+    const args = parseToolArgs({
+      name: 'write_file',
+      arguments: '{"path":"todo.html","content":"<html>\n<body>hi</body>\n</html>"}',
+    });
+    expect(args.path).toBe('todo.html');
+    expect(args.content).toBe('<html>\n<body>hi</body>\n</html>');
   });
 });

@@ -99,6 +99,8 @@ export interface ChatRequestOptions {
   scope?: 'parent' | 'subagent';
   /** Fraction of the parent's TPM reservation this caller claims (0–1). */
   subAgentClaimRatio?: number;
+  /** Per-call output cap. Overrides `cfg.maxTokens` for this request only. */
+  maxTokens?: number;
   /**
    * Per-call override for the thinking-token budget sent to local runtimes
    * as `reasoning_budget_tokens`. Falls back to `cfg.reasoningBudget` and

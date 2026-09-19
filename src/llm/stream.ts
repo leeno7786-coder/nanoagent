@@ -11,6 +11,7 @@ import {
   sleepWithSignal,
 } from './utils.js';
 import { buildChatCompletionsParams } from './request.js';
+import { mergeToolCallArgumentDelta } from './tool-call-args.js';
 import {
   awaitEndpointTurn,
   releaseEndpointTurn,
@@ -139,7 +140,9 @@ export async function* streamChat(
               const buf = toolCallBuffers.get(idx)!;
               if (tcId && !buf.id) buf.id = tcId;
               if (tcFn?.name) buf.name = tcFn.name as string;
-              if (tcFn?.arguments) buf.args += tcFn.arguments as string;
+              if (tcFn?.arguments) {
+                buf.args = mergeToolCallArgumentDelta(buf.args, tcFn.arguments as string);
+              }
             }
           }
 

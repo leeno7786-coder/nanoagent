@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.4** (`@omega3_0/nanoagent`) — chat diffs are labeled per file, git tool rows drop the stray `.`, and assistant pipe tables stay readable. 2.7.3 still covers complete `git_diff` / `read_file` results.
+Current release: **2.7.5** (`@omega3_0/nanoagent`) — auto-compacts at 80% of the loaded window with a wipe-clean LLM handoff, and `write_file` recovers unescaped JSON. 2.7.4 still covers scannable per-file diffs.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -241,7 +241,7 @@ Context windows come from the live runtime when the catalog reports them: LM Stu
 
 The TUI context indicator shows the **live prompt fill**, not the cumulative session total. When a provider reports `prompt_tokens`, NanoAgent uses that value as a baseline and tracks local message growth on top of it. It also learns tool-schema and chat-template overhead, so large tool sets are not silently ignored. Flat or stale provider reports cannot freeze the gauge.
 
-Automatic compaction normally triggers around the configured threshold (80% by default) and targets roughly 20% of the model window afterward to leave room for tool schemas and the next response. Compaction preserves the system prompt, the original task, complete assistant tool-call/tool-result groups, and a system-level conversation summary. Restored sessions, todo/system-message updates, and tool-schema changes are synchronized with the same accounting path. Use `/compact` to force compaction; the status bar's context value is the source of truth.
+Automatic compaction triggers only when **live prompt fill reaches 80% of the model's loaded context window** (LM Studio instance context, OpenRouter `context_length`, or the catalog heuristic — one gauge, not session Σ). The leftover ~20% is spent on a **summary inference** (no tools): the model writes a dense handoff of the conversation, history is wiped to the system prompt + original task + that summary, and the next turn continues from the clean window. `/compact` runs the same path on demand. The status bar's context value is the source of truth.
 
 **Failover** is explicit only — NanoAgent never invents a cloud backup. After LLM retries are exhausted, a 429 / 502 / 503 / 504, timeout, or connection error retries the same turn on the next `fallbacks[]` entry (or `QWEN_FALLBACK_MODEL` + optional `QWEN_FALLBACK_BASE_URL` / `QWEN_FALLBACK_PROVIDER` when the file omits `fallbacks`). File wins over env; invalid env is logged and ignored. Auth failures (401/403), bad requests (400), and user abort do not fail over. Each fallback is tried once per main-agent turn, and once per `explore_subagent` worker run. The live session or that worker's in-memory client switches — not `$NANOAGENT_ROOT/config/nanogent.json`, and not the shared pool default for other workers. API keys are resolved per fallback provider — the primary key is never sent to a different provider.
 
@@ -477,6 +477,11 @@ NANOAGENT_ROOT/
 
 ## Changelog
 
+### 2.7.5 — 80% wipe-clean compaction and write_file JSON repair
+
+- **One context gauge.** Auto-compact only when live prompt fill reaches 80% of the model's loaded window. Leftover ~20% runs a no-tools summary inference; history is wiped to system prompt + original task + that handoff. Overflow / empty-`length` recovery does not compact below 80%. `/compact` is the same path on demand.
+- **`write_file` JSON.** Streaming argument snapshots are merged instead of concatenated; raw newlines and quotes in `content` are repaired so missing-content writes stop firing.
+
 ### 2.7.4 — Scannable chat diffs
 
 - **Per-file Git Diff labels.** Each patch shows its path and `+x −y` instead of a mashed hunk blob.
@@ -548,7 +553,7 @@ NANOAGENT_ROOT/
 ### 2.5.8 — Small-model prompt and tool consistency
 
 - API-reported `prompt_tokens` are used as the live context baseline when available; local message growth and tool-schema/chat-template overhead are tracked on top.
-- Flat or stale provider reports cannot freeze the context gauge. Normal compaction targets roughly 20% of the model window and preserves the system prompt, original task, complete tool-call/result groups, and a system-level summary.
+- Flat or stale provider reports cannot freeze the context gauge. Auto-compact at 80% of the loaded window runs a summary inference in the leftover 20%, then continues from system prompt + original task + that handoff.
 - Restored sessions, mutable todo/system messages, compaction summaries, and tool-schema changes stay synchronized with `ContextManager` accounting.
 - Small-model mode changes now refresh the live prompt and model policy immediately.
 - Remote sub-agent instructions and `explore_subagent` are advertised only when a pool is configured.

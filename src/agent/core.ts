@@ -165,6 +165,8 @@ export class AgentCore {
   /** Persisted system-base content (survives compaction / dropped system-base). */
   /** @internal Written by agent-messages and skill sync. */
   _systemPromptContent: string = '';
+  /** @internal Guard so auto-compact and `/compact` cannot overlap. */
+  _compacting = false;
   /** Public accessor for small model flag (used by TUI skill operations). */
   get isSmallModel(): boolean {
     return this._smallModel;
@@ -314,17 +316,17 @@ export class AgentCore {
     addUserMessage(this, content);
   }
 
-  public checkAndCompactContext(): boolean {
-    return checkAndCompactContext(this);
+  public async checkAndCompactContext(signal?: AbortSignal): Promise<boolean> {
+    return checkAndCompactContext(this, false, signal);
   }
 
-  /** Force-compact after silent context overflow (empty length finish). */
-  public forceCompactContext(escalationLevel = 0): boolean {
-    return forceCompactContext(this, escalationLevel);
+  /** User `/compact` — may run below the auto 80% threshold. */
+  public async forceCompactContext(escalationLevel = 0, signal?: AbortSignal): Promise<boolean> {
+    return forceCompactContext(this, escalationLevel, signal);
   }
 
-  public compactContextIfNeeded(): boolean {
-    return this.checkAndCompactContext();
+  public async compactContextIfNeeded(signal?: AbortSignal): Promise<boolean> {
+    return this.checkAndCompactContext(signal);
   }
 
   public setState(s: AgentState) {

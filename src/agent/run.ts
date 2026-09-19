@@ -13,6 +13,7 @@ import {
   resolveToolCallArgumentTokenBudget,
 } from '../llm/tool-result-budget.js';
 import { parseXmlToolCalls } from '../llm/tool-call-parser.js';
+import { isContextOverflowError } from '../llm/overflow.js';
 
 const DEFAULT_MAX_REASONING_ONLY = 5;
 /** Small models rarely recover from reasoning-only turns — stop them sooner. */
@@ -279,6 +280,11 @@ export async function agentRun(
   /** Retries after silent context overflow (finish_reason=length, 0 output). */
   let overflowRetries = 0;
   const MAX_OVERFLOW_RETRIES = 2;
+
+  async function compactIfWindowFull(): Promise<boolean> {
+    if (!agent.contextManager.needsCompaction()) return false;
+    return agent.checkAndCompactContext(signal);
+  }
   /**
    * Force-thinking-off escalation counter. When nudges can't break a
    * reasoning-only loop, the next retry sends `enableThinking: false` so
@@ -406,7 +412,7 @@ export async function agentRun(
     }
     iterationCount++;
 
-    agent.checkAndCompactContext();
+    await agent.checkAndCompactContext(signal);
 
     let assistantMsg: Message;
 
@@ -670,23 +676,23 @@ export async function agentRun(
               agent.onUpdate?.();
               return;
             }
-            overflowRetries++;
-            const compacted = agent.forceCompactContext(overflowRetries);
-            // Notice (not assistant): mid-loop assistant text poisons Bonsai/Qwen
-            // chat templates and makes the retry return empty / stop.
-            agent.addRecoveryNotice(
-              compacted
-                ? `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
-                : `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Retrying with current history (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
-            );
-            agent.setState('thinking');
-            agent.onUpdate?.();
-            await new Promise((r) => setTimeout(r, 0));
-            continue;
+            if (agent.contextManager.needsCompaction()) {
+              overflowRetries++;
+              const compacted = await compactIfWindowFull();
+              agent.addRecoveryNotice(
+                compacted
+                  ? `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+                  : `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Retrying with current history (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+              );
+              agent.setState('thinking');
+              agent.onUpdate?.();
+              await new Promise((r) => setTimeout(r, 0));
+              continue;
+            }
           }
 
           agent.addNoticeMessage(
-            silentOverflow
+            silentOverflow && agent.contextManager.needsCompaction()
               ? 'Context window appears full — the model returned an empty `length` finish. Run `/compact` or `/clear`, then try again.'
               : 'Model returned an empty response (no text or tool calls). Try again, or check the LLM server logs.'
           );
@@ -770,11 +776,12 @@ export async function agentRun(
         const msg = [e.message, e.providerMessage, e.code, e.type, String(err)]
           .filter(Boolean)
           .join(' ');
-        const overflowHint =
-          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded|maximum[\s_-]*retries[\s_-]*reached/i.test(
-            msg
-          );
-        if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
+        const overflowHint = isContextOverflowError(msg);
+        if (
+          overflowHint &&
+          overflowRetries < MAX_OVERFLOW_RETRIES &&
+          agent.contextManager.needsCompaction()
+        ) {
           if (isEndpointRateLimited(agent.cfg.baseURL)) {
             agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
             agent.addNoticeMessage(
@@ -786,7 +793,7 @@ export async function agentRun(
           }
           agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
           overflowRetries++;
-          agent.forceCompactContext(overflowRetries);
+          await compactIfWindowFull();
           agent.addRecoveryNotice(
             `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
           );
@@ -871,11 +878,12 @@ export async function agentRun(
         const msg = [e.message, e.providerMessage, e.code, e.type, String(err)]
           .filter(Boolean)
           .join(' ');
-        const overflowHint =
-          /context[\s_-]*(?:length|window|size)|maximum[\s_-]*(?:context|sequence)|too many tokens|prompt[\s_-]*(?:is\s*)?too long|input[\s_-]*(?:is\s*)?too long|token limit|context_length_exceeded|maximum[\s_-]*retries[\s_-]*reached/i.test(
-            msg
-          );
-        if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
+        const overflowHint = isContextOverflowError(msg);
+        if (
+          overflowHint &&
+          overflowRetries < MAX_OVERFLOW_RETRIES &&
+          agent.contextManager.needsCompaction()
+        ) {
           if (isEndpointRateLimited(agent.cfg.baseURL)) {
             agent.addNoticeMessage(
               `Context overflow from API (${status || 'error'}), but the provider is rate-limited — skipping extra retry.`
@@ -885,7 +893,7 @@ export async function agentRun(
             return;
           }
           overflowRetries++;
-          agent.forceCompactContext(overflowRetries);
+          await compactIfWindowFull();
           agent.addRecoveryNotice(
             `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
           );
@@ -940,20 +948,22 @@ export async function agentRun(
             agent.onUpdate?.();
             return;
           }
-          overflowRetries++;
-          const compacted = agent.forceCompactContext(overflowRetries);
-          agent.addRecoveryNotice(
-            compacted
-              ? `Context overflow detected (empty \`${response.finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
-              : `Context overflow detected. Retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
-          );
-          agent.setState('thinking');
-          agent.onUpdate?.();
-          await new Promise((r) => setTimeout(r, 0));
-          continue;
+          if (agent.contextManager.needsCompaction()) {
+            overflowRetries++;
+            const compacted = await compactIfWindowFull();
+            agent.addRecoveryNotice(
+              compacted
+                ? `Context overflow detected (empty \`${response.finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+                : `Context overflow detected. Retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+            );
+            agent.setState('thinking');
+            agent.onUpdate?.();
+            await new Promise((r) => setTimeout(r, 0));
+            continue;
+          }
         }
         agent.addNoticeMessage(
-          silentOverflow
+          silentOverflow && agent.contextManager.needsCompaction()
             ? 'Context window appears full — the model returned an empty `length` finish. Run `/compact` or `/clear`, then try again.'
             : 'Model returned an empty response (no text or tool calls). Try again, or check the LLM server logs.'
         );

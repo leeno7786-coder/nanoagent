@@ -2,6 +2,7 @@ import { syncTodoMessage } from '../agent-todos.js';
 import { now } from '../agent-utils.js';
 import type { AgentCore } from '../agent.js';
 import { capToolResultForLlm } from '../llm/tool-result-budget.js';
+import { parseToolCallArgumentsJson } from '../llm/tool-call-args.js';
 import {
   recordFileChange,
   startWorkspaceTracker,
@@ -39,32 +40,17 @@ export function parseToolArgs(
       argsStr = capped;
     }
   }
-  let args: unknown;
-  if (typeof argsStr === 'string') {
-    try {
-      args = JSON.parse(argsStr);
-    } catch {
-      const jsonMatch = argsStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          args = JSON.parse(jsonMatch[0]);
-        } catch {
-          args = {
-            raw_input: argsStr,
-            truncated: argsStr !== tc.arguments || argsStr.includes('truncated'),
-          };
-        }
-      } else {
-        args = {
-          raw_input: argsStr,
-          truncated: argsStr !== tc.arguments || argsStr.includes('truncated'),
-        };
-      }
-    }
-  } else {
-    args = argsStr;
+  if (typeof argsStr !== 'string') {
+    return argsStr as Record<string, unknown>;
   }
-  return args as Record<string, unknown>;
+  const args = parseToolCallArgumentsJson(argsStr);
+  if (!('raw_input' in args)) return args;
+  const jsonMatch = argsStr.match(/\{[\s\S]*\}/);
+  if (jsonMatch && jsonMatch[0] !== argsStr) {
+    const retry = parseToolCallArgumentsJson(jsonMatch[0]);
+    if (!('raw_input' in retry)) return retry;
+  }
+  return args;
 }
 
 export async function handleSpecialToolResults(
