@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.2** (`@omega3_0/nanoagent`) — treats `<workspace>/.nanoagent/` as this workspace's own harness state (gitignore, hidden from discovery/git tools, blocked from the model) so sessions/worktree/snapshots are not mistaken for an outside project.
+Current release: **2.7.3** (`@omega3_0/nanoagent`) — `git_diff` and `read_file` return complete results (no false `truncated` / missing untracked files) so review models stop rerunning the same tools. Recovery notices stay off the main chat.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -476,6 +476,13 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.3 — Complete diffs and file reads
+
+- **`git_diff` includes the whole working tree.** It is `git diff HEAD` (staged + unstaged) plus untracked files as new-file diffs, so it matches `git_status`. The TUI renders each file and summarizes `N files · +x · -y` instead of looking like a one-hunk excerpt.
+- **`read_file` is no longer a silent 200-line clip.** Large/cloud models get up to 2000 lines by default; ≤8B stays at 100. `truncated` is set only when content was actually cut, with `next_start_line` so a follow-up is a different call.
+- **Cloud tool-result cap** no longer says “re-read a narrower range” (that made the model retry the same tool). Oversized diffs drop whole trailing files, not a mid-hunk slice.
+- **Recovery UI.** Duplicate-tool / stuck-loop / overflow-retry notices use `notice-recovery-*` and stay off the main chat panel.
 
 ### 2.7.2 — Treat `.nanoagent/` as harness state
 

@@ -125,6 +125,22 @@ describe('buildToolDisplayBlock', () => {
         json({ content: 'one\ntwo\nthree' })
       );
       expect(block.summary).toBe('3 lines');
+      expect(block.previewLines).toEqual(['one', 'two', 'three']);
+    });
+
+    it('should say "N of M lines" when a read is truncated', () => {
+      const block = buildToolDisplayBlock(
+        'read_file',
+        json({ path: 'big.ts' }),
+        json({
+          content: 'a\nb',
+          truncated: true,
+          line_count: 40,
+          start_line: 1,
+          end_line: 2,
+        })
+      );
+      expect(block.summary).toBe('2 of 40 lines');
     });
 
     it('should use singular "line" for single-line content', () => {
@@ -415,6 +431,23 @@ describe('buildToolDisplayBlock', () => {
     it('should report a clean working tree for empty diff', () => {
       const block = buildToolDisplayBlock('git_diff', json({}), json({ diff: '' }));
       expect(block.summary).toBe('clean working tree');
+    });
+
+    it('should summarize file count and line stats for a non-empty diff', () => {
+      const diff = [
+        'diff --git a/a.ts b/a.ts',
+        '--- a/a.ts',
+        '+++ b/a.ts',
+        '@@ -1,1 +1,1 @@',
+        '-old',
+        '+new',
+      ].join('\n');
+      const block = buildToolDisplayBlock(
+        'git_diff',
+        json({}),
+        json({ ok: true, diff, files: ['a.ts'] })
+      );
+      expect(block.summary).toBe('1 file · +1 · -1');
     });
   });
 

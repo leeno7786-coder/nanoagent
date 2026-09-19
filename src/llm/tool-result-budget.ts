@@ -70,7 +70,7 @@ export function capToolArgumentsForLlm(
 }
 
 export function truncationMarker(keptTokens: number, totalTokens: number): string {
-  return `[truncated: kept ~${formatApproxTokens(keptTokens)} tokens of ~${formatApproxTokens(totalTokens)}; re-read a narrower range]`;
+  return `[truncated: kept ~${formatApproxTokens(keptTokens)} tokens of ~${formatApproxTokens(totalTokens)}; do not repeat this call — request a specific file or start_line]`;
 }
 
 function sliceToTokenBudget(text: string, budget: number, modelId?: string): string {

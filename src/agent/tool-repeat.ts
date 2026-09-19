@@ -65,6 +65,24 @@ function clearGitSignatures(state: ToolRepeatState): void {
   }
 }
 
+/** True when a tool error string is the harness duplicate-call block. */
+export function isDuplicateBlockError(error: string): boolean {
+  return error.startsWith('Duplicate call blocked.') || /^You already called \S+\./.test(error);
+}
+
+/** True when a tool result payload is a duplicate-call block (JSON or raw). */
+export function isDuplicateBlockOutput(output: string): boolean {
+  const trimmed = output.trim();
+  if (!trimmed) return false;
+  try {
+    const data = JSON.parse(trimmed) as { error?: unknown };
+    if (typeof data.error === 'string') return isDuplicateBlockError(data.error);
+  } catch {
+    /* raw text */
+  }
+  return isDuplicateBlockError(trimmed);
+}
+
 export function evaluateToolRepeat(
   state: ToolRepeatState,
   name: string,

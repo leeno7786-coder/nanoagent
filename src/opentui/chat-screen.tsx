@@ -16,6 +16,9 @@ import { ErrorBoundary } from './error-boundary.js';
 import { useAppStore } from './app-store.js';
 import { formatBusyContext, type ContextUsageSnapshot, type TurnUsage } from './token-display.js';
 import { isParseableDiff } from './diff-utils.js';
+import { splitUnifiedDiff } from '../tools/unified-diff.js';
+import { isDuplicateBlockOutput } from '../agent/tool-repeat.js';
+import { isRecoveryNotice } from '../agent-messages.js';
 
 interface ChatScreenProps {
   theme: Theme;
@@ -55,8 +58,9 @@ function spinnerFrame(ms: number): string {
 export function getVisibleMessages(messages: Message[], state: AgentState): Message[] {
   return messages.filter((msg, idx) => {
     if (msg.role === 'system' || msg.role === 'tool') return false;
-    // Auto-continue nudges are for the model only — hide from the chat panel.
-    if (msg.id.startsWith('nudge-')) return false;
+    // Auto-continue nudges and mid-loop recovery status stay off the chat panel.
+    if (msg.id.startsWith('nudge-') || isRecoveryNotice(msg)) return false;
+    if (isRecoveryOnlyAssistant(msg, messages)) return false;
     const isLastMessage = idx === messages.length - 1;
     if (isLastMessage && state !== 'idle') return true;
 
@@ -69,6 +73,22 @@ export function getVisibleMessages(messages: Message[], state: AgentState): Mess
       return false;
     }
     return true;
+  });
+}
+
+/** Assistant turn that only re-issued blocked discovery tools — hide the empty bubble. */
+export function isRecoveryOnlyAssistant(msg: Message, all: Message[]): boolean {
+  if (msg.role !== 'assistant') return false;
+  if (msg.content.trim() || msg.reasoningContent?.trim()) return false;
+  const tcs = msg.toolCalls ?? [];
+  if (tcs.length === 0) return false;
+  const byId = new Map<string, string>();
+  for (const m of all) {
+    if (m.role === 'tool' && m.toolCallId) byId.set(m.toolCallId, m.content);
+  }
+  return tcs.every((tc) => {
+    const out = byId.get(tc.id);
+    return out != null && isDuplicateBlockOutput(out);
   });
 }
 
@@ -845,19 +865,21 @@ function ToolActivityBlock({
         {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
       </box>
       {block.diff ? (
-        isParseableDiff(block.diff) ? (
-          <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
-            <diff diff={block.diff} {...diffRenderProps(theme)} />
-          </box>
-        ) : (
-          <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg} paddingX={1}>
-            {block.diff.split('\n').map((line, i) => (
-              <text key={i} fg={theme.mutedFg}>
-                {line || ' '}
-              </text>
-            ))}
-          </box>
-        )
+        <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
+          {splitUnifiedDiff(block.diff).map((patch, i) =>
+            isParseableDiff(patch) ? (
+              <diff key={i} diff={patch} {...diffRenderProps(theme)} />
+            ) : (
+              <box key={i} flexDirection="column" paddingX={1}>
+                {patch.split('\n').map((line, li) => (
+                  <text key={li} fg={theme.mutedFg}>
+                    {line || ' '}
+                  </text>
+                ))}
+              </box>
+            )
+          )}
+        </box>
       ) : previews?.length ? (
         linePreview(previews, 6, theme.mutedFg, theme, '  ')
       ) : null}
@@ -1294,7 +1316,11 @@ function AssistantMessageView({
         })}
 
       {toolCalls
-        .filter((tc) => tc.name !== 'explore_subagent')
+        .filter((tc) => {
+          if (tc.name === 'explore_subagent') return false;
+          const info = toolInfoByCallId.get(tc.id);
+          return !info || !isDuplicateBlockOutput(info.content);
+        })
         .map((tc) => renderToolCall(tc, toolInfoByCallId, theme, workspace))}
 
       {message.role === 'assistant' &&

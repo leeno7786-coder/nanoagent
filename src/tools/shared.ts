@@ -73,8 +73,11 @@ export const NULL_BYTE_RE = /\u0000/g;
 export const REPLACEMENT_CHAR_RE = /[\uFFFD]/g;
 
 export const DEFAULT_READ_LIMIT = 200;
+/** Default window for cloud / large models — 200 lines was clipping typical source files. */
+export const LARGE_MODEL_READ_LIMIT = 2000;
 export const SMALL_MODEL_READ_LIMIT = 100;
 export const MAX_READ_CHARS = 100000;
+export const MAX_READ_LINES = 2000;
 export const MAX_SEARCH_RESULTS = 80;
 export const SKIP_DIRS = new Set([
   // Version control

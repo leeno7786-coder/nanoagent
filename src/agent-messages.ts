@@ -16,6 +16,11 @@ export function isNoticeMessage(m: Message): boolean {
   return m.id.startsWith('notice-');
 }
 
+/** Mid-loop recovery status. Stored for the model path but hidden from the chat panel. */
+export function isRecoveryNotice(m: Message): boolean {
+  return m.id.startsWith('notice-recovery-');
+}
+
 /** System ids that are merged into the single leading system prompt. */
 const KEPT_SYSTEM_IDS = new Set(['system-base', 'system-todos', 'system-compaction']);
 
@@ -165,13 +170,9 @@ export function addAssistantMessage(agent: AgentCore, content: string) {
   agent.onUpdate?.();
 }
 
-/**
- * Append a UI-only notice. Shown in the TUI / session history but excluded from
- * the LLM payload so mid-loop status text cannot break chat-template turns.
- */
-export function addNoticeMessage(agent: AgentCore, content: string) {
+function pushNotice(agent: AgentCore, id: string, content: string) {
   const msg: Message = {
-    id: `notice-${rnd()}`,
+    id,
     role: 'assistant',
     content,
     timestamp: now(),
@@ -179,6 +180,22 @@ export function addNoticeMessage(agent: AgentCore, content: string) {
   agent.messages.push(msg);
   agent.contextManager.addMessage(msg);
   agent.onUpdate?.();
+}
+
+/**
+ * Append a UI-only notice. Shown in the TUI when it needs the user (API errors,
+ * turn limits) but excluded from the LLM payload.
+ */
+export function addNoticeMessage(agent: AgentCore, content: string) {
+  pushNotice(agent, `notice-${rnd()}`, content);
+}
+
+/**
+ * Mid-loop recovery status (duplicate-tool blocks, stuck-loop, overflow retry).
+ * Excluded from the LLM payload and hidden from the main chat panel.
+ */
+export function addRecoveryNotice(agent: AgentCore, content: string) {
+  pushNotice(agent, `notice-recovery-${rnd()}`, content);
 }
 
 /**

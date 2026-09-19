@@ -1,8 +1,21 @@
 import { spawn, type ChildProcess } from 'child_process';
+import { readFileSync, statSync } from 'fs';
 
 import type { Config } from '../types.js';
 import type { Tool } from './shared.js';
-import { NULL_BYTE_RE, commandValidationError, getSanitizedEnv, isNanoagentRel } from './shared.js';
+import {
+  NULL_BYTE_RE,
+  commandValidationError,
+  getSanitizedEnv,
+  isAccessBlocked,
+  isNanoagentRel,
+  rel,
+  safe,
+} from './shared.js';
+import { capUnifiedDiff, diffFileNames, formatNewFileDiff } from './unified-diff.js';
+
+const MAX_DIFF_CHARS = 100_000;
+const MAX_UNTRACKED_BYTES = 50_000;
 
 /** Porcelain path from a `git status --porcelain` line (handles renames). */
 function porcelainPath(line: string): string {
@@ -86,7 +99,7 @@ function execGit(
 
 export const gitDiffTool: Tool = {
   name: 'git_diff',
-  description: 'View uncommitted git changes',
+  description: 'View uncommitted git changes (staged, unstaged, and untracked)',
   parameters: { type: 'object', properties: {} },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
   executeAsync: async (_args, ws, cfg) => {
@@ -96,20 +109,93 @@ export const gitDiffTool: Tool = {
         ok: true,
         diff: '',
         isGit: false,
+        files: [],
         message: 'not a git repository',
       });
     }
 
-    const diff = await execGit(['--no-optional-locks', 'diff'], ws, { timeout: 15000 }, cfg);
+    const head = await execGit(['rev-parse', '--verify', 'HEAD'], ws, { timeout: 5000 }, cfg);
+    const diffArgs = head.ok
+      ? ['--no-optional-locks', 'diff', 'HEAD']
+      : ['--no-optional-locks', 'diff'];
+    const diff = await execGit(diffArgs, ws, { timeout: 15000 }, cfg);
     if (!diff.ok) {
       return JSON.stringify({
         ok: false,
         error: `git diff failed: ${diff.stderr?.substring(0, 200)}`,
       });
     }
-    return JSON.stringify({ ok: true, diff: diff.stdout, isGit: true });
+
+    const untracked = await collectUntrackedDiffs(ws, cfg);
+    const combined = [diff.stdout.replace(/\s+$/, ''), ...untracked.parts]
+      .filter(Boolean)
+      .join('\n');
+    const capped = capUnifiedDiff(combined, MAX_DIFF_CHARS);
+    const omitted = [...untracked.omitted, ...capped.omitted];
+    const files = [...new Set([...diffFileNames(capped.diff), ...untracked.files])];
+    const truncated = capped.truncated || omitted.length > 0;
+    return JSON.stringify({
+      ok: true,
+      diff: capped.diff,
+      isGit: true,
+      files,
+      ...(truncated ? { truncated: true, omitted, hint: GIT_DIFF_TRUNCATION_HINT } : {}),
+    });
   },
 };
+
+const GIT_DIFF_TRUNCATION_HINT =
+  'Diff omitted some files. Read those paths with read_file — do not re-run git_diff.';
+
+async function collectUntrackedDiffs(
+  ws: string,
+  cfg?: Config
+): Promise<{ parts: string[]; files: string[]; omitted: string[] }> {
+  const ls = await execGit(
+    ['--no-optional-locks', 'ls-files', '--others', '--exclude-standard'],
+    ws,
+    { timeout: 10000 },
+    cfg
+  );
+  if (!ls.ok) return { parts: [], files: [], omitted: [] };
+
+  const parts: string[] = [];
+  const files: string[] = [];
+  const omitted: string[] = [];
+  const paths = ls.stdout
+    .split('\n')
+    .map((p) => p.trim())
+    .filter((p) => p && !isNanoagentRel(p.replace(/\\/g, '/')));
+
+  for (const p of paths) {
+    let abs: string;
+    try {
+      abs = safe(p, ws, cfg);
+    } catch {
+      omitted.push(p);
+      continue;
+    }
+    if (isAccessBlocked(abs, cfg)) continue;
+    try {
+      const st = statSync(abs);
+      if (!st.isFile()) continue;
+      if (st.size > MAX_UNTRACKED_BYTES) {
+        omitted.push(p);
+        continue;
+      }
+      const text = readFileSync(abs, 'utf-8');
+      if (NULL_BYTE_RE.test(text)) {
+        omitted.push(`${p} (binary)`);
+        continue;
+      }
+      parts.push(formatNewFileDiff(rel(abs, ws), text));
+      files.push(rel(abs, ws));
+    } catch {
+      omitted.push(p);
+    }
+  }
+  return { parts, files, omitted };
+}
 
 // Git and Version Control Tools
 export const gitStatusTool: Tool = {

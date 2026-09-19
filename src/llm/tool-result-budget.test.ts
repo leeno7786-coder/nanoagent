@@ -42,7 +42,7 @@ describe('capToolResultForLlm', () => {
     const capped = capToolResultForLlm(huge, { maxTokens: 200 });
     expect(capped.length).toBeLessThan(huge.length);
     expect(capped).toContain('[truncated:');
-    expect(capped).toContain('re-read a narrower range');
+    expect(capped).toContain('do not repeat this call');
     expect(countTokens(capped)).toBeLessThanOrEqual(220);
   });
 
@@ -60,7 +60,7 @@ describe('capToolResultForLlm', () => {
     };
     expect(parsed.ok).toBe(true);
     expect(parsed.truncated).toBe(true);
-    expect(parsed.note).toContain('re-read a narrower range');
+    expect(parsed.note).toContain('do not repeat this call');
     expect(parsed.content.length).toBeLessThan('alpha '.repeat(15_000).length);
     expect(countTokens(capped)).toBeLessThanOrEqual(330);
   });
@@ -69,7 +69,7 @@ describe('capToolResultForLlm', () => {
     expect(formatApproxTokens(8000)).toBe('8k');
     expect(formatApproxTokens(24000)).toBe('24k');
     expect(truncationMarker(8000, 24000)).toBe(
-      '[truncated: kept ~8k tokens of ~24k; re-read a narrower range]'
+      '[truncated: kept ~8k tokens of ~24k; do not repeat this call — request a specific file or start_line]'
     );
   });
 });
