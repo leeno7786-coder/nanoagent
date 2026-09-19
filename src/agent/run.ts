@@ -305,7 +305,7 @@ export async function agentRun(
     if (agent.consecutiveToolRounds > EARLY_STOP_MAX_TOOL_ROUNDS) return false;
     if (!looksLikePrematureCheckin(content)) return false;
     earlyStopContinues++;
-    agent.addNoticeMessage(
+    agent.addRecoveryNotice(
       `↻ Model paused to ask for direction after ${agent.consecutiveToolRounds} tool round(s) — continuing the task…`
     );
     agent.addNudgeMessage(EARLY_STOP_CONTINUE_NUDGE);
@@ -336,7 +336,7 @@ export async function agentRun(
       if (cur > 0 && cur < REASONING_ONLY_OUTPUT_CAP_CEILING) {
         const next = Math.min(cur * 2, REASONING_ONLY_OUTPUT_CAP_CEILING);
         agent.cfg.maxTokens = next;
-        agent.addNoticeMessage(
+        agent.addRecoveryNotice(
           `↻ Model spent its whole ${cur}-token output budget on thinking and never replied. ` +
             `Raised the output cap to ${next} and nudging it to answer (${reasoningOnlyStreak}/${maxReasoningOnly})…`
         );
@@ -355,7 +355,7 @@ export async function agentRun(
     if (reasoningOnlyStreak >= maxReasoningOnly || reasoningOnlyTotal >= maxReasoningOnlyTotal) {
       if (forceThinkingOffRetries < MAX_FORCE_THINKING_OFF_RETRIES) {
         forceThinkingOffRetries++;
-        agent.addNoticeMessage(
+        agent.addRecoveryNotice(
           `↻ Nudges didn't break the reasoning-only loop. ` +
             `Forcing thinking off for the next retry (${forceThinkingOffRetries}/${MAX_FORCE_THINKING_OFF_RETRIES}) so the model can't keep thinking.`
         );
@@ -371,7 +371,7 @@ export async function agentRun(
       );
       return 'error';
     }
-    agent.addNoticeMessage(
+    agent.addRecoveryNotice(
       `↻ Model produced thinking only — no reply or tool calls. Nudging it to respond (${reasoningOnlyStreak}/${maxReasoningOnly})…`
     );
     agent.addNudgeMessage(REASONING_ONLY_NUDGE);
@@ -674,7 +674,7 @@ export async function agentRun(
             const compacted = agent.forceCompactContext(overflowRetries);
             // Notice (not assistant): mid-loop assistant text poisons Bonsai/Qwen
             // chat templates and makes the retry return empty / stop.
-            agent.addNoticeMessage(
+            agent.addRecoveryNotice(
               compacted
                 ? `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
                 : `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Retrying with current history (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
@@ -759,7 +759,7 @@ export async function agentRun(
         const switched = await switchSessionToFallback(agent, err, triedFallbacks, signal);
         if (switched) {
           agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
-          agent.addNoticeMessage(`Switched to ${switched.model} after ${switched.reason}`);
+          agent.addRecoveryNotice(`Switched to ${switched.model} after ${switched.reason}`);
           iterationCount -= 1;
           agent.setState('thinking');
           agent.onUpdate?.();
@@ -787,7 +787,7 @@ export async function agentRun(
           agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
           overflowRetries++;
           agent.forceCompactContext(overflowRetries);
-          agent.addNoticeMessage(
+          agent.addRecoveryNotice(
             `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
           );
           agent.setState('thinking');
@@ -860,7 +860,7 @@ export async function agentRun(
 
         const switched = await switchSessionToFallback(agent, err, triedFallbacks, signal);
         if (switched) {
-          agent.addNoticeMessage(`Switched to ${switched.model} after ${switched.reason}`);
+          agent.addRecoveryNotice(`Switched to ${switched.model} after ${switched.reason}`);
           iterationCount -= 1;
           agent.setState('thinking');
           agent.onUpdate?.();
@@ -886,7 +886,7 @@ export async function agentRun(
           }
           overflowRetries++;
           agent.forceCompactContext(overflowRetries);
-          agent.addNoticeMessage(
+          agent.addRecoveryNotice(
             `Context overflow from API (${status || 'error'}). Compacted and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
           );
           agent.setState('thinking');
@@ -942,7 +942,7 @@ export async function agentRun(
           }
           overflowRetries++;
           const compacted = agent.forceCompactContext(overflowRetries);
-          agent.addNoticeMessage(
+          agent.addRecoveryNotice(
             compacted
               ? `Context overflow detected (empty \`${response.finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
               : `Context overflow detected. Retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
@@ -1037,7 +1037,7 @@ export async function agentRun(
         lastToolSignature = signature;
       }
       if (sameSignatureStreak >= MAX_SAME_SIGNATURE_STREAK) {
-        agent.addNoticeMessage(
+        agent.addRecoveryNotice(
           `⚠️ Stuck loop detected: the model issued the identical tool call(s) ${MAX_SAME_SIGNATURE_STREAK} rounds in a row. ` +
             `Stopping here to avoid an infinite loop — rephrase your request or take over manually.`
         );
@@ -1079,7 +1079,7 @@ export async function agentRun(
     if (tcs.length > 0) {
       if (agent.toolRepeat.blockedThisRound > 0 && !duplicateNudged) {
         duplicateNudged = true;
-        agent.addNoticeMessage(
+        agent.addRecoveryNotice(
           '↻ Repeated discovery tools blocked — asking the model to write findings…'
         );
         agent.addNudgeMessage(DUPLICATE_TOOL_NUDGE);
@@ -1087,7 +1087,7 @@ export async function agentRun(
       if (agent.toolRepeat.blockedThisRound >= tcs.length) {
         allDuplicateRoundStreak++;
         if (allDuplicateRoundStreak >= MAX_ALL_DUPLICATE_ROUNDS) {
-          agent.addNoticeMessage(
+          agent.addRecoveryNotice(
             `⚠️ Stuck loop detected: the model kept re-issuing tools it already ran ` +
               `(git_status / git_diff / the same reads). Stopping here to avoid circling — ` +
               `rephrase your request or take over manually.`

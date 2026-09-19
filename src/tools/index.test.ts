@@ -86,6 +86,38 @@ describe('tools', () => {
     expect(out.ok).toBe(true);
     expect(out.content.split('\n').length).toBe(10);
     expect(out.truncated).toBe(true);
+    expect(out.next_start_line).toBe(11);
+    expect(out.hint).toMatch(/start_line=11/);
+  });
+
+  it('read_file returns a mid-size file in full for large models', () => {
+    const file = join(ws, 'mid.txt');
+    writeFileSync(file, Array.from({ length: 250 }, (_, i) => `line ${i + 1}`).join('\n'), 'utf-8');
+    const readFile = tools.find((t) => t.name === 'read_file')!;
+    const out = JSON.parse(readFile.execute({ path: 'mid.txt' }, ws));
+    expect(out.ok).toBe(true);
+    expect(out.truncated).toBe(false);
+    expect(out.content.split('\n').length).toBe(250);
+    expect(out.next_start_line).toBeUndefined();
+  });
+
+  it('read_file caps small models and tells them the next start_line', () => {
+    const file = join(ws, 'small-cap.txt');
+    writeFileSync(file, Array.from({ length: 150 }, (_, i) => `line ${i + 1}`).join('\n'), 'utf-8');
+    const readFile = tools.find((t) => t.name === 'read_file')!;
+    const cfg = {
+      baseURL: 'http://127.0.0.1:1234/v1',
+      model: 'qwen3-2b',
+      apiKey: '',
+      maxIterations: 10,
+      workspace: ws,
+      smallModelMode: true,
+    };
+    const out = JSON.parse(readFile.execute({ path: 'small-cap.txt' }, ws, cfg));
+    expect(out.ok).toBe(true);
+    expect(out.truncated).toBe(true);
+    expect(out.content.split('\n').length).toBe(100);
+    expect(out.next_start_line).toBe(101);
   });
 
   it('write_file creates file and returns path', () => {
@@ -193,6 +225,30 @@ describe('tools', () => {
     const out = JSON.parse(await gitDiff.executeAsync!({}, ws));
     expect(out.ok).toBe(true);
     expect(out.diff).toContain('modified');
+    expect(out.files).toContain('a.txt');
+    expect(out.truncated).toBeUndefined();
+  }, 20000);
+
+  it('git_diff includes staged changes and untracked files', async () => {
+    execSync('git init', { cwd: ws, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: ws, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: ws, stdio: 'ignore' });
+    writeFileSync(join(ws, 'tracked.txt'), 'hello', 'utf-8');
+    execSync('git add tracked.txt && git commit -m "initial"', { cwd: ws, stdio: 'ignore' });
+    writeFileSync(join(ws, 'tracked.txt'), 'hello staged', 'utf-8');
+    execSync('git add tracked.txt', { cwd: ws, stdio: 'ignore' });
+    writeFileSync(join(ws, 'new.txt'), 'untracked body', 'utf-8');
+    mkdirSync(join(ws, '.nanoagent'), { recursive: true });
+    writeFileSync(join(ws, '.nanoagent', 'skip.txt'), 'harness', 'utf-8');
+
+    const gitDiff = tools.find((t) => t.name === 'git_diff')!;
+    const out = JSON.parse(await gitDiff.executeAsync!({}, ws));
+    expect(out.ok).toBe(true);
+    expect(out.diff).toContain('hello staged');
+    expect(out.diff).toContain('untracked body');
+    expect(out.files).toContain('tracked.txt');
+    expect(out.files).toContain('new.txt');
+    expect(out.diff).not.toMatch(/\.nanoagent/);
   }, 20000);
 
   it('git_commit stages and commits successfully', async () => {

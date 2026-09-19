@@ -6,7 +6,13 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { createToolRepeatState, evaluateToolRepeat, TREE_MUTATING_TOOLS } from './tool-repeat.js';
+import {
+  createToolRepeatState,
+  evaluateToolRepeat,
+  isDuplicateBlockError,
+  isDuplicateBlockOutput,
+  TREE_MUTATING_TOOLS,
+} from './tool-repeat.js';
 
 describe('evaluateToolRepeat', () => {
   it('allows the first git_status and blocks the second even with different empty args', () => {
@@ -69,5 +75,27 @@ describe('evaluateToolRepeat', () => {
     expect(state.blockedThisRound).toBe(0);
     evaluateToolRepeat(state, 'git_status', {});
     expect(state.blockedThisRound).toBe(1);
+  });
+});
+
+describe('isDuplicateBlockOutput', () => {
+  it('matches harness duplicate-block JSON and git once-per-tree errors', () => {
+    expect(
+      isDuplicateBlockOutput(
+        JSON.stringify({
+          ok: false,
+          error:
+            'Duplicate call blocked. You already ran list_dir with these exact inputs. Use the earlier result and continue — for review/explore tasks, write your findings now instead of re-running the same tools.',
+        })
+      )
+    ).toBe(true);
+    expect(
+      isDuplicateBlockError(
+        'You already called git_status. The working tree has not changed unless you edited files. Do not call git_status again. Write your findings or take the next real action.'
+      )
+    ).toBe(true);
+    expect(isDuplicateBlockOutput(JSON.stringify({ ok: false, error: 'file not found' }))).toBe(
+      false
+    );
   });
 });

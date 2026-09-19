@@ -1,5 +1,6 @@
 import { sanitizeForTui } from './sanitize.js';
 import { getShellInfo } from '../tools/exec-tools.js';
+import { diffFileNames, diffLineStats } from '../tools/unified-diff.js';
 
 export interface ToolDisplayBlock {
   action: string;
@@ -152,7 +153,20 @@ export function buildSummary(
   }
 
   if (toolName === 'read_file') {
-    if (result?.total_lines != null) return `${result.total_lines as number} lines`;
+    const total =
+      typeof result?.line_count === 'number'
+        ? (result.line_count as number)
+        : typeof result?.total_lines === 'number'
+          ? (result.total_lines as number)
+          : undefined;
+    if (result?.truncated === true && total != null) {
+      const shown =
+        typeof result?.end_line === 'number' && typeof result?.start_line === 'number'
+          ? (result.end_line as number) - (result.start_line as number) + 1
+          : String(result.content || '').split('\n').length;
+      return `${shown} of ${total} lines`;
+    }
+    if (total != null) return `${total} line${total === 1 ? '' : 's'}`;
     if (result?.content) {
       const lines = String(result.content).split('\n').length;
       return `${lines} line${lines === 1 ? '' : 's'}`;
@@ -169,8 +183,18 @@ export function buildSummary(
     return `${result.entries.length} item${result.entries.length === 1 ? '' : 's'}`;
   }
 
-  if (toolName === 'git_diff' && result?.diff === '') {
-    return (result?.message as string) || 'clean working tree';
+  if (toolName === 'git_diff') {
+    const diff = typeof result?.diff === 'string' ? result.diff : '';
+    if (!diff.trim()) return (result?.message as string) || 'clean working tree';
+    const fileCount = Array.isArray(result?.files)
+      ? result.files.length
+      : diffFileNames(diff).length;
+    const { added, removed } = diffLineStats(diff);
+    const parts = [`${fileCount} file${fileCount === 1 ? '' : 's'}`];
+    if (added > 0) parts.push(`+${added}`);
+    if (removed > 0) parts.push(`-${removed}`);
+    if (result?.truncated === true) parts.push('truncated');
+    return parts.join(' · ');
   }
 
   if (toolName === 'git_status') {
@@ -282,6 +306,17 @@ export function buildToolDisplayBlock(
 
   if (typeof result?.diff === 'string' && result.diff.trim()) {
     block.diff = result.diff.trim();
+  }
+
+  if (
+    !block.previewLines &&
+    (toolName === 'read_file' || toolName === 'batch_read_files') &&
+    typeof result?.content === 'string' &&
+    result.content.trim()
+  ) {
+    const lines = result.content.split('\n');
+    block.previewLines = lines.slice(0, 8);
+    block.outputLineCount = lines.length;
   }
 
   if (

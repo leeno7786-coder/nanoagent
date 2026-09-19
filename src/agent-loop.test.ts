@@ -251,10 +251,10 @@ describe('AgentCore run loop (behavioral)', () => {
     const nudge = agent.messages.find((m) => m.id.startsWith('nudge-'));
     expect(nudge).toBeDefined();
     expect(nudge!.role).toBe('user');
-    // Notice visible to the user
+    // Recovery notice is stored (hidden from the chat panel)
     expect(
       agent.messages.some(
-        (m) => m.id.startsWith('notice-') && /continuing the task/i.test(m.content)
+        (m) => m.id.startsWith('notice-recovery-') && /continuing the task/i.test(m.content)
       )
     ).toBe(true);
     const last = agent.messages[agent.messages.length - 1];

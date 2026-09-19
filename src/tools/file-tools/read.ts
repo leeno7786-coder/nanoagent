@@ -3,8 +3,9 @@ import { basename, dirname, resolve } from 'path';
 
 import type { Tool } from '../shared.js';
 import {
-  DEFAULT_READ_LIMIT,
+  LARGE_MODEL_READ_LIMIT,
   MAX_READ_CHARS,
+  MAX_READ_LINES,
   SMALL_MODEL_READ_LIMIT,
   checkSmallModel,
   isAccessBlocked,
@@ -65,17 +66,24 @@ export const batchReadFilesTool: Tool = {
           }
           const isSmall = checkSmallModel(cfg);
           const text = readFileSync(p, 'utf-8');
-          const sliced = truncate(text, isSmall ? SMALL_MODEL_READ_LIMIT : DEFAULT_READ_LIMIT);
-          const finalContent =
-            sliced.content.length > MAX_READ_CHARS
-              ? sliced.content.slice(0, MAX_READ_CHARS) +
-                `\n... [truncated: ${sliced.content.length - MAX_READ_CHARS} characters omitted]`
-              : sliced.content;
+          const sliced = truncate(text, isSmall ? SMALL_MODEL_READ_LIMIT : LARGE_MODEL_READ_LIMIT);
+          const charCut = sliced.content.length > MAX_READ_CHARS;
+          const finalContent = charCut
+            ? sliced.content.slice(0, MAX_READ_CHARS) +
+              `\n... [truncated: ${sliced.content.length - MAX_READ_CHARS} characters omitted]`
+            : sliced.content;
+          const truncated = sliced.truncated || charCut;
           results[rawPath] = {
             ok: true,
             content: finalContent,
-            truncated: sliced.truncated || finalContent.length < sliced.content.length,
+            truncated,
             originalLength: sliced.originalLength,
+            ...(truncated
+              ? {
+                  next_start_line: (isSmall ? SMALL_MODEL_READ_LIMIT : LARGE_MODEL_READ_LIMIT) + 1,
+                  hint: `File continues. Call read_file with start_line — do not repeat this exact call.`,
+                }
+              : {}),
           };
         } catch (e: unknown) {
           results[rawPath] = { ok: false, error: sandboxErrorMessage(e) };
@@ -101,7 +109,8 @@ export const readFileTool: Tool = {
       },
       end_line: {
         type: 'number',
-        description: 'Line to stop reading at (1-indexed, optional, defaults to start_line + 100)',
+        description:
+          'Last line to read (1-indexed). Omit to read through the end of the file (capped).',
       },
       numbered: {
         type: 'boolean',
@@ -125,10 +134,10 @@ export const readFileTool: Tool = {
       const text = readFileSync(p, 'utf-8');
       const lines = text.split('\n');
       const isSmall = checkSmallModel(cfg);
-      const defaultLines = isSmall ? SMALL_MODEL_READ_LIMIT : DEFAULT_READ_LIMIT;
+      const defaultLines = isSmall ? SMALL_MODEL_READ_LIMIT : LARGE_MODEL_READ_LIMIT;
       const startLine = Math.max(1, Number(args.start_line || 1));
       const endLine = args.end_line ? Number(args.end_line) : startLine + defaultLines - 1;
-      const limit = Math.max(1, Math.min(endLine - startLine + 1, 2000));
+      const limit = Math.max(1, Math.min(endLine - startLine + 1, MAX_READ_LINES));
       const offset = startLine - 1;
       const sliced = lines.slice(offset, offset + limit);
       const numbered = isSmall && args.numbered !== false;
@@ -140,20 +149,28 @@ export const readFileTool: Tool = {
             })
             .join('\n')
         : sliced.join('\n');
-      const safeContent =
-        content.length > MAX_READ_CHARS
-          ? content.slice(0, MAX_READ_CHARS) +
-            `\n... [truncated: ${content.length - MAX_READ_CHARS} characters omitted]`
-          : content;
+      const charCut = content.length > MAX_READ_CHARS;
+      const safeContent = charCut
+        ? content.slice(0, MAX_READ_CHARS) +
+          `\n... [truncated: ${content.length - MAX_READ_CHARS} characters omitted]`
+        : content;
+      const truncated = offset + limit < lines.length || charCut;
+      const endReturned = startLine + sliced.length - 1;
       return JSON.stringify({
         ok: true,
         path: rel(p, ws),
         content: safeContent,
         numbered,
-        truncated: offset + limit < lines.length || safeContent.length < content.length,
+        truncated,
         start_line: startLine,
-        end_line: startLine + sliced.length - 1,
+        end_line: endReturned,
         line_count: lines.length,
+        ...(truncated
+          ? {
+              next_start_line: endReturned + 1,
+              hint: `File continues at line ${endReturned + 1}. Call read_file with start_line=${endReturned + 1} — do not repeat this exact call.`,
+            }
+          : {}),
       });
     } catch (e: unknown) {
       const err = e as { code?: string; message?: string };

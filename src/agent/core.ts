@@ -37,6 +37,7 @@ import {
   toChatMessages,
   addAssistantMessage,
   addNoticeMessage,
+  addRecoveryNotice,
   addNudgeMessage,
   addUserMessage,
   checkAndCompactContext,
@@ -296,6 +297,11 @@ export class AgentCore {
   /** @internal UI-only notice; excluded from the LLM payload. */
   public addNoticeMessage(content: string) {
     addNoticeMessage(this, content);
+  }
+
+  /** @internal Recovery status; excluded from the LLM payload and the chat panel. */
+  public addRecoveryNotice(content: string) {
+    addRecoveryNotice(this, content);
   }
 
   /** @internal Hidden continue-nudge for the model (TUI-filtered). */
