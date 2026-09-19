@@ -64,7 +64,8 @@ export const SMALL_TOOL_DESCRIPTIONS: Record<string, string> = {
   change_workspace: 'Change working directory.',
   manage_todos: 'add | complete | remove | list subtasks.',
   manage_mcp: 'add | remove | list MCP servers in the global config.',
-  question: 'Ask the user a question with options to choose from.',
+  question:
+    'Ask the user to pick among options when the request is ambiguous (stack, features, approach). Do not list choices in chat.',
   // Short descriptions for tools excluded from small models (kept for reference)
   grep_search: 'Search text patterns across files.',
   map_project_tree: 'Project structure tree.',

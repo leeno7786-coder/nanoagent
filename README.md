@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.5** (`@omega3_0/nanoagent`) — auto-compacts at 80% of the loaded window with a wipe-clean LLM handoff, and `write_file` recovers unescaped JSON. 2.7.4 still covers scannable per-file diffs.
+Current release: **2.7.6** (`@omega3_0/nanoagent`) — the `question` tool opens the TUI picker for ambiguous requests (stack, features, approach) instead of dumping A/B/C in chat. 2.7.5 still covers 80% wipe-clean compaction and `write_file` JSON repair.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -37,7 +37,7 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 - **Tiny-model first** — compact prompts, context auto-compact (default 80% of the live window), and small-model tool-call resilience
 - **OpenTUI dashboard** — streaming chat, tool diffs, todos, skills overlay, connect overlay, six themes, and a Ctrl+P command palette
 - **Message queue** — type while the agent runs; messages enqueue (up to 20), drain automatically when idle, edit with ↑, persist across sessions; `/queue` to list, remove, or clear
-- **Ask-user questions** — the `question` tool opens an interactive TUI overlay (single/multi-select, optional custom text) so the agent can clarify choices mid-run
+- **Ask-user questions** — the `question` tool is a first-class clarifying picker: when the request is ambiguous (stack, features, approach), the agent calls it and a TUI overlay collects the answer. It is not an error path and is not tied to consecutive tool rounds.
 - **Permissions** — `read_only` / `ask` / `allow_edits` / `always_allow`, plus Shift+Tab to cycle in the TUI
 - **Remote sub-agents** — `explore_subagent` workers against a configured pool or `REMOTE_LMSTUDIO_URL`
 - **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`); only the canonical global config is trusted by default
@@ -477,6 +477,12 @@ NANOAGENT_ROOT/
 
 ## Changelog
 
+### 2.7.6 — Question overlay for ambiguous requests
+
+- **`question` is a first-class clarifying picker.** Ambiguous product choices (stack, features, constraints) go through the TUI overlay, not chat A/B/C lists. It is not an error path and is not tied to consecutive tool rounds.
+- **Prompts** tell both small and large models to call `question` instead of listing options in prose.
+- **Fallback:** if the model still dumps a lettered quiz in chat, the TUI harness promotes that text into a real `question` call so the overlay still opens. Headless `nanogent run` skips promotion (no overlay).
+
 ### 2.7.5 — 80% wipe-clean compaction and write_file JSON repair
 
 - **One context gauge.** Auto-compact only when live prompt fill reaches 80% of the model's loaded window. Leftover ~20% runs a no-tools summary inference; history is wiped to system prompt + original task + that handoff. Overflow / empty-`length` recovery does not compact below 80%. `/compact` is the same path on demand.
@@ -546,9 +552,9 @@ NANOAGENT_ROOT/
 
 ### 2.6.0 — Interactive question tool
 
-- **`question` tool** — agent asks the user multiple-choice questions (single or multi-select, optional custom text) during a run.
-- **Question overlay** — TUI overlay with keyboard navigation; Escape cancels; 5-minute timeout.
-- **Wiring** — registered for all models; early-stop nudge encourages use when the agent should clarify instead of guessing.
+- **`question` tool** — first-class clarifying picker for ambiguous user requests (stack, features, approach). Single/multi-select with optional custom text.
+- **Question overlay** — TUI overlay with keyboard navigation; Escape cancels; 5-minute timeout. Opens because the model called `question`, not because of a tool-round check-in or an API error.
+- **Wiring** — registered for all models. Prompts tell the model to call `question` instead of listing A/B/C in chat; if it still dumps a lettered quiz, the TUI harness promotes that text into a `question` call.
 
 ### 2.5.8 — Small-model prompt and tool consistency
 

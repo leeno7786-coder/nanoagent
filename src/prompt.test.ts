@@ -48,4 +48,14 @@ describe('tool-batching prompt lines', () => {
     expect(extras).toMatch(/not the user project/i);
     expect(extras).toMatch(/Do not list, read, edit, cd into, or commit it/);
   });
+
+  it('tells models to call the question tool for ambiguous product choices', () => {
+    expect(buildSmallModelPrompt(ctx)).toMatch(/call the question tool/i);
+    expect(buildSmallModelPrompt(ctx)).toMatch(/never list A\/B\/C/i);
+    expect(buildLargeModelPrompt(ctx)).toMatch(/call the question tool/i);
+    expect(buildLargeModelPrompt(ctx)).not.toMatch(/Ask when requirements are ambiguous/);
+    const extras = appendPromptExtras('Base prompt', ctx);
+    expect(extras).toMatch(/call the question tool/i);
+    expect(extras).toMatch(/Do not dump numbered options in chat/i);
+  });
 });

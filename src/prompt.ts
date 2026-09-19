@@ -39,7 +39,7 @@ export function buildSmallModelPrompt(ctx: PromptContext): string {
     '## Chat Style',
     '- The user reads your text in a chat panel. Keep working-notes to one brief line; keep the final summary short and skimmable.',
     '- Do not paste long analysis — put execution details in tool operations.',
-    '- Ask a question ONLY before large/destructive writes or genuinely conflicting requirements. For review/explore/audit tasks, pick a sensible scope and deliver findings.',
+    '- Ambiguous requests (missing stack, features, or constraints): call the question tool — never list A/B/C choices in chat. For review/explore/audit, pick a scope and deliver; do not ask which files to focus on.',
     '',
     '## Recovery',
     '- If a tool call fails, read the error, adjust, and retry differently — never repeat an identical failing call.',
@@ -67,7 +67,7 @@ export function buildLargeModelPrompt(ctx: PromptContext, _cfg?: Config): string
     "- Never ask the user to paste files or say you can't see the directory — use tools instead",
     '- Avoid map_project_tree and batch_read_files unless the user explicitly wants a full tree',
     '- Detect stack from package.json, pyproject.toml, Cargo.toml, etc.',
-    '- Ask when requirements are ambiguous or files contradict each other',
+    '- When the request is ambiguous (stack, features, constraints) or files contradict, call the question tool — do not ask in chat prose',
     '- execute_command for shell work; prefer project scripts over ad-hoc commands',
     '- manage_todos for multi-step work',
     '',
@@ -117,6 +117,7 @@ export function appendPromptExtras(base: string, ctx: PromptContext, _smallModel
     '- Keep working until the objective is achieved, then stop calling tools and write the final answer.\n' +
     '- Repeating git_status, git_diff, list_dir, or re-reading the same file is not progress — use prior results.\n' +
     '- For open-ended requests (review, audit, explore, summarize), choose a sensible default scope and deliver findings — do not pause to ask which files to focus on.\n' +
+    '- Missing product/implementation choices the user must decide: call the question tool (TUI overlay). Do not dump numbered options in chat.\n' +
     '- Provide a clear, complete summary of all completed work when the task is finished.';
 
   system +=

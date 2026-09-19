@@ -12,6 +12,7 @@ import { join } from 'path';
 import { createServer, type Server } from 'http';
 import type { Config, Message } from './types.js';
 import { AgentCore } from './agent.js';
+import { cancelQuestion, hasPendingQuestion, resolveQuestion } from './tools/question-tool.js';
 
 // ---------------------------------------------------------------------------
 // Local OpenAI-compatible stub server — no module mocks, the real streamChat
@@ -262,6 +263,56 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(last.content).toContain('Reviewed top-level layout');
     expect(agent.state).toBe('idle');
   });
+
+  it('routes an A/B/C clarifying quiz through the question tool (not a check-in)', async () => {
+    const g = globalThis as Record<string, unknown>;
+    const prevNotify = g.__questionToolNotify;
+    g.__questionToolNotify = () => {};
+    try {
+      const agent = newAgent();
+      await agent.init();
+
+      const quiz = [
+        'The workspace is empty. What tech stack do you prefer for this todo app?',
+        '',
+        '- A) Plain HTML/CSS/JS — single static file',
+        '- B) React + Vite — modern SPA',
+        '- C) Next.js — full React framework',
+      ].join('\n');
+
+      scripted.push([{ content: quiz }]);
+      scripted.push([{ content: 'Building a plain HTML todo app.' }]);
+
+      const run = agent.run('lets build a basic todo app');
+      const deadline = Date.now() + 8000;
+      while (!hasPendingQuestion()) {
+        if (Date.now() > deadline) {
+          throw new Error('question overlay never opened');
+        }
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      resolveQuestion([
+        {
+          question: 'What tech stack do you prefer for this todo app?',
+          answers: ['Plain HTML/CSS/JS'],
+        },
+      ]);
+      await run;
+
+      const questionCall = agent.messages.find(
+        (m) => m.role === 'assistant' && m.toolCalls?.some((tc) => tc.name === 'question')
+      );
+      expect(questionCall).toBeDefined();
+      const toolResult = agent.messages.find((m) => m.role === 'tool' && m.toolCallId);
+      expect(toolResult?.content).toMatch(/Plain HTML\/CSS\/JS/);
+      expect(agent.state).toBe('idle');
+      expect(sentMessages.length).toBe(2);
+    } finally {
+      if (hasPendingQuestion()) cancelQuestion();
+      if (prevNotify !== undefined) g.__questionToolNotify = prevNotify;
+      else delete g.__questionToolNotify;
+    }
+  }, 20000);
 
   it('sends the todo system message (with ids) to the LLM', async () => {
     const agent = newAgent();

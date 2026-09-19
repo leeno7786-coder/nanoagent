@@ -14,6 +14,7 @@ import {
 } from '../llm/tool-result-budget.js';
 import { parseXmlToolCalls } from '../llm/tool-call-parser.js';
 import { isContextOverflowError } from '../llm/overflow.js';
+import { maybePromoteProseQuestion } from '../tools/question-prose.js';
 
 const DEFAULT_MAX_REASONING_ONLY = 5;
 /** Small models rarely recover from reasoning-only turns — stop them sooner. */
@@ -704,6 +705,9 @@ export async function agentRun(
         // Successful non-empty turn — reset overflow streak
         overflowRetries = 0;
 
+        // Route A/B/C chat quizzes through the real question tool (TUI overlay).
+        maybePromoteProseQuestion(assistantMsg);
+
         agent.contextManager.addMessage(assistantMsg);
 
         if (
@@ -994,10 +998,11 @@ export async function agentRun(
               : tc.function.arguments,
         }));
       }
+      maybePromoteProseQuestion(assistantMsg);
       agent.messages.push(assistantMsg);
       agent.contextManager.addMessage(assistantMsg);
 
-      if (!msg.tool_calls || msg.tool_calls.length === 0) {
+      if (!assistantMsg.toolCalls || assistantMsg.toolCalls.length === 0) {
         if (!msg.content && msg.reasoning_content) {
           const action = handleReasoningOnlyTurn(response.finishReason);
           if (action !== 'continue') {
