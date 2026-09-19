@@ -172,7 +172,7 @@ describe('buildToolDisplayBlock', () => {
       );
       expect(block.action).toBe('Update');
       expect(block.target).toBe('src/a.ts');
-      expect(block.summary).toBe('+5 -2');
+      expect(block.summary).toBe('+5 −2');
       expect(block.diff).toBe('-old\n+new');
       expect(block.previewLines).toBeUndefined();
     });
@@ -203,7 +203,7 @@ describe('buildToolDisplayBlock', () => {
         json({ added: 1, removed: 4 })
       );
       expect(block.action).toBe('Update');
-      expect(block.summary).toBe('+1 -4');
+      expect(block.summary).toBe('+1 −4');
     });
 
     it('should report "no changes" when added and removed are both 0', () => {
@@ -447,7 +447,7 @@ describe('buildToolDisplayBlock', () => {
         json({}),
         json({ ok: true, diff, files: ['a.ts'] })
       );
-      expect(block.summary).toBe('1 file · +1 · -1');
+      expect(block.summary).toBe('1 file · +1 −1');
     });
   });
 
@@ -461,6 +461,38 @@ describe('buildToolDisplayBlock', () => {
           true
         )
       ).toBe('2 files changed');
+    });
+
+    it('should preview porcelain file lines', () => {
+      const block = buildToolDisplayBlock(
+        'git_status',
+        json({}),
+        json({
+          ok: true,
+          status: 'has changes',
+          details: '2 files changed',
+          files: [' M README.md', '?? .gitignore'],
+        })
+      );
+      expect(block.previewLines).toEqual([' M README.md', '?? .gitignore']);
+    });
+  });
+
+  describe('list_dir preview', () => {
+    it('should preview directory and file names', () => {
+      const block = buildToolDisplayBlock(
+        'list_dir',
+        json({ path: '.' }),
+        json({
+          ok: true,
+          entries: [
+            { name: 'src', type: 'dir' },
+            { name: 'README.md', type: 'file' },
+          ],
+        })
+      );
+      expect(block.summary).toBe('2 items');
+      expect(block.previewLines).toEqual(['src/', 'README.md']);
     });
   });
 

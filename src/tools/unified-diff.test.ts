@@ -2,8 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import { isParseableDiff } from '../opentui/diff-utils.js';
 import {
   capUnifiedDiff,
+  describeDiffPatch,
   diffFileNames,
   diffLineStats,
+  formatDiffStat,
   formatNewFileDiff,
   splitUnifiedDiff,
 } from './unified-diff.js';
@@ -33,6 +35,20 @@ describe('splitUnifiedDiff', () => {
 
   it('returns a single hunk when there is no file header', () => {
     expect(splitUnifiedDiff('@@ -1,1 +1,1 @@\n-a\n+b')).toEqual(['@@ -1,1 +1,1 @@\n-a\n+b']);
+  });
+});
+
+describe('describeDiffPatch', () => {
+  it('names the file and counts added/removed lines', () => {
+    expect(describeDiffPatch(FILE_A)).toEqual({ path: 'a.txt', added: 1, removed: 1 });
+  });
+});
+
+describe('formatDiffStat', () => {
+  it('joins added and removed counts', () => {
+    expect(formatDiffStat(9, 3)).toBe('+9 −3');
+    expect(formatDiffStat(5, 0)).toBe('+5');
+    expect(formatDiffStat(0, 0)).toBe('');
   });
 });
 

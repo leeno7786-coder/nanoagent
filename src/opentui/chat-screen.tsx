@@ -16,7 +16,13 @@ import { ErrorBoundary } from './error-boundary.js';
 import { useAppStore } from './app-store.js';
 import { formatBusyContext, type ContextUsageSnapshot, type TurnUsage } from './token-display.js';
 import { isParseableDiff } from './diff-utils.js';
-import { splitUnifiedDiff } from '../tools/unified-diff.js';
+import {
+  formatPipeTable,
+  isHorizontalRule,
+  parsePipeTable,
+  splitForDisplay,
+} from './chat-markdown.js';
+import { describeDiffPatch, formatDiffStat, splitUnifiedDiff } from '../tools/unified-diff.js';
 import { isDuplicateBlockOutput } from '../agent/tool-repeat.js';
 import { isRecoveryNotice } from '../agent-messages.js';
 
@@ -177,8 +183,17 @@ function renderLinesSafely(
   // Strip ANSI escapes/control chars — a raw ESC[2J from tool output would
   // wipe the whole TUI frame
   const allLines = sanitizeForTui(text).split('\n');
+  const { head, tail, hidden } = splitForDisplay(allLines, maxLines);
+
   const renderLine = (line: string, key: string | number) => {
-    // Markdown headings: strip the #'s, render strong with accent colour.
+    if (theme && isHorizontalRule(line)) {
+      return (
+        <text key={key} fg={theme.mutedFg}>
+          {prefix}
+          {'─'.repeat(32)}
+        </text>
+      );
+    }
     const heading = /^(#{1,4})\s+(.*)$/.exec(line);
     if (theme && heading) {
       return (
@@ -195,21 +210,43 @@ function renderLinesSafely(
       </text>
     );
   };
-  if (allLines.length <= maxLines) {
-    return allLines.map((line, idx) => renderLine(line, idx));
-  }
-  const headCount = 10;
-  const tailCount = Math.max(1, maxLines - headCount - 1);
-  const head = allLines.slice(0, headCount);
-  const tail = allLines.slice(-tailCount);
-  const hiddenCount = allLines.length - headCount - tailCount;
 
+  const renderChunk = (chunk: string[], keyPrefix: string) => {
+    const nodes: ReturnType<typeof renderLine>[] = [];
+    let i = 0;
+    while (i < chunk.length) {
+      const table = parsePipeTable(chunk, i);
+      if (table) {
+        const formatted = formatPipeTable(table.rows);
+        formatted.forEach((row, ri) => {
+          nodes.push(
+            <text
+              key={`${keyPrefix}-tbl-${i}-${ri}`}
+              fg={ri === 0 && theme ? theme.accent : fgColor}
+            >
+              {prefix}
+              {row}
+            </text>
+          );
+        });
+        i += table.consumed;
+        continue;
+      }
+      nodes.push(renderLine(chunk[i] ?? '', `${keyPrefix}-${i}`));
+      i++;
+    }
+    return nodes;
+  };
+
+  if (hidden === 0) {
+    return renderChunk(head, 'b');
+  }
   return [
-    ...head.map((line, idx) => renderLine(line, `h-${idx}`)),
-    <text key="trunc" fg={fgColor}>
-      {prefix}… [truncated {hiddenCount} lines]
+    ...renderChunk(head, 'h'),
+    <text key="trunc" fg={theme?.mutedFg ?? fgColor}>
+      {prefix}… {hidden} more lines
     </text>,
-    ...tail.map((line, idx) => renderLine(line, `t-${idx}`)),
+    ...renderChunk(tail, 't'),
   ];
 }
 
@@ -255,6 +292,54 @@ function diffRenderProps(theme: Theme) {
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function FilePatch({ patch, theme }: { patch: string; theme: Theme }) {
+  const { path, added, removed } = describeDiffPatch(patch);
+  const stat = formatDiffStat(added, removed);
+  const parseable = isParseableDiff(patch);
+  return (
+    <box flexDirection="column">
+      {path ? (
+        <text fg={theme.mutedFg}>
+          {'  '}
+          <span fg={theme.toolFg}>{path}</span>
+          {stat ? `  ${stat}` : ''}
+        </text>
+      ) : null}
+      {parseable ? (
+        <box flexDirection="column" backgroundColor={theme.codeBg}>
+          <diff diff={patch} {...diffRenderProps(theme)} />
+        </box>
+      ) : (
+        <box flexDirection="column" backgroundColor={theme.codeBg} paddingX={1}>
+          {patch.split('\n').map((line, li) => (
+            <text key={li} fg={theme.mutedFg}>
+              {line || ' '}
+            </text>
+          ))}
+        </box>
+      )}
+    </box>
+  );
+}
+
+function showToolTarget(action: string, target: string): boolean {
+  if (!target) return false;
+  if (target === '.' && (action === 'Git Diff' || action === 'Git Status')) return false;
+  return true;
+}
+
+function FilePatchList({ diff, theme }: { diff: string; theme: Theme }) {
+  return (
+    <box flexDirection="column" marginTop={0}>
+      {splitUnifiedDiff(diff).map((patch, i) => (
+        <box key={i} flexDirection="column" marginTop={i > 0 ? 1 : 0}>
+          <FilePatch patch={patch} theme={theme} />
+        </box>
+      ))}
+    </box>
+  );
 }
 
 function linePreview(
@@ -769,6 +854,7 @@ function ToolActivityBlock({
   const targetFg = ok ? theme.toolFg : theme.errorFg;
   const target = relativizeTarget(block.target, workspace);
   const duration = block.durationMs != null ? `  ${formatDuration(block.durationMs)}` : '';
+  const withTarget = showToolTarget(block.action, target);
 
   if (block.kind === 'command') {
     const previews = dedupePreview(block.summary, block.previewLines);
@@ -801,7 +887,7 @@ function ToolActivityBlock({
         <box flexDirection="row">
           <text fg={glyphFg}>{'← '}</text>
           <text fg={labelFg}>Edit</text>
-          <text fg={targetFg}>{` ${target}`}</text>
+          {withTarget ? <text fg={targetFg}>{` ${target}`}</text> : null}
           {block.summary && block.summary !== 'ok' ? (
             <text fg={theme.mutedFg}>{`  ${block.summary}`}</text>
           ) : null}
@@ -839,14 +925,20 @@ function ToolActivityBlock({
         <box flexDirection="row">
           <text fg={glyphFg}>{'→ '}</text>
           <text fg={labelFg}>{block.action}</text>
-          <text fg={targetFg}>{` ${target}`}</text>
+          {withTarget ? <text fg={targetFg}>{` ${target}`}</text> : null}
           {block.summary && block.summary !== 'ok' ? (
             <text fg={theme.mutedFg}>{` · ${block.summary}`}</text>
           ) : null}
           {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
         </box>
         {block.previewLines?.length
-          ? linePreview(block.previewLines, 4, theme.mutedFg, theme, '  ')
+          ? linePreview(
+              block.previewLines,
+              block.kind === 'list' ? 8 : 4,
+              theme.mutedFg,
+              theme,
+              block.kind === 'read' ? '  │ ' : '    '
+            )
           : null}
       </box>
     );
@@ -858,28 +950,14 @@ function ToolActivityBlock({
       <box flexDirection="row">
         <text fg={glyphFg}>{'→ '}</text>
         <text fg={labelFg}>{block.action}</text>
-        <text fg={targetFg}>{` ${target}`}</text>
+        {withTarget ? <text fg={targetFg}>{` ${target}`}</text> : null}
         {block.summary && block.summary !== 'ok' ? (
           <text fg={theme.mutedFg}>{` · ${block.summary}`}</text>
         ) : null}
         {duration ? <text fg={theme.mutedFg}>{duration}</text> : null}
       </box>
       {block.diff ? (
-        <box flexDirection="column" marginTop={0} backgroundColor={theme.codeBg}>
-          {splitUnifiedDiff(block.diff).map((patch, i) =>
-            isParseableDiff(patch) ? (
-              <diff key={i} diff={patch} {...diffRenderProps(theme)} />
-            ) : (
-              <box key={i} flexDirection="column" paddingX={1}>
-                {patch.split('\n').map((line, li) => (
-                  <text key={li} fg={theme.mutedFg}>
-                    {line || ' '}
-                  </text>
-                ))}
-              </box>
-            )
-          )}
-        </box>
+        <FilePatchList diff={block.diff} theme={theme} />
       ) : previews?.length ? (
         linePreview(previews, 6, theme.mutedFg, theme, '  ')
       ) : null}
@@ -1264,7 +1342,7 @@ function AssistantMessageView({
           if (seg.type === 'text') {
             return (
               <box key={si} flexDirection="column">
-                {renderLinesSafely(seg.text, 60, theme.headerFg, '', theme)}
+                {renderLinesSafely(seg.text, 200, theme.headerFg, '', theme)}
               </box>
             );
           }
@@ -1276,24 +1354,9 @@ function AssistantMessageView({
             // renders a red "Error parsing diff: Added line count did not
             // match..." pane instead of the diff — fall back to a plain
             // monospace <code> block so the user still sees the content.
-            return isParseableDiff(diffText) ? (
-              <box key={si} flexDirection="column" marginY={1} backgroundColor={theme.codeBg}>
-                <diff diff={diffText} {...diffRenderProps(theme)} />
-              </box>
-            ) : (
-              <box
-                key={si}
-                flexDirection="column"
-                marginY={1}
-                backgroundColor={theme.codeBg}
-                paddingX={1}
-              >
-                <text fg={theme.mutedFg}>diff</text>
-                {diffText.split('\n').map((line, i) => (
-                  <text key={i} fg={theme.mutedFg}>
-                    {line || ' '}
-                  </text>
-                ))}
+            return (
+              <box key={si} flexDirection="column" marginY={1}>
+                <FilePatchList diff={diffText} theme={theme} />
               </box>
             );
           }
@@ -1336,7 +1399,9 @@ function AssistantMessageView({
                 {spinnerFrame(elapsedMs ?? 0)}{' '}
                 {pending.kind === 'command'
                   ? `$ ${pending.target}…`
-                  : `${pending.action} ${pending.target}…`}
+                  : `${pending.action}${
+                      showToolTarget(pending.action, pending.target) ? ` ${pending.target}` : ''
+                    }…`}
               </text>
             </box>
           );

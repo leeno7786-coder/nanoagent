@@ -1,6 +1,6 @@
 import { sanitizeForTui } from './sanitize.js';
 import { getShellInfo } from '../tools/exec-tools.js';
-import { diffFileNames, diffLineStats } from '../tools/unified-diff.js';
+import { diffFileNames, diffLineStats, formatDiffStat } from '../tools/unified-diff.js';
 
 export interface ToolDisplayBlock {
   action: string;
@@ -132,10 +132,25 @@ function previewLinesFromOutput(
 
 function formatLineChangeSummary(added: number, removed: number): string {
   if (added === 0 && removed === 0) return 'no changes';
-  const parts = [];
-  if (added > 0) parts.push(`+${added}`);
-  if (removed > 0) parts.push(`-${removed}`);
-  return parts.join(' ');
+  return formatDiffStat(added, removed) || 'no changes';
+}
+
+function formatListEntries(entries: unknown[]): string[] {
+  const lines: string[] = [];
+  for (const entry of entries) {
+    if (lines.length >= 8) break;
+    if (typeof entry === 'string') {
+      lines.push(entry);
+      continue;
+    }
+    if (entry && typeof entry === 'object' && 'name' in entry) {
+      const rec = entry as { name: unknown; type?: unknown };
+      const name = String(rec.name ?? '');
+      if (!name) continue;
+      lines.push(rec.type === 'dir' ? `${name}/` : name);
+    }
+  }
+  return lines;
 }
 
 export function buildSummary(
@@ -191,8 +206,8 @@ export function buildSummary(
       : diffFileNames(diff).length;
     const { added, removed } = diffLineStats(diff);
     const parts = [`${fileCount} file${fileCount === 1 ? '' : 's'}`];
-    if (added > 0) parts.push(`+${added}`);
-    if (removed > 0) parts.push(`-${removed}`);
+    const stat = formatDiffStat(added, removed);
+    if (stat) parts.push(stat);
     if (result?.truncated === true) parts.push('truncated');
     return parts.join(' · ');
   }
@@ -317,6 +332,22 @@ export function buildToolDisplayBlock(
     const lines = result.content.split('\n');
     block.previewLines = lines.slice(0, 8);
     block.outputLineCount = lines.length;
+  }
+
+  if (!block.previewLines && toolName === 'list_dir' && Array.isArray(result?.entries)) {
+    const preview = formatListEntries(result.entries);
+    if (preview.length > 0) {
+      block.previewLines = preview;
+      block.outputLineCount = result.entries.length;
+    }
+  }
+
+  if (!block.previewLines && toolName === 'git_status' && Array.isArray(result?.files)) {
+    const files = result.files.map((f: unknown) => String(f)).filter((f: string) => f.trim());
+    if (files.length > 0) {
+      block.previewLines = files.slice(0, 8);
+      block.outputLineCount = files.length;
+    }
   }
 
   if (

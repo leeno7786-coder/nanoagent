@@ -38,6 +38,24 @@ export function diffLineStats(diff: string): { added: number; removed: number } 
   return { added, removed };
 }
 
+export function describeDiffPatch(patch: string): {
+  path: string;
+  added: number;
+  removed: number;
+} {
+  const names = diffFileNames(patch);
+  const stats = diffLineStats(patch);
+  return { path: names[0] ?? '', added: stats.added, removed: stats.removed };
+}
+
+/** Compact git --stat style, e.g. "+5 −1". */
+export function formatDiffStat(added: number, removed: number): string {
+  const parts: string[] = [];
+  if (added > 0) parts.push(`+${added}`);
+  if (removed > 0) parts.push(`−${removed}`);
+  return parts.join(' ');
+}
+
 /** Unified diff for a new untracked file (portable — no `/dev/null` spawn). */
 export function formatNewFileDiff(relPath: string, content: string): string {
   const path = relPath.replace(/\\/g, '/');
