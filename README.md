@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.3** (`@omega3_0/nanoagent`) — `git_diff` and `read_file` return complete results (no false `truncated` / missing untracked files) so review models stop rerunning the same tools. Recovery notices stay off the main chat.
+Current release: **2.7.4** (`@omega3_0/nanoagent`) — chat diffs are labeled per file, git tool rows drop the stray `.`, and assistant pipe tables stay readable. 2.7.3 still covers complete `git_diff` / `read_file` results.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -476,6 +476,12 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.4 — Scannable chat diffs
+
+- **Per-file Git Diff labels.** Each patch shows its path and `+x −y` instead of a mashed hunk blob.
+- **Quieter tool rows.** `Git Status` / `Git Diff` hide a target of `.`; `list_dir` and `git_status` show a short name preview.
+- **Assistant markdown.** Pipe tables render as aligned columns; short reviews are not chopped with a truncation marker.
 
 ### 2.7.3 — Complete diffs and file reads
 
