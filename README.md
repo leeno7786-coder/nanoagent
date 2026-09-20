@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.6** (`@omega3_0/nanoagent`) — the `question` tool opens the TUI picker for ambiguous requests (stack, features, approach) instead of dumping A/B/C in chat. 2.7.5 still covers 80% wipe-clean compaction and `write_file` JSON repair.
+Current release: **2.7.7** (`@omega3_0/nanoagent`) — the `/connect` provider picker now includes Lemonade Server as a local OpenAI-compatible runtime. 2.7.6 still covers the `question` tool TUI picker for ambiguous requests.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -167,13 +167,13 @@ Set `NANOAGENT_ROOT` before invoking to point at a different install location (p
 ## Recommended local setup
 
 - **Model**: `Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF` (or another Qwen 3.5 2B–8B)
-- **Runtime**: [LM Studio](https://lmstudio.ai/) at `http://127.0.0.1:1234/v1`, or Ollama at `http://127.0.0.1:11434/v1`
+- **Runtime**: [LM Studio](https://lmstudio.ai/) at `http://127.0.0.1:1234/v1`, [Lemonade Server](https://lemonade-server.ai/) at `http://127.0.0.1:13305/api/v1`, or Ollama at `http://127.0.0.1:11434/v1`
 
 When LM Studio has extra Qwen3.5 2B models loaded (up to 4 instances), NanoAgent uses them as an exploration sub-agent pool — one worker per loaded 2B, dispatched with `explore_subagent` (max 4 in parallel). You can also point at a remote pool with `REMOTE_LMSTUDIO_URL` or a `subagents` block in config.
 
 First-run: type `/connect` in the TUI to pick a provider (Local first, then Cloud), enter an API key if needed, and choose a model.
 
-Cloud providers include OpenAI, OpenRouter, Azure AI Foundry (per-resource URL), Alibaba Cloud Model Studio / DashScope (intl, China, and Coding Plan), Kimi Code, Moonshot, DeepSeek, Groq, xAI, Together, Fireworks, Cerebras, MiniMax, NVIDIA NIM, GMI Cloud, Hugging Face, Gemini (OpenAI-compat), and others. Local extras include Foundry Local, SGLang, MLX, KoboldCpp, and Docker Model Runner. All of these speak OpenAI Chat Completions — no extra SDKs.
+Cloud providers include OpenAI, OpenRouter, Azure AI Foundry (per-resource URL), Alibaba Cloud Model Studio / DashScope (intl, China, and Coding Plan), Kimi Code, Moonshot, DeepSeek, Groq, xAI, Together, Fireworks, Cerebras, MiniMax, NVIDIA NIM, GMI Cloud, Hugging Face, Gemini (OpenAI-compat), and others. Local extras include Lemonade Server, Foundry Local, SGLang, MLX, KoboldCpp, and Docker Model Runner. All of these speak OpenAI Chat Completions — no extra SDKs.
 
 ---
 

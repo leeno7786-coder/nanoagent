@@ -218,6 +218,18 @@ describe('providers.ts - Provider Resolution', () => {
       expect(lmstudio?.name).toBe('LM Studio');
     });
 
+    it('should have Lemonade as a dynamic local provider', () => {
+      const lemonade = getProvider('lemonade');
+      expect(lemonade).toMatchObject({
+        id: 'lemonade',
+        name: 'Lemonade',
+        baseURL: 'http://localhost:13305/api/v1',
+        isLocal: true,
+        dynamicModels: true,
+        requiresAuth: false,
+      });
+    });
+
     it('should have OpenRouter provider', () => {
       const openrouter = RUNTIME_PROVIDERS.find((p) => p.id === 'openrouter');
       expect(openrouter).toBeDefined();
@@ -251,6 +263,7 @@ describe('providers.ts - Provider Resolution', () => {
         'mlx',
         'koboldcpp',
         'docker-model-runner',
+        'lemonade',
       ]) {
         expect(getProvider(id)?.id).toBe(id);
       }

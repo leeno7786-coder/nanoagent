@@ -466,6 +466,18 @@ export const RUNTIME_PROVIDERS: RuntimeProvider[] = [
     models: [], // Will be fetched dynamically
   },
   {
+    id: 'lemonade',
+    name: 'Lemonade',
+    baseURL: 'http://localhost:13305/api/v1',
+    requiresAuth: false,
+    isLocal: true,
+    dynamicModels: true,
+    icon: '🍋',
+    description: 'Local Lemonade Server OpenAI-compatible runtime',
+    docsUrl: 'https://lemonade-server.ai/',
+    models: [],
+  },
+  {
     id: 'ollama',
     name: 'Ollama',
     baseURL: 'http://localhost:11434/v1',
