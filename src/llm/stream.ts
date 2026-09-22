@@ -88,6 +88,8 @@ export async function* streamChat(
         let finishReason: string | undefined;
         let usage: { input_tokens: number; output_tokens: number } | undefined;
         let yieldedMeaningfulContent = false;
+        let streamedText = '';
+        let streamedReasoning = '';
 
         let previousCompleteCallsStr = ''; // M3: avoid yielding duplicate tool-calls
 
@@ -111,15 +113,16 @@ export async function* streamChat(
             logError('[QWEN_DEBUG] llm chunk:', JSON.stringify(delta));
           }
 
-          if (!delta) continue;
-
-          const deltaAny = delta as Record<string, unknown>;
-          const choiceAny = choice as Record<string, unknown>;
+          const choiceAny = (choice ?? {}) as Record<string, unknown>;
+          const deltaAny = (delta ?? {}) as Record<string, unknown>;
+          const messageAny =
+            choiceAny.message && typeof choiceAny.message === 'object'
+              ? (choiceAny.message as Record<string, unknown>)
+              : undefined;
+          const hasTextSource = Boolean(delta || messageAny || choiceAny.text);
+          if (!hasTextSource) continue;
           const toolCallsAny =
-            deltaAny.tool_calls ||
-            choiceAny.tool_calls ||
-            (choiceAny.message as Record<string, unknown>)?.tool_calls ||
-            [];
+            deltaAny.tool_calls || choiceAny.tool_calls || messageAny?.tool_calls || [];
 
           if (Array.isArray(toolCallsAny) && toolCallsAny.length > 0) {
             for (const tcUnknown of toolCallsAny) {
@@ -170,11 +173,34 @@ export async function* streamChat(
             }
           }
 
-          const { content, reasoningContent: drc } = extractDeltaText(delta);
-          const reasoningContent =
-            drc ||
+          const deltaText = extractDeltaText(delta);
+          const messageText = extractDeltaText(messageAny);
+          const fallbackText = messageText.content || normalizeContent(choiceAny.text);
+          let content = deltaText.content;
+          if (!content && fallbackText) {
+            // A few OpenAI-compatible gateways send cumulative message-shaped
+            // chunks instead of delta chunks. Convert them into a delta and
+            // avoid duplicating a full message on every SSE event.
+            if (fallbackText.startsWith(streamedText)) {
+              content = fallbackText.slice(streamedText.length);
+            } else if (!streamedText.startsWith(fallbackText)) {
+              content = fallbackText;
+            }
+          }
+          if (content) streamedText += content;
+
+          let reasoningContent = deltaText.reasoningContent || messageText.reasoningContent;
+          reasoningContent =
+            reasoningContent ||
             normalizeContent((choiceAny.reasoning_content as string) ?? '') ||
-            normalizeContent((choiceAny.reasoning as string) ?? '');
+            normalizeContent((choiceAny.reasoning as string) ?? '') ||
+            '';
+          if (reasoningContent && reasoningContent !== streamedReasoning) {
+            if (reasoningContent.startsWith(streamedReasoning)) {
+              reasoningContent = reasoningContent.slice(streamedReasoning.length);
+            }
+            streamedReasoning += reasoningContent;
+          }
 
           const completeToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
           for (const buf of toolCallBuffers.values()) {

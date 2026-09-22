@@ -175,6 +175,47 @@ describe('streamChat request shaping', () => {
     expect(chunks.some((chunk) => chunk.content === 'recovered')).toBe(true);
   });
 
+  it('reads message-shaped text from OpenAI-compatible stream chunks', async () => {
+    const client = {
+      chat: {
+        completions: {
+          create: async () =>
+            (async function* () {
+              yield {
+                choices: [
+                  {
+                    index: 0,
+                    delta: {},
+                    message: { content: 'Hello' },
+                    finish_reason: null,
+                  },
+                ],
+              };
+              yield {
+                choices: [
+                  {
+                    index: 0,
+                    delta: {},
+                    message: { content: 'Hello world' },
+                    finish_reason: 'stop',
+                  },
+                ],
+              };
+            })(),
+        },
+      },
+    } as unknown as OpenAI;
+    const generator = streamChat(client, makeCfg(stubBaseURL), [{ role: 'user', content: 'hi' }]);
+    const content: string[] = [];
+    let next = await generator.next();
+    while (!next.done) {
+      if (next.value.content) content.push(next.value.content);
+      next = await generator.next();
+    }
+
+    expect(content.join('')).toBe('Hello world');
+  });
+
   it('does not expose tool calls from a length-truncated stream', async () => {
     const client = {
       chat: {
