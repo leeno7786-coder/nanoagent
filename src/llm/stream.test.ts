@@ -248,6 +248,57 @@ describe('streamChat request shaping', () => {
     expect(reasoning.join('')).toBe('internal reasoning');
   });
 
+  it('keeps streamed tool calls when a gateway emits an empty argument fragment', async () => {
+    const client = {
+      chat: {
+        completions: {
+          create: async () =>
+            (async function* () {
+              yield {
+                choices: [
+                  {
+                    index: 0,
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: 'call-keep',
+                          function: { name: 'git_status', arguments: '{}' },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              };
+              yield {
+                choices: [
+                  {
+                    index: 0,
+                    delta: {
+                      tool_calls: [{ index: 0, function: { arguments: null } }],
+                    },
+                    finish_reason: 'tool_calls',
+                  },
+                ],
+              };
+            })(),
+        },
+      },
+    } as unknown as OpenAI;
+    const generator = streamChat(client, makeCfg(stubBaseURL), [
+      { role: 'user', content: 'inspect the repository' },
+    ]);
+    const calls: Array<{ id: string; name: string }> = [];
+    let next = await generator.next();
+    while (!next.done) {
+      for (const call of next.value.toolCalls ?? []) calls.push(call);
+      next = await generator.next();
+    }
+
+    expect(calls.some((call) => call.id === 'call-keep' && call.name === 'git_status')).toBe(true);
+  });
+
   it('does not expose tool calls from a length-truncated stream', async () => {
     const client = {
       chat: {

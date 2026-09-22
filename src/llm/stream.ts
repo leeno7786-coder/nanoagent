@@ -12,7 +12,6 @@ import {
 } from './utils.js';
 import { buildChatCompletionsParams } from './request.js';
 import { mergeToolCallArgumentDelta } from './tool-call-args.js';
-import { normalizeToolCallArguments } from './chat.js';
 import {
   awaitEndpointTurn,
   releaseEndpointTurn,
@@ -81,10 +80,7 @@ export async function* streamChat(
           }>;
         }>;
 
-        const toolCallBuffers = new Map<
-          number,
-          { id: string; name: string; args: string; invalid: boolean }
-        >();
+        const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
         let finishReason: string | undefined;
         let usage: { input_tokens: number; output_tokens: number } | undefined;
         let yieldedMeaningfulContent = false;
@@ -159,7 +155,6 @@ export async function* streamChat(
                   id: fallbackId,
                   name: typeof tcFn?.name === 'string' ? tcFn.name.trim() : '',
                   args: '',
-                  invalid: false,
                 });
               }
               const buf = toolCallBuffers.get(idx)!;
@@ -168,7 +163,6 @@ export async function* streamChat(
               if (Object.prototype.hasOwnProperty.call(tcFn ?? {}, 'arguments')) {
                 const incoming = normalizeToolArgumentFragment(tcFn?.arguments);
                 if (incoming) buf.args = mergeToolCallArgumentDelta(buf.args, incoming);
-                else buf.invalid = true;
               }
             }
           }
@@ -204,9 +198,9 @@ export async function* streamChat(
 
           const completeToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
           for (const buf of toolCallBuffers.values()) {
-            if (!buf.id || !buf.name || buf.invalid) continue;
-            const args = normalizeToolCallArguments(buf.args || undefined);
-            if (args) completeToolCalls.push({ id: buf.id, name: buf.name, arguments: args });
+            if (buf.id && buf.name) {
+              completeToolCalls.push({ id: buf.id, name: buf.name, arguments: buf.args || '{}' });
+            }
           }
           const visibleToolCalls = finishReason === 'length' ? [] : completeToolCalls;
           const currentCallsStr = JSON.stringify(completeToolCalls);
@@ -229,9 +223,9 @@ export async function* streamChat(
         if (!yieldedMeaningfulContent) {
           const completeToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
           for (const buf of toolCallBuffers.values()) {
-            if (!buf.id || !buf.name || buf.invalid) continue;
-            const args = normalizeToolCallArguments(buf.args || undefined);
-            if (args) completeToolCalls.push({ id: buf.id, name: buf.name, arguments: args });
+            if (buf.id && buf.name) {
+              completeToolCalls.push({ id: buf.id, name: buf.name, arguments: buf.args || '{}' });
+            }
           }
           if (finishReason !== 'length' && completeToolCalls.length > 0) {
             yield {
