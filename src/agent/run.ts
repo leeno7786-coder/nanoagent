@@ -15,7 +15,7 @@ import {
 import { parseXmlToolCalls } from '../llm/tool-call-parser.js';
 import { isContextOverflowError } from '../llm/overflow.js';
 import { maybePromoteProseQuestion } from '../tools/question-prose.js';
-import { syncContextManagerMessages } from '../agent-messages.js';
+import { addToolMessage, syncContextManagerMessages } from '../agent-messages.js';
 
 const DEFAULT_MAX_REASONING_ONLY = 5;
 /** Small models rarely recover from reasoning-only turns — stop them sooner. */
@@ -41,6 +41,21 @@ const EARLY_STOP_MAX_CONTINUES = 2;
  * ceiling instead.
  */
 const REASONING_ONLY_OUTPUT_CAP_CEILING = 32768;
+const MAX_REVIEW_READ_ONLY_ROUNDS = 6;
+const REVIEW_READ_ONLY_TOOLS = new Set([
+  'read_file',
+  'batch_read_files',
+  'list_dir',
+  'map_project_tree',
+  'find_files',
+  'stat_path',
+  'grep_search',
+  'search_and_view',
+  'search_files',
+  'git_status',
+  'git_diff',
+  'explore_subagent',
+]);
 
 /** Remove or trim tool calls that did not receive a result before a run stops. */
 function reconcileAssistantToolCalls(agent: AgentCore, assistantMsg: Message): void {
@@ -331,6 +346,8 @@ export async function agentRun(
 
   let iterationCount = 0;
   let toolRoundCount = 0;
+  let reviewReadOnlyRounds = 0;
+  let reviewReadBudgetExhausted = false;
   let reasoningOnlyStreak = 0;
   let reasoningOnlyTotal = 0;
   /** Raised only for requests in this user turn; never mutates cfg.maxTokens. */
@@ -1127,6 +1144,36 @@ export async function agentRun(
     }
 
     const tcs = assistantMsg.toolCalls || [];
+
+    const readOnlyReviewRound =
+      isOpenEndedInspectionTask &&
+      tcs.length > 0 &&
+      tcs.every((toolCall) => REVIEW_READ_ONLY_TOOLS.has(toolCall.name));
+    if (readOnlyReviewRound) {
+      if (reviewReadBudgetExhausted || reviewReadOnlyRounds >= MAX_REVIEW_READ_ONLY_ROUNDS) {
+        const budgetError = JSON.stringify({
+          ok: false,
+          error:
+            'Review read budget reached. Use the repository context already gathered and write the findings now; do not request more files unless a specific missing fact blocks a finding.',
+        });
+        for (const toolCall of tcs) addToolMessage(agent, budgetError, toolCall.id);
+        reviewReadBudgetExhausted = true;
+        agent.addRecoveryNotice(
+          'Read-only review budget reached — asking the model to synthesize findings from the gathered context.'
+        );
+        agent.addNudgeMessage(
+          'Synthesize the codebase review now from the context already gathered. Do not call more read or discovery tools unless one specific missing fact is essential.'
+        );
+        agent.setState('thinking');
+        agent.onUpdate?.();
+        await new Promise((r) => setTimeout(r, 0));
+        continue;
+      }
+      reviewReadOnlyRounds++;
+    } else if (tcs.length > 0) {
+      reviewReadOnlyRounds = 0;
+      reviewReadBudgetExhausted = false;
+    }
 
     if (tcs.length > 0 && Number.isFinite(maxIter) && toolRoundCount >= maxIter) {
       agent.addNoticeMessage(

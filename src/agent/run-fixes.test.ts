@@ -265,6 +265,33 @@ describe('run-loop review fixes', () => {
     expect(agent.messages.at(-1)?.content).toContain('Findings');
   }, 20000);
 
+  it('stops an unbounded read-only review after the read budget', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    for (let i = 0; i < 8; i++) {
+      scripted.push([
+        {
+          toolCalls: [
+            {
+              id: `read-${i}`,
+              name: 'read_file',
+              arguments: JSON.stringify({ path: `missing-${i}.py` }),
+            },
+          ],
+        },
+      ]);
+    }
+    scripted.push([{ content: '## Findings\nSynthesis completed.' }]);
+
+    await agent.run('review the codebase');
+
+    expect(
+      agent.messages.some((message) => message.content.includes('Review read budget reached'))
+    ).toBe(true);
+    expect(agent.messages.at(-1)?.content).toContain('Findings');
+  }, 20000);
+
   it('stops an alternating git_status/git_diff review loop that never writes findings', async () => {
     const agent = newAgent();
     await agent.init();

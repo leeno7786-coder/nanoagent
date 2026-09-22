@@ -73,6 +73,7 @@ export function buildLargeModelPrompt(ctx: PromptContext, _cfg?: Config): string
     '',
     '## Review / audit output',
     '- After git status/diff and reading the files you need, write the report. Repeating git_status, git_diff, or the same read is not progress — a full result is not an excerpt.',
+    '- Review read budget: inspect a representative set of high-risk files, not every file in the tree. After a few read-only rounds, stop discovering and synthesize concrete findings.',
     '- Synthesize findings into a short report: Critical → High → Medium → Low',
     '- Each finding: file path, issue, suggested fix',
     '- Skip noise',

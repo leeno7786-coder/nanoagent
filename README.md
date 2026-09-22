@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.13** (`@omega3_0/nanoagent`) — this patch restores v2.7.7-compatible streamed tool-call handling when gateways emit empty or null argument fragments, preventing tool calls from disappearing during code reviews.
+Current release: **2.7.14** (`@omega3_0/nanoagent`) — this patch bounds read-only review exploration so models synthesize findings instead of exhausting a run by reading the entire tree.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
