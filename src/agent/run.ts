@@ -97,6 +97,8 @@ export async function agentRun(
   // Per-turn state. Declared up front so the user-message reset path can
   // clear them safely before the first loop iteration.
   let earlyStopContinues = 0;
+  const isOpenEndedInspectionTask =
+    /\b(?:review|audit|codebase|repository|repo|inspect|explore|investigate)\b/i.test(userText);
 
   const maxReasoningOnly =
     agent.cfg.maxReasoningOnlyRounds !== undefined
@@ -380,7 +382,7 @@ export async function agentRun(
 
   const tryContinueAfterPrematureCheckin = (content: string): boolean => {
     if (earlyStopContinues >= EARLY_STOP_MAX_CONTINUES) return false;
-    if (agent.consecutiveToolRounds <= 0) return false;
+    if (agent.consecutiveToolRounds <= 0 && !isOpenEndedInspectionTask) return false;
     if (agent.consecutiveToolRounds > EARLY_STOP_MAX_TOOL_ROUNDS) return false;
     if (!looksLikePrematureCheckin(content)) return false;
     earlyStopContinues++;

@@ -15,6 +15,8 @@ const CHECKIN_PATTERNS: RegExp[] = [
   /\bwhat (would you|do you) (like|want|prefer)\b/i,
   /\bshall i\b/i,
   /\bshould i (focus|start|look|review|check)\b/i,
+  /\b(?:i['’]?ll|i will)\s+(?:start|begin|first|now|establish|check|inspect|review|look)\b/i,
+  /\b(?:then|next)\s+(?:inspect|read|review|check|run|report)\b/i,
 ];
 
 /** User-role nudge injected into history (hidden in the TUI via nudge- id). */

@@ -240,6 +240,31 @@ describe('run-loop review fixes', () => {
     expect(agent.state).toBe('idle');
   }, 20000);
 
+  it('nudges a plan-only review response into repository inspection', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    scripted.push([
+      {
+        content:
+          "I'll establish the repository state, then inspect the changed files before reporting findings.",
+      },
+    ]);
+    scripted.push([{ toolCalls: [{ id: 'plan-gs', name: 'git_status', arguments: '{}' }] }]);
+    scripted.push([{ content: '## Findings\nThe repository was inspected.' }]);
+
+    await agent.run('review the codebase');
+
+    expect(sentMessages.length).toBe(3);
+    expect(
+      (sentMessages[1] as Array<{ role: string; content?: string }>).some((message) =>
+        message.content?.includes('Continue the task now')
+      )
+    ).toBe(true);
+    expect(agent.messages.some((message) => message.toolCallId === 'plan-gs')).toBe(true);
+    expect(agent.messages.at(-1)?.content).toContain('Findings');
+  }, 20000);
+
   it('stops an alternating git_status/git_diff review loop that never writes findings', async () => {
     const agent = newAgent();
     await agent.init();

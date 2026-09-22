@@ -14,6 +14,14 @@ describe('looksLikePrematureCheckin', () => {
     ).toBe(true);
   });
 
+  it('detects a plan-only preamble before repository inspection', () => {
+    expect(
+      looksLikePrematureCheckin(
+        "I'll establish the repository state, then inspect the changed files before reporting findings."
+      )
+    ).toBe(true);
+  });
+
   it('does not flag a finished short answer', () => {
     expect(looksLikePrematureCheckin('Done. Updated the README install section.')).toBe(false);
   });

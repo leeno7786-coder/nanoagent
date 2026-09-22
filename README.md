@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.10** (`@omega3_0/nanoagent`) — this patch restores compatibility with message-shaped OpenAI-compatible streaming chunks so supported gateways do not produce empty turns. The release line also hardens project trust boundaries, agent lifecycle recovery, snapshots, packaging, and the Windows release path.
+Current release: **2.7.11** (`@omega3_0/nanoagent`) — this patch continues open-ended review and audit requests after a model emits only a planning preamble, ensuring repository inspection actually begins. It also restores compatibility with message-shaped OpenAI-compatible streaming chunks.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
