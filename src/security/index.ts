@@ -49,7 +49,21 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
   sanitizeOutput: true,
   permissionMode: 'ask',
   permissionRules: {},
-  blockedCommands: [],
+  blockedCommands: [
+    /(?:^|[;&|])\s*(?:sudo\s+)?rm\s+-rf\s+(?:\/|~(?:\/|$))/i,
+    /(?:^|[;&|])\s*(?:sudo\s+)?mkfs(?:\.[a-z0-9_-]+)?(?:\s|$)/i,
+    /(?:^|[;&|])\s*(?:sudo\s+)?dd\s+if=\/dev\//i,
+    /(?:^|[;&|])\s*(?:sudo\s+)?kill\s+-9\s+1\b/i,
+    /:\(\)\s*\{\s*:\|:\s*&\s*\};:/,
+    /\b(?:curl|wget)\b[^\r\n|]*\|\s*(?:sh|bash|zsh)(?:\.exe)?\b/i,
+    /(?:^|[;&|])\s*[^;\r\n|]+\|\s*(?:sh|bash|zsh)(?:\.exe)?\b/i,
+    /\b(?:powershell|pwsh)\b[^\r\n;]*\s-(?:enc|encodedcommand)\b/i,
+    /\b(?:invoke-expression|iex)\b/i,
+    /\bcipher(?:\.exe)?\s+\/w\b/i,
+    /\bvssadmin(?:\.exe)?\s+delete\s+shadows\b/i,
+    /\bformat(?:\.com)?\s+[a-z]:/i,
+    /\bbcdedit(?:\.exe)?\s+\/delete\b/i,
+  ],
   allowedCommands: new Set([]),
   allowedPaths: [],
   blockedPaths: [
@@ -138,17 +152,23 @@ export class SecurityManager {
 
     // Check against custom blocked commands
     for (const pattern of this.config.blockedCommands) {
+      pattern.lastIndex = 0;
       if (pattern.test(trimmed)) {
+        pattern.lastIndex = 0;
         return { ok: false, error: `Command blocked: matches custom blocked pattern` };
       }
+      pattern.lastIndex = 0;
     }
 
-    // Check against custom allowed commands if specified
+    // Check against custom allowed commands if specified. Shell operators
+    // are never part of an allowed prefix: otherwise `git status; <command>`
+    // would pass a `git status` allow rule and reach the shell unchanged.
     if (this.config.allowedCommands.size > 0) {
       const isAllowed = Array.from(this.config.allowedCommands).some(
         (allowed) =>
-          trimmed.toLowerCase() === allowed.toLowerCase() ||
-          trimmed.toLowerCase().startsWith(allowed.toLowerCase() + ' ')
+          (trimmed.toLowerCase() === allowed.toLowerCase() ||
+            trimmed.toLowerCase().startsWith(allowed.toLowerCase() + ' ')) &&
+          !/[;&|<>`$()\r\n]/.test(trimmed.slice(allowed.length))
       );
       if (!isAllowed) {
         return { ok: false, error: `Command not in allowed list` };
@@ -197,8 +217,47 @@ export class SecurityManager {
     // Convert to unix slashes for glob matching
     relPath = relPath.replace(/\\/g, '/');
 
-    // Check against allowed paths first (if any are specified)
-    // Allowed paths take precedence over blocked paths
+    // Secrets, VCS metadata, and NanoAgent's own harness are immutable blocks.
+    // An allowlist must not let a model opt back into those paths.
+    for (const pattern of this.config.blockedPaths) {
+      if (
+        (pattern.includes('.env') ||
+          pattern.includes('.git') ||
+          pattern.includes('.nanoagent') ||
+          pattern.includes('secrets') ||
+          pattern.includes('credentials') ||
+          pattern.includes('.ssh') ||
+          pattern.includes('.pem') ||
+          pattern.includes('.key') ||
+          pattern.includes('.crt') ||
+          pattern.includes('.cer') ||
+          pattern.includes('.p12') ||
+          pattern.includes('.pfx') ||
+          pattern.includes('id_rsa') ||
+          pattern.includes('id_ed25519') ||
+          pattern.includes('id_ecdsa') ||
+          pattern.includes('known_hosts') ||
+          pattern.includes('authorized_keys') ||
+          pattern.includes('shadow') ||
+          pattern.includes('passwd') ||
+          pattern.includes('sudoers') ||
+          pattern.includes('hosts') ||
+          pattern.includes('resolv.conf')) &&
+        this.pathMatchesPattern(relPath, pattern)
+      ) {
+        if (pattern.includes('.nanoagent')) {
+          return {
+            ok: false,
+            error:
+              "Access denied: `.nanoagent/` is this NanoAgent workspace's own harness state (sessions, worktree copies, snapshots) — not an outside project folder. Stay in the workspace root. Use /changes, /sessions, /rollback.",
+          };
+        }
+        return { ok: false, error: `Access denied: path matches blocked pattern (${pattern})` };
+      }
+    }
+
+    // Check against allowed paths next. Non-sensitive custom blocked paths can
+    // still be intentionally overridden by an explicit allowlist.
     let isExplicitlyAllowed = false;
     if (this.config.allowedPaths.length > 0) {
       isExplicitlyAllowed = this.config.allowedPaths.some((pattern) =>
@@ -209,7 +268,7 @@ export class SecurityManager {
       }
     }
 
-    // Check against blocked paths (unless explicitly allowed)
+    // Check against remaining blocked paths (unless explicitly allowed)
     if (!isExplicitlyAllowed) {
       for (const pattern of this.config.blockedPaths) {
         if (this.pathMatchesPattern(relPath, pattern)) {
@@ -405,6 +464,17 @@ export class SecurityManager {
     sanitized = sanitized.replace(/api[_-]?key[=:]\s*[^\s]+/gi, 'api_key=[REDACTED]');
     sanitized = sanitized.replace(/auth[=:]\s*[^\s]+/gi, 'auth=[REDACTED]');
 
+    // Credentials embedded in DATABASE_URL/REDIS_URL-style values do not
+    // contain the literal word "password" and must be handled separately.
+    sanitized = sanitized.replace(
+      /([a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:)[^/\s@]+(@)/gi,
+      '$1[REDACTED]$2'
+    );
+    sanitized = sanitized.replace(
+      /((?:password|passwd|secret|token|api[_-]?key)\s*=\s*)[^&\s]+/gi,
+      '$1[REDACTED]'
+    );
+
     // Private keys
     sanitized = sanitized.replace(
       /-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----.*-----END\s+(?:RSA\s+)?PRIVATE\s+KEY-----/gs,
@@ -414,12 +484,10 @@ export class SecurityManager {
 
     // AWS credentials
     sanitized = sanitized.replace(/AKIA[0-9A-Z]{16}/g, '[AWS_ACCESS_KEY_REDACTED]');
-    sanitized = sanitized.replace(/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z0-9/+]{40}/g, (match) => {
-      if (!/^[0-9a-f]{40}$/i.test(match)) {
-        return '[POSSIBLE_SECRET_REDACTED]';
-      }
-      return match;
-    });
+    sanitized = sanitized.replace(
+      /((?:aws[_-]?(?:secret|access)[_-]?key|secret[_-]?access[_-]?key)\s*[=:]\s*)[a-zA-Z0-9/+]{40}/gi,
+      '$1[AWS_SECRET_REDACTED]'
+    );
 
     // File paths that might contain secrets — only match standalone .env paths
     sanitized = sanitized.replace(/\.env(?:\.\w+)?(?=\s|$|"|')/g, '.env[REDACTED]');
@@ -449,7 +517,19 @@ export class SecurityManager {
    * Update security configuration.
    */
   updateConfig(config: Partial<SecurityConfig>): void {
-    this.config = { ...this.config, ...config };
+    this.config = {
+      ...this.config,
+      ...Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined)),
+    } as SecurityConfig;
+    if (config.permissionMode !== undefined) {
+      this.permissionManager.setMode(config.permissionMode);
+    }
+    if (Object.prototype.hasOwnProperty.call(config, 'permissionRules')) {
+      this.permissionManager.clearRules();
+      for (const [target, level] of Object.entries(config.permissionRules ?? {})) {
+        this.permissionManager.setRule(target, level);
+      }
+    }
   }
 
   /**

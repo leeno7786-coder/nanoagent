@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.7** (`@omega3_0/nanoagent`) — the `/connect` provider picker now includes Lemonade Server as a local OpenAI-compatible runtime. 2.7.6 still covers the `question` tool TUI picker for ambiguous requests.
+Current release: **2.7.8** (`@omega3_0/nanoagent`) — this release hardens project trust boundaries, agent lifecycle recovery, snapshots, packaging, and the Windows release path. The `/connect` provider picker includes Lemonade Server as a local OpenAI-compatible runtime, and the `question` tool TUI picker handles ambiguous requests.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -31,8 +31,8 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 
 ## Key features
 
-- **Single install root** — every file the agent owns lives under `NANOAGENT_ROOT` (`config/`, `skills/`, `tools/`, `sessions/`, `workspace/`, `logs/`). One source of truth, no homedir/cwd/legacy fallback search.
-- **One boot script** — `nanoagent` / `nanogent` / `nano-agent` all dispatch `scripts/run-nanoagent.mjs`. That script creates the layout, sets `NANOAGENT_ROOT`, and chdirs the child. Nothing else boots the agent.
+- **Single install state root** — install-global files live under `NANOAGENT_ROOT` (`config/`, `skills/`, `tools/`, `sessions/`, `workspace/`, `logs/`). Project sessions and rollback history live under the selected workspace's `.nanoagent/` directory. One source of truth, no homedir/cwd/legacy fallback search.
+- **One boot script** — `nanoagent` / `nanogent` / `nano-agent` all dispatch `scripts/run-nanoagent.mjs`. That script resolves the package separately from writable state, creates the state layout, sets `NANOAGENT_ROOT`, and chdirs the child. Nothing else boots the agent.
 - **Launch from anywhere** — `nanoagent`, `nanogent`, `nano-agent`, or `npx @omega3_0/nanoagent`
 - **Tiny-model first** — compact prompts, context auto-compact (default 80% of the live window), and small-model tool-call resilience
 - **OpenTUI dashboard** — streaming chat, tool diffs, todos, skills overlay, connect overlay, six themes, and a Ctrl+P command palette
@@ -107,7 +107,7 @@ sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanogent
 sudo ln -sfn "$(pwd)/scripts/run-nanoagent.mjs" /usr/local/bin/nanoagent
 ```
 
-`scripts/run-nanoagent.mjs` is the **only** entry point. In a source checkout it runs `src/main.ts` via bun (same path as `bun run start`); packaged `.deb` / Windows zip / npm installs have no `src/` and use compiled `dist/main.js`. Either way the launcher creates the canonical layout under `NANOAGENT_ROOT` on first run.
+`scripts/run-nanoagent.mjs` is the **only** entry point. In a source checkout it runs `src/main.ts` via bun (same path as `bun run start`); packaged `.deb` / Windows zip / npm installs have no `src/` and use compiled `dist/main.js` from the package directory. The launcher creates the canonical layout under the writable `NANOAGENT_ROOT` on first run. If the installed package directory is read-only, it uses a writable per-user state directory; set `NANOAGENT_ROOT` to override state without changing where the package entry is found.
 
 ### Release automation
 
@@ -137,16 +137,16 @@ nanoagent a1b2c3d4                # same — a 4–16 hex token is treated as a 
 The launcher prints the resolved layout on first run, something like:
 
 ```text
-NanoAgent root : /home/user/.local/share/nanoagent
-config/         : /home/user/.local/share/nanoagent/config
-skills/         : /home/user/.local/share/nanoagent/skills
-tools/          : /home/user/.local/share/nanoagent/tools
-sessions/       : /home/user/.local/share/nanoagent/sessions
-workspace/      : /home/user/.local/share/nanoagent/workspace
-logs/           : /home/user/.local/share/nanoagent/logs
+NanoAgent root : /home/user/.local/state/nanoagent
+config/         : /home/user/.local/state/nanoagent/config
+skills/         : /home/user/.local/state/nanoagent/skills
+tools/          : /home/user/.local/state/nanoagent/tools
+sessions/       : /home/user/.local/state/nanoagent/sessions
+workspace/      : /home/user/.local/state/nanoagent/workspace
+logs/           : /home/user/.local/state/nanoagent/logs
 ```
 
-Set `NANOAGENT_ROOT` before invoking to point at a different install location (portable, vendored, per-project). There is no other path-resolution knob.
+Set `NANOAGENT_ROOT` before invoking to point at a different writable state location (portable, vendored, per-project). The launcher still resolves the package and `dist/main.js` beside the boot script. There is no other path-resolution knob.
 
 ### CLI commands
 
@@ -181,6 +181,8 @@ Cloud providers include OpenAI, OpenRouter, Azure AI Foundry (per-resource URL),
 
 The global config lives at exactly one path: `$NANOAGENT_ROOT/config/nanogent.json`. There is no other global config location — not `~/.nanogent.json`, not `~/.nanoagent.json`, not `~/.nanogent/config.json`, not `~/.qwen-agent.json`. Project overrides live at `<workspace>/nanogent.json` and are only consulted when `--workspace` is passed explicitly (the workspace defaults to `$NANOAGENT_ROOT/workspace`, which is intentionally separate from the harness so the canonical root stays clean).
 
+Project config files are untrusted. They may provide ordinary model/runtime preferences, but cannot change the workspace, endpoint or key, permissions, security settings, system prompt, profiles, failovers, sub-agent pool, MCP trust metadata, or MCP auto-connect policy. Put those settings in the canonical state-root config or pass an explicit trusted config path.
+
 ```json
 {
   "model": "Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
@@ -192,6 +194,7 @@ The global config lives at exactly one path: `$NANOAGENT_ROOT/config/nanogent.js
   "maxConcurrentLlmRequests": 2,
   "maxTokensPerMinute": 200000,
   "maxToolResultTokens": 8000,
+  "maxToolCallArgumentTokens": 4000,
   "effort": "low",
   "profiles": {
     "local": {
@@ -425,7 +428,7 @@ Full details: [SECURITY.md](SECURITY.md). These guards are still evolving with t
 
 ```text
 scripts/
-└── run-nanoagent.mjs   # The single boot script (resolves NANOAGENT_ROOT, creates the layout, sets env, chdirs, spawns bun or node)
+└── run-nanoagent.mjs   # The single boot script (resolves package/state roots, creates the layout, sets env, chdirs, spawns bun or node)
 
 src/
 ├── main.ts              # Entry point (requires NANOAGENT_ROOT, fails fast otherwise)
@@ -461,7 +464,7 @@ src/
 └── *.test.ts            # Colocated bun:test files
 ```
 
-`NANOAGENT_ROOT` resolved at startup (no fallback chain):
+`NANOAGENT_ROOT` is the writable install-global state root resolved at startup (no fallback chain):
 
 ```text
 NANOAGENT_ROOT/

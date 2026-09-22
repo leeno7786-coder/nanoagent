@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import { chat } from '../llm/chat.js';
 import type { ChatMessage } from '../llm/types.js';
+import { countTokens } from '../llm/utils.js';
 import type { Config } from '../types.js';
 
 /** Spend this fraction of the loaded window on the compact-summary completion. */
@@ -18,6 +19,59 @@ export function compactOutputBudget(windowTokens: number, usedTokens: number): n
   return Math.min(remaining, share);
 }
 
+function estimateHistoryTokens(history: ChatMessage[], modelId: string): number {
+  return countTokens(JSON.stringify(history), modelId);
+}
+
+/** Keep the compaction request itself inside the provider context window. */
+export function boundCompactionHistory(
+  history: ChatMessage[],
+  cfg: Config,
+  maxOutputTokens: number
+): ChatMessage[] {
+  const contextWindow = cfg.modelContextLength ?? cfg.modelMaxContextLength ?? 128_000;
+  const inputBudget = Math.max(256, contextWindow - maxOutputTokens - 256);
+  const prompt: ChatMessage = { role: 'user', content: COMPACT_HANDOFF_PROMPT };
+  if (estimateHistoryTokens([...history, prompt], cfg.model) <= inputBudget) return history;
+
+  const system = history.filter((message) => message.role === 'system');
+  const firstUser = history.find((message) => message.role === 'user');
+  const groups: ChatMessage[][] = [];
+  const start = firstUser ? history.indexOf(firstUser) + 1 : 0;
+  for (let i = start; i < history.length; i++) {
+    const message = history[i]!;
+    if (message.role === 'assistant' && message.tool_calls?.length) {
+      const group = [message];
+      const ids = new Set(message.tool_calls.map((call) => call.id));
+      let next = i + 1;
+      while (
+        next < history.length &&
+        history[next]!.role === 'tool' &&
+        history[next]!.tool_call_id &&
+        ids.has(history[next]!.tool_call_id as string)
+      ) {
+        group.push(history[next]!);
+        next++;
+      }
+      groups.push(group);
+      i = next - 1;
+    } else {
+      groups.push([message]);
+    }
+  }
+
+  const keptGroups = [...groups];
+  const prefix = [...system, ...(firstUser ? [firstUser] : [])];
+  while (
+    keptGroups.length > 0 &&
+    estimateHistoryTokens([...prefix, ...keptGroups.flat(), prompt], cfg.model) > inputBudget
+  ) {
+    keptGroups.shift();
+  }
+
+  return [...prefix, ...keptGroups.flat()];
+}
+
 export async function llmCompactSummary(opts: {
   client: OpenAI;
   cfg: Config;
@@ -28,10 +82,11 @@ export async function llmCompactSummary(opts: {
   if (opts.cfg.contextCompactLlm === false) return {};
   if (!(opts.maxOutputTokens > 0)) return {};
   try {
+    const boundedHistory = boundCompactionHistory(opts.history, opts.cfg, opts.maxOutputTokens);
     const response = await chat(
       opts.client,
       opts.cfg,
-      [...opts.history, { role: 'user', content: COMPACT_HANDOFF_PROMPT }],
+      [...boundedHistory, { role: 'user', content: COMPACT_HANDOFF_PROMPT }],
       undefined,
       opts.signal,
       { enableThinking: false, maxTokens: opts.maxOutputTokens }

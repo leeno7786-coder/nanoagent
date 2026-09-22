@@ -1,5 +1,6 @@
 import { sleepWithSignal, extractApiMessage, isLocalProvider, countTokens } from './utils.js';
 import type { ChatMessage } from './types.js';
+import { providerErrorDetails } from './types.js';
 
 const endpointRateLimitedUntil = new Map<string, number>();
 
@@ -68,9 +69,9 @@ export async function awaitEndpointRateLimit(
     if (!until) return;
     const remaining = until - Date.now();
     if (remaining <= 0) return;
-    if (signal?.aborted) return;
+    if (signal?.aborted) throw new Error('Aborted');
     await sleepWithSignal(Math.min(remaining, 60000), signal);
-    if (signal?.aborted) return;
+    if (signal?.aborted) throw new Error('Aborted');
   }
 }
 
@@ -94,6 +95,7 @@ interface InFlightState {
 }
 
 const endpointInFlight = new Map<string, InFlightState>();
+const MAX_IN_FLIGHT_WAITERS = 256;
 
 interface TpmBucket {
   tokens: number;
@@ -165,17 +167,25 @@ function getOrCreateBucket(key: string, rpm: number): TokenBucket {
 
 async function awaitRateLimitToken(
   baseURL: string | undefined,
-  rpm: number,
+  rpm: number | undefined,
   signal?: AbortSignal
 ): Promise<void> {
   const key = getEndpointKey(baseURL);
   if (!key) return;
 
   const existing = endpointTokenBuckets.get(key);
-  const paceRpm = existing && existing.effectiveRpm > 0 ? existing.effectiveRpm : rpm;
+  if (rpm === 0) {
+    if (existing) applyRpmToBucket(existing, 0, 0);
+    return;
+  }
+  const paceRpm = existing && existing.effectiveRpm > 0 ? existing.effectiveRpm : (rpm ?? 0);
   if (paceRpm <= 0 && (!existing || existing.effectiveRpm <= 0)) return;
+  if (signal?.aborted) throw new Error('Aborted');
 
-  const bucket = getOrCreateBucket(key, rpm > 0 ? rpm : (existing?.configuredRpm ?? 0));
+  const bucket =
+    rpm === undefined
+      ? existing!
+      : getOrCreateBucket(key, rpm > 0 ? rpm : (existing?.configuredRpm ?? 0));
   if (bucket.effectiveRpm <= 0) return;
 
   while (true) {
@@ -207,12 +217,13 @@ async function acquireInFlightSlot(
   if (maxInFlight <= 0) return;
   const key = getEndpointKey(baseURL);
   if (!key) return;
+  if (signal?.aborted) throw new Error('Aborted');
 
   const state = getInFlight(key);
   state.max = maxInFlight;
 
   while (state.current >= state.max) {
-    if (signal?.aborted) return;
+    if (signal?.aborted) throw new Error('Aborted');
     await new Promise<void>((resolve, reject) => {
       const waiter = { fired: false, wake: () => {} };
       const onAbort = () => {
@@ -228,15 +239,16 @@ async function acquireInFlightSlot(
         signal?.removeEventListener('abort', onAbort);
         resolve();
       };
-      state.waiters.push(waiter);
-      // M7: cap waiter list to prevent unbounded memory growth under flood.
-      if (state.waiters.length > 100) {
-        state.waiters = state.waiters.slice(-100);
+      if (state.waiters.length >= MAX_IN_FLIGHT_WAITERS) {
+        reject(new Error('LLM endpoint in-flight queue is full; reduce concurrency and retry.'));
+        return;
       }
+      state.waiters.push(waiter);
       if (signal) {
         signal.addEventListener('abort', onAbort, { once: true });
       }
     });
+    if (signal?.aborted) throw new Error('Aborted');
   }
 
   state.current++;
@@ -336,7 +348,7 @@ async function awaitTpmTokens(
   if (bucket.effectiveTpm <= 0) return;
 
   while (true) {
-    if (signal?.aborted) return;
+    if (signal?.aborted) throw new Error('Aborted');
     const now = Date.now();
     refillTpmBucket(bucket, now);
     const cap = bucket.effectiveTpm;
@@ -461,11 +473,12 @@ export async function awaitEndpointTurn(
   opts: EndpointTurnOpts = {},
   signal?: AbortSignal
 ): Promise<void> {
+  if (signal?.aborted) throw new Error('Aborted');
   await awaitEndpointRateLimit(baseURL, signal);
   if (!baseURL || isLocalProvider(baseURL)) {
     return;
   }
-  await awaitRateLimitToken(baseURL, opts.maxRequestsPerMinute ?? 0, signal);
+  await awaitRateLimitToken(baseURL, opts.maxRequestsPerMinute, signal);
 
   // Sub-agent share: the reservation is divided by `subAgentClaimRatio`
   // (e.g. 4 parallel sub-agents each claiming 1/4 of the parent's estimate
@@ -638,18 +651,58 @@ const NON_RETRIABLE_ERRORS = [
 function isRetriable(err?: unknown): boolean {
   if (!err) return true;
   const e = err as Record<string, unknown>;
-  const msg = (
-    (e.message as string) ||
-    (e.code as string) ||
-    (e.type as string) ||
-    ''
-  ).toLowerCase();
+  const msg = [
+    e.message,
+    e.code,
+    e.type,
+    providerErrorDetails(err).providerMessage,
+    extractApiMessage(err),
+  ]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase();
   return !NON_RETRIABLE_ERRORS.some((kw) => msg.includes(kw));
+}
+
+/**
+ * HTTP clients report transport failures with status 0 (or no status at all).
+ * Only retry recognizable network/timeout failures; an arbitrary status-0
+ * error must not turn into an unbounded retry of a malformed request.
+ */
+function isRecognizedTransportError(err?: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as Record<string, unknown>;
+  const code = String(e.code ?? e.errno ?? '').toUpperCase();
+  if (
+    /^(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|ECONNABORTED|EPIPE|ENETUNREACH|EHOSTUNREACH|ENOTFOUND|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/.test(
+      code
+    )
+  ) {
+    return true;
+  }
+
+  const name = String(e.name ?? '').toLowerCase();
+  const message = [
+    e.message,
+    e.code,
+    e.errno,
+    providerErrorDetails(err).providerMessage,
+    extractApiMessage(err),
+  ]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase();
+
+  if (name === 'timeouterror' || name === 'connecterror') return true;
+  return /(?:timed?\s*out|timeout|network\s+error|fetch\s+failed|socket\s+hang\s+up|\b(?:econnreset|econnrefused|econnaborted|etimedout|enetunreach|ehostunreach|enotfound)\b|connection\s+(?:reset|refused|aborted|closed|failed|error)|connect(?:ion)?\s+(?:reset|refused|failed|error))/.test(
+    message
+  );
 }
 
 function shouldRetry(status?: number, attempt?: number, err?: unknown): boolean {
   if (!isRetriable(err)) return false;
   if (status === undefined) return true;
+  if (status === 0) return isRecognizedTransportError(err);
   if (status === 429) return true;
   if (status === 502 || status === 503 || status === 504 || status === 529) return true;
   if (status === 400 && attempt !== undefined && attempt < 3) return true;

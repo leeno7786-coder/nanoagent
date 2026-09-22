@@ -25,6 +25,16 @@ function porcelainPath(line: string): string {
   return (parts[parts.length - 1] || '').replace(/\\/g, '/');
 }
 
+function isVisibleGitPath(path: string, ws: string, cfg?: Config): boolean {
+  const normalized = path.replace(/\\/g, '/');
+  if (!normalized || isNanoagentRel(normalized)) return false;
+  try {
+    return !isAccessBlocked(safe(normalized, ws, cfg), cfg);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Run a git command directly (bypasses PowerShell translation for speed on Windows).
  * Sets GIT_OPTIONAL_LOCKS=0 to avoid lock contention during read-only operations.
@@ -118,7 +128,36 @@ export const gitDiffTool: Tool = {
     const diffArgs = head.ok
       ? ['--no-optional-locks', 'diff', 'HEAD']
       : ['--no-optional-locks', 'diff'];
-    const diff = await execGit(diffArgs, ws, { timeout: 15000 }, cfg);
+    const changedPaths = await execGit(
+      head.ok
+        ? ['--no-optional-locks', 'diff', 'HEAD', '--name-only', '-z']
+        : ['--no-optional-locks', 'diff', '--name-only', '-z'],
+      ws,
+      { timeout: 10000 },
+      cfg
+    );
+    if (!changedPaths.ok) {
+      return JSON.stringify({
+        ok: false,
+        error: `git diff path scan failed: ${changedPaths.stderr?.substring(0, 200) || 'unknown error'}`,
+      });
+    }
+    const trackedPaths = changedPaths.ok
+      ? changedPaths.stdout.split('\0').filter((p) => p.length > 0)
+      : [];
+    const visiblePaths = trackedPaths.filter((p) => isVisibleGitPath(p, ws, cfg));
+    const omittedTracked = trackedPaths
+      .filter((p) => !isVisibleGitPath(p, ws, cfg))
+      .map((p) => `${p} (blocked)`);
+    const diff =
+      visiblePaths.length > 0
+        ? await execGit(
+            [...diffArgs, '--', ...visiblePaths.map((p) => `:(literal)${p}`)],
+            ws,
+            { timeout: 15000 },
+            cfg
+          )
+        : { ok: true, stdout: '', stderr: '', code: 0 };
     if (!diff.ok) {
       return JSON.stringify({
         ok: false,
@@ -131,7 +170,7 @@ export const gitDiffTool: Tool = {
       .filter(Boolean)
       .join('\n');
     const capped = capUnifiedDiff(combined, MAX_DIFF_CHARS);
-    const omitted = [...untracked.omitted, ...capped.omitted];
+    const omitted = [...omittedTracked, ...untracked.omitted, ...capped.omitted];
     const files = [...new Set([...diffFileNames(capped.diff), ...untracked.files])];
     const truncated = capped.truncated || omitted.length > 0;
     return JSON.stringify({
@@ -227,7 +266,7 @@ export const gitStatusTool: Tool = {
       .split('\n')
       .map((l) => l.trimEnd())
       .filter((l) => l.trim())
-      .filter((l) => !isNanoagentRel(porcelainPath(l)));
+      .filter((l) => isVisibleGitPath(porcelainPath(l), ws, cfg));
     const hasChanges = fileLines.length > 0;
     const MAX_FILES = 80;
     const truncated = fileLines.length > MAX_FILES;
@@ -262,8 +301,34 @@ export const gitCommitTool: Tool = {
       return JSON.stringify({ ok: false, error: 'not a git repository - cannot commit' });
     }
 
+    const status = await execGit(
+      ['--no-optional-locks', 'status', '--porcelain'],
+      ws,
+      { timeout: 10000 },
+      cfg
+    );
+    const blockedPaths = status.ok
+      ? status.stdout
+          .split('\n')
+          .map((line) => porcelainPath(line))
+          .filter((path) => path && !isVisibleGitPath(path, ws, cfg))
+      : [];
+    if (blockedPaths.length > 0) {
+      return JSON.stringify({
+        ok: false,
+        error: `Refusing to commit blocked paths: ${blockedPaths.slice(0, 10).join(', ')}`,
+      });
+    }
+
     // Stage all
-    const add = await execGit(['add', '-A'], ws, { timeout: 15000 }, cfg);
+    // Never stage NanoAgent's own sessions, snapshots, or worktree history,
+    // even if a project contains an explicit unignore rule for .nanoagent.
+    const add = await execGit(
+      ['add', '-A', '--', ':(exclude).nanoagent', ':(exclude).nanoagent/**'],
+      ws,
+      { timeout: 15000 },
+      cfg
+    );
     if (!add.ok) {
       return JSON.stringify({
         ok: false,

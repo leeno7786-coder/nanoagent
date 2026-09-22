@@ -7,6 +7,7 @@ import {
   SKIP_DIRS,
   checkSmallModel,
   isAccessBlocked,
+  isProtectedProjectPath,
   rel,
   safe,
   sandboxErrorMessage,
@@ -77,6 +78,14 @@ export const mapProjectTreeTool: Tool = {
             if (SKIP_DIRS.has(entry.name)) continue;
 
             const fullPath = resolve(currentPath, entry.name);
+            let safePath: string;
+            try {
+              safePath = safe(rel(fullPath, ws), ws, cfg);
+            } catch {
+              continue;
+            }
+            if (isProtectedProjectPath(rel(fullPath, ws))) continue;
+            if (isAccessBlocked(safePath, cfg)) continue;
 
             if (entry.isDirectory()) {
               // Add directory entry

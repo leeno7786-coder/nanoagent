@@ -297,6 +297,19 @@ describe('buildChatCompletionsParams local reasoning', () => {
     expect(body.reasoning_budget_tokens).toBe(512);
   });
 
+  it('omits local thinking extras when reasoningBudget is zero', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'http://127.0.0.1:1234/v1',
+        reasoningBudget: 0,
+      }),
+      messages
+    );
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.reasoning_budget_tokens).toBeUndefined();
+  });
+
   it('lets a per-call options.reasoningBudgetTokens override win over cfg', () => {
     const body = buildChatCompletionsParams(
       cfg({

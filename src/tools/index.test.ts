@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { tools, toOpenAI } from './index.js';
-import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs';
+import { mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { execSync } from 'child_process';
+import { createSecurityManager } from '../security/index.js';
 
 describe('tools', () => {
   const ws = join(tmpdir(), 'qwen-tools-test-' + Date.now());
@@ -329,11 +330,15 @@ describe('tools', () => {
     }
   });
 
-  it('change_workspace returns new directory when valid', () => {
+  it('change_workspace rejects directories outside the active workspace', () => {
     const changeWs = tools.find((t) => t.name === 'change_workspace')!;
     const out = JSON.parse(changeWs.execute({ path: '..' }, ws));
-    expect(out.ok).toBe(true);
-    expect(out.workspace).toBeDefined();
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain('outside the workspace');
+
+    const current = JSON.parse(changeWs.execute({ path: '.' }, ws));
+    expect(current.ok).toBe(true);
+    expect(current.workspace).toBe(ws);
   });
 
   it('change_workspace refuses .nanoagent harness paths', () => {
@@ -343,6 +348,23 @@ describe('tools', () => {
     expect(out.ok).toBe(false);
     expect(out.error).toMatch(/this NanoAgent workspace's own harness state/i);
     expect(out.error).toMatch(/not an outside project folder/i);
+  });
+
+  it('blocks an in-workspace symlink alias to a secret file', () => {
+    try {
+      writeFileSync(join(ws, '.env'), 'DATABASE_URL=postgres://user:secret@host/db', 'utf-8');
+      symlinkSync('.env', join(ws, 'public-config.txt'));
+    } catch {
+      // Windows CI may not grant symlink privileges.
+      return;
+    }
+    const readFile = tools.find((t) => t.name === 'read_file')!;
+    const cfg = { securityManager: createSecurityManager({}, ws) } as Parameters<
+      typeof readFile.execute
+    >[2];
+    const out = JSON.parse(readFile.execute({ path: 'public-config.txt' }, ws, cfg));
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/blocked|Access denied/i);
   });
 
   it('toOpenAI converts tools to OpenAI format', () => {

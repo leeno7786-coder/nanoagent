@@ -115,6 +115,12 @@ function hostMatches(host: string, pattern: string): boolean {
  */
 export function getProviderForBaseURL(baseURL: string): RuntimeProvider | undefined {
   if (!baseURL) return undefined;
+  const normalized = sanitizeBaseURL(baseURL).replace(/\/+$/, '').toLowerCase();
+  const exact = RUNTIME_PROVIDERS.find((provider) => {
+    const catalogURL = getProviderBaseURL(provider).replace(/\/+$/, '').toLowerCase();
+    return catalogURL.length > 0 && catalogURL === normalized;
+  });
+  if (exact) return exact;
   const host = hostnameOf(baseURL);
   if (!host) return undefined;
 

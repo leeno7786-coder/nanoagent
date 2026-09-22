@@ -11,11 +11,11 @@ import {
   switchWorkerToFallback,
   workerFailureToFailoverError,
 } from './failover.js';
-import { SUBAGENT_TOOLS, runWorkerTool } from './tool-runner.js';
+import { SUBAGENT_TOOLS, parseWorkerToolArguments, runWorkerTool } from './tool-runner.js';
 import { scheduler } from './scheduler.js';
 
 const SUBAGENT_SYSTEM_PROMPT = `You are a sub-agent worker assisting the main coding agent.
-You have a curated READ-ONLY tool set: read_file, batch_read_files, list_dir, map_project_tree, find_files, stat_path, grep_search, search_and_view.
+You have a curated READ-ONLY tool set: read_file, batch_read_files, grep_search, search_and_view, search_files.
 
 ## YOUR WORKFLOW
 
@@ -43,6 +43,21 @@ You have a curated READ-ONLY tool set: read_file, batch_read_files, list_dir, ma
 Make it specific. File paths and line numbers are critical.`;
 
 const DEFAULT_TURN_TIMEOUT_MS = 600000;
+
+/** Canonicalize nested argument objects without dropping nested keys. */
+export function canonicalizeToolArguments(value: unknown): string {
+  const visit = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(visit);
+    if (input !== null && typeof input === 'object') {
+      const source = input as Record<string, unknown>;
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(source).sort()) result[key] = visit(source[key]);
+      return result;
+    }
+    return input;
+  };
+  return JSON.stringify(visit(value)) ?? String(value);
+}
 
 /**
  * Per-turn inactivity timeout for worker streams. Resolved per dispatch:
@@ -72,7 +87,9 @@ async function runSingleSubAgent(
   ];
   const toolDefs = toOpenAI(
     tools.filter((t) => SUBAGENT_TOOLS.has(t.name)),
-    wctx.cfg
+    // The worker already applies its own read-only allowlist. Do not let the
+    // main model-size filter remove batch_read_files and grep_search.
+    { ...wctx.cfg, smallModelMode: false }
   );
   let toolCallCount = 0;
   let duplicateStrikes = 0;
@@ -135,6 +152,7 @@ async function runSingleSubAgent(
 
     let accumulatedContent = '';
     let streamedToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+    let streamFinishReason: string | undefined;
 
     const turnController = new AbortController();
     let turnTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
@@ -162,6 +180,9 @@ async function runSingleSubAgent(
         enableThinking: false,
         onRetry: (info) => {
           resetTurnTimer();
+          accumulatedContent = '';
+          streamedToolCalls = [];
+          streamFinishReason = undefined;
           emit({
             type: 'subagent_chunk',
             agent: wctx.endpoint.name,
@@ -173,6 +194,7 @@ async function runSingleSubAgent(
 
       for await (const chunk of stream) {
         resetTurnTimer();
+        if (chunk.finishReason) streamFinishReason = chunk.finishReason;
         if (chunk.content) {
           accumulatedContent += chunk.content;
           emit({
@@ -266,15 +288,23 @@ async function runSingleSubAgent(
       });
     }
 
-    const msg = {
+    // A timeout, transport failure, parent abort, or length finish can leave
+    // only a prefix of a tool call. Never execute that partial invocation.
+    if (streamError || turnTimedOut || signal?.aborted || streamFinishReason === 'length') {
+      streamedToolCalls = [];
+    }
+
+    const msg: ChatMessage = {
       role: 'assistant' as const,
       content: accumulatedContent,
-      tool_calls: streamedToolCalls.map((tc) => ({
+    };
+    if (streamedToolCalls.length > 0) {
+      msg.tool_calls = streamedToolCalls.map((tc) => ({
         id: tc.id,
         type: 'function' as const,
         function: { name: tc.name, arguments: tc.arguments },
-      })),
-    };
+      }));
+    }
     if (msg.tool_calls && msg.tool_calls.length > 0) {
       messages.push({
         role: 'assistant',
@@ -289,17 +319,12 @@ async function runSingleSubAgent(
         msg.tool_calls.map(async (tc, index) => {
           const currentToolCallCount = toolCallCount + index + 1;
           const parsedArgs = tc.function.arguments;
-          let args: Record<string, unknown>;
-          try {
-            args = JSON.parse(String(parsedArgs));
-          } catch {
-            args = {};
-          }
-          const canonicalArgs = JSON.stringify(args, Object.keys(args).sort());
+          const args = parseWorkerToolArguments(parsedArgs);
+          const canonicalArgs = canonicalizeToolArguments(args);
           const sig = `${tc.function.name}:${canonicalArgs}`;
           const filePath = args?.path || args?.file;
 
-          if (toolCallCount >= TOOL_BUDGET) {
+          if (toolCallCount + index >= TOOL_BUDGET) {
             const budgetResult = JSON.stringify({
               ok: false,
               error: `Tool budget exhausted (${TOOL_BUDGET} calls). You MUST output your final report now using only the information you have already gathered.`,
@@ -456,13 +481,35 @@ async function runSingleSubAgent(
         })
       );
 
-      toolCallCount += msg.tool_calls.length;
+      toolCallCount = Math.min(TOOL_BUDGET, toolCallCount + msg.tool_calls.length);
       messages.push(...results);
 
       continue;
     }
 
     const answer = msg.content || '';
+
+    if (turnTimedOut || streamError) {
+      const reason = streamError ?? (signal?.aborted ? 'aborted' : 'turn timed out');
+      emit({
+        type: 'subagent_done',
+        agent: wctx.endpoint.name,
+        model: wctx.cfg.model,
+        ok: false,
+        output: withNotices(`${answer}\n[Incomplete: ${reason}]`.trim()),
+        toolCalls: toolCallCount,
+      });
+      return {
+        name: wctx.endpoint.name,
+        model: wctx.cfg.model,
+        baseURL: wctx.cfg.baseURL,
+        ok: false,
+        output: withNotices(answer),
+        error: reason,
+        durationMs: Math.round(performance.now() - start),
+        toolCalls: toolCallCount,
+      };
+    }
 
     if (!answer) {
       // A worker exists to produce a report — an empty turn is never a
@@ -566,7 +613,13 @@ export async function exploreWithSubAgent(
       toolCalls: 0,
     };
   }
-  const ep = await scheduler.acquire(endpoints, endpointName, 60000, signal);
+  const ep = await scheduler.acquire(
+    endpoints,
+    endpointName,
+    60000,
+    signal,
+    base.maxBackgroundSubAgents ?? 4
+  );
   if (!ep) {
     return {
       name: endpointName || 'pool',
@@ -589,6 +642,6 @@ export async function exploreWithSubAgent(
       wctx.cache.stopAllWatchers();
     }
   } finally {
-    scheduler.release(ep.name);
+    scheduler.release(ep);
   }
 }

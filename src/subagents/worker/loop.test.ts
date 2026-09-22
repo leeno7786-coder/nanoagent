@@ -9,7 +9,7 @@ import { ApiError } from '../../llm/types.js';
 // 'throw': stream errors immediately. 'quiet': stream completes with zero
 // chunks (reasoning-only models / graceful abort unwinds). 'wait-abort':
 // blocks until the signal aborts, then ends quietly without throwing.
-let streamBehavior: 'throw' | 'quiet' | 'wait-abort' = 'throw';
+let streamBehavior: 'throw' | 'quiet' | 'wait-abort' | 'partial-throw' = 'throw';
 let streamThrow: Error = new Error('stream boom');
 let streamOkText = 'worker report';
 /** When set, each streamChat call consumes the next item (then falls back). */
@@ -41,6 +41,14 @@ mock.module('../../llm/index.js', () => ({
         yield { content: streamOkText, reasoningContent: '' };
         return;
       }
+      if (mode === 'partial-throw') {
+        yield {
+          content: '',
+          reasoningContent: '',
+          toolCalls: [{ id: 'partial-call', name: 'read_file', arguments: '{"path":"x"' }],
+        };
+        throw streamThrow;
+      }
       if (streamBehavior === 'wait-abort') {
         await new Promise<void>((res) => {
           if (signal?.aborted) return res();
@@ -53,7 +61,7 @@ mock.module('../../llm/index.js', () => ({
 }));
 
 import type { Config, SubAgentPoolConfig } from '../../types.js';
-import { exploreWithSubAgent } from './loop.js';
+import { canonicalizeToolArguments, exploreWithSubAgent } from './loop.js';
 import type { SubAgentProgressEvent } from '../../tools/index.js';
 
 const base = { workspace: process.cwd() } as unknown as Config;
@@ -120,6 +128,31 @@ describe('exploreWithSubAgent error reporting', () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error).toContain('no remote sub-agent endpoints');
+  });
+
+  it('discards partial tool calls after a stream error', async () => {
+    resetStreamMock();
+    streamBehavior = 'partial-throw';
+    const events: SubAgentProgressEvent[] = [];
+    const result = await exploreWithSubAgent(
+      base,
+      pool,
+      'test-ep',
+      'investigate src/foo.ts',
+      undefined,
+      { onSubAgentProgress: (event) => events.push(event) }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(events.some((event) => event.type === 'subagent_tool')).toBe(false);
+  });
+});
+
+describe('worker argument canonicalization', () => {
+  it('sorts nested object keys without dropping nested values', () => {
+    expect(canonicalizeToolArguments({ z: { b: 2, a: 1 }, a: [{ d: 4, c: 3 }] })).toBe(
+      '{"a":[{"c":3,"d":4}],"z":{"a":1,"b":2}}'
+    );
   });
 });
 

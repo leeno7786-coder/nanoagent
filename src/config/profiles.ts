@@ -63,7 +63,7 @@ export function applyModelProfile(
         `Unknown profile "${name}".` +
         (available.length > 0
           ? `\n  Available: ${available.join(', ')}\n  Example: /profile ${available[0]}`
-          : '\n  Define profiles in ~/.nanogent.json, then /profile <name>\n  Example: /profile local'),
+           : '\n  Define profiles in $NANOAGENT_ROOT/config/nanogent.json, then /profile <name>\n  Example: /profile local'),
     };
   }
 
@@ -71,6 +71,15 @@ export function applyModelProfile(
   const model = (profile.model ?? cfg.model).trim();
   if (!model) {
     return { error: `Profile "${resolvedName}" is missing a model id.` };
+  }
+
+  if (!profile.baseURL?.trim() && profile.provider) {
+    const provider = getProvider(profile.provider);
+    if (provider?.requiresCustomBaseURL) {
+      return {
+        error: `Profile "${resolvedName}" provider "${profile.provider}" requires an explicit baseURL.`,
+      };
+    }
   }
 
   const baseURL = resolveProfileBaseURL(profile, cfg.baseURL);
@@ -162,7 +171,7 @@ export function formatProfileList(cfg: Config): string {
   if (names.length === 0) {
     return [
       'No profiles configured.',
-      'Add a `profiles` map to ~/.nanogent.json, then `/profile <name>`.',
+      'Add a `profiles` map to $NANOAGENT_ROOT/config/nanogent.json, then `/profile <name>`.',
       'Example: `/profile local` after defining `"local"` and `"cloud"` snapshots.',
     ].join('\n');
   }
@@ -178,7 +187,7 @@ export function formatProfileList(cfg: Config): string {
     '',
     '**Usage:**',
     '- `/profile <name>` — apply to this session',
-    '- `/profile <name> --global` — apply and persist to ~/.nanogent.json',
+    '- `/profile <name> --global` — apply and persist to $NANOAGENT_ROOT/config/nanogent.json',
     '- `/profile <name> --local` — apply and persist to workspace .nanogent.json'
   );
   if (current && !names.includes(current)) {

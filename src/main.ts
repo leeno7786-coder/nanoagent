@@ -15,28 +15,9 @@ import { printRootHelp, printTuiHelp } from './cli/help.js';
 import { parseTuiLaunchArgs } from './cli/tui-args.js';
 import { ensureBunAvailable, installBun } from './bun-detect.js';
 import { logCrash } from './log.js';
+import { runCleanup } from './process-lifecycle.js';
 
-/** Registered cleanup callbacks invoked during graceful shutdown. */
-const cleanupFns: Array<() => void | Promise<void>> = [];
-
-/** Register a cleanup function to run on graceful shutdown. */
-export function registerCleanup(fn: () => void | Promise<void>): void {
-  cleanupFns.push(fn);
-}
-
-let shuttingDown = false;
-
-async function runCleanup(): Promise<void> {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  for (const fn of cleanupFns) {
-    try {
-      await fn();
-    } catch {
-      /* best-effort */
-    }
-  }
-}
+export { registerCleanup } from './process-lifecycle.js';
 
 export function setupProcessHandlers(): void {
   let signalCount = 0;
@@ -44,11 +25,12 @@ export function setupProcessHandlers(): void {
   const onSignal = async (signal: string) => {
     signalCount++;
     if (signalCount >= 2) {
+      process.exitCode = signal === 'SIGTERM' ? 143 : 130;
       process.exit(1);
     }
     console.error(`\nReceived ${signal}, shutting down gracefully... (press again to force exit)`);
-    await runCleanup();
-    process.exit(0);
+    process.exitCode = signal === 'SIGTERM' ? 143 : 130;
+    void runCleanup();
   };
 
   process.on('SIGINT', onSignal);
@@ -60,6 +42,7 @@ export function setupProcessHandlers(): void {
       'Unhandled rejection:',
       reason instanceof Error ? reason.message : String(reason)
     );
+    void runCleanup().finally(() => process.exit(1));
   });
 
   process.on('uncaughtException', (err) => {
@@ -94,8 +77,16 @@ async function main(): Promise<number> {
 
   try {
     const launch = parseTuiLaunchArgs(argv);
-    const isTui = launch.kind !== 'not-tui';
-    if (isTui && typeof (globalThis as Record<string, unknown>).Bun === 'undefined') {
+    if (launch.kind === 'parse-error') {
+      console.error(`Error: ${launch.error}`);
+      printTuiHelp();
+      return 1;
+    }
+
+    if (
+      launch.kind === 'tui' &&
+      typeof (globalThis as Record<string, unknown>).Bun === 'undefined'
+    ) {
       const { spawnSync } = await import('child_process');
       const bunPath = await ensureBunAvailable();
 

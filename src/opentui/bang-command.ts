@@ -17,7 +17,7 @@
  * runs the literal command (after stripping one `!`).
  */
 
-import type { SecurityManager } from '../security/index.js';
+import type { PermissionRequest, SecurityManager } from '../security/index.js';
 import type { Config, Message } from '../types.js';
 import { executeCommandTool } from '../tools/exec-tools.js';
 import { rnd } from '../agent-utils.js';
@@ -36,7 +36,9 @@ export interface BangCommandOptions {
   /** Security manager for command validation. */
   securityManager?: SecurityManager;
   /** Subset of Config the tool needs. */
-  cfg?: Pick<Config, 'securityManager' | 'commandTimeoutSeconds'>;
+  cfg?: Pick<Config, 'securityManager' | 'commandTimeoutSeconds' | 'apiKey'>;
+  /** Interactive permission callback; omitted callers receive a denial. */
+  onPermissionRequest?: (request: PermissionRequest) => Promise<'allow' | 'always_allow' | 'deny'>;
   /** Per-command timeout in seconds (default 60, capped at 600). */
   timeoutSeconds?: number;
   /** Optional abort signal for cancellation. */
@@ -91,7 +93,38 @@ export async function runBangCommand(
     ...(options.cfg ?? {}),
     securityManager: options.securityManager,
   } as Config;
-  return executeCommandTool.executeAsync!(
+  const manager = options.securityManager;
+  const permission = manager?.permissionManager.checkPermission('execute_command', { command });
+  if (permission && !permission.allowed) {
+    if (!permission.requiresConfirmation || !options.onPermissionRequest) {
+      return JSON.stringify({
+        ok: false,
+        error: permission.requiresConfirmation
+          ? 'Permission confirmation required for this command'
+          : `Permission denied by policy (${permission.reason || 'restricted'})`,
+      });
+    }
+    let decision: 'allow' | 'always_allow' | 'deny';
+    try {
+      decision = await options.onPermissionRequest({
+        id: `bang-${rnd()}`,
+        tool: 'execute_command',
+        category: permission.category,
+        command: permission.command,
+        args: { command },
+      });
+    } catch {
+      decision = 'deny';
+    }
+    if (decision === 'deny') {
+      return JSON.stringify({ ok: false, error: 'Permission denied by user' });
+    }
+    if (decision === 'always_allow') {
+      manager?.permissionManager.setRule('execute_command', 'allow');
+    }
+  }
+
+  const result = await executeCommandTool.executeAsync!(
     // mirrorOutput:false — the TUI renders via onOutput + the returned JSON;
     // a raw passthrough write to stdout/stderr would corrupt the OpenTUI
     // alternate-screen frame while the command runs.
@@ -105,6 +138,9 @@ export async function runBangCommand(
     cfg,
     options.signal
   );
+  return options.securityManager
+    ? options.securityManager.sanitizeOutput(result, options.cfg?.apiKey ?? undefined)
+    : result;
 }
 
 interface BangResultOk {

@@ -72,4 +72,41 @@ describe('parseTuiLaunchArgs', () => {
   it('does not treat unknown words as TUI', () => {
     expect(parseTuiLaunchArgs(['not-a-command'])).toEqual({ kind: 'not-tui' });
   });
+
+  it('rejects missing resume and workspace values', () => {
+    expect(parseTuiLaunchArgs(['resume'])).toEqual({
+      kind: 'parse-error',
+      error: 'resume requires a conversation hash',
+    });
+    expect(parseTuiLaunchArgs(['tui', '--workspace'])).toEqual({
+      kind: 'parse-error',
+      error: '--workspace requires a directory path',
+    });
+    expect(parseTuiLaunchArgs(['--sessions', '--workspace'])).toEqual({
+      kind: 'parse-error',
+      error: '--workspace requires a directory path',
+    });
+  });
+
+  it('rejects invalid or conflicting resume options', () => {
+    expect(parseTuiLaunchArgs(['--resume', 'not-a-hash'])).toEqual({
+      kind: 'parse-error',
+      error: 'Invalid conversation hash "not-a-hash"',
+    });
+    expect(parseTuiLaunchArgs(['--resume', '--sessions'])).toEqual({
+      kind: 'parse-error',
+      error: '--resume requires a conversation hash',
+    });
+    expect(parseTuiLaunchArgs(['tui', '--unknown'])).toEqual({
+      kind: 'parse-error',
+      error: 'Unknown TUI option "--unknown"',
+    });
+  });
+
+  it('supports equals-form resume options', () => {
+    expect(parseTuiLaunchArgs(['--resume=a1b2c3d4'])).toEqual({
+      kind: 'tui',
+      resume: 'a1b2c3d4',
+    });
+  });
 });

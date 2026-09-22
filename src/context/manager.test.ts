@@ -366,6 +366,67 @@ describe('ContextManager', () => {
       ).toBe(ids.length);
       expect(result.summary).toContain('compacted');
     });
+
+    it('honors keepCount and targetRatio while keeping tool-call groups intact', () => {
+      const manager = createContextManager({
+        ...cfg,
+        modelContextLength: 2000,
+        contextKeepCount: 2,
+      });
+      manager.addMessage({
+        id: 'system-base',
+        role: 'system',
+        content: 'SYS',
+        timestamp: Date.now(),
+      });
+      manager.addMessage({
+        id: 'original',
+        role: 'user',
+        content: 'original task',
+        timestamp: Date.now(),
+      });
+      for (let i = 0; i < 5; i++) {
+        manager.addMessage({
+          id: `user-${i}`,
+          role: 'user',
+          content: `old user ${i} ${'x'.repeat(80)}`,
+          timestamp: Date.now(),
+        });
+        manager.addMessage({
+          id: `assistant-${i}`,
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: `call-${i}`, name: 'read_file', arguments: '{}' }],
+          timestamp: Date.now(),
+        });
+        manager.addMessage({
+          id: `tool-${i}`,
+          role: 'tool',
+          content: '{}',
+          toolCallId: `call-${i}`,
+          timestamp: Date.now(),
+        });
+      }
+
+      const result = manager.compact({ force: true, keepCount: 2, targetRatio: 0.1 });
+      expect(result.removedCount).toBeGreaterThan(0);
+      const messages = manager.getMessages();
+      expect(messages.map((message) => message.id)).toEqual([
+        'system-base',
+        'system-compaction',
+        'original',
+        'assistant-4',
+        'tool-4',
+      ]);
+      const calls = new Set(
+        messages.flatMap((message) => (message.toolCalls ?? []).map((call) => call.id))
+      );
+      expect(
+        messages.filter(
+          (message) => message.role === 'tool' && !calls.has(message.toolCallId || '')
+        )
+      ).toEqual([]);
+    });
   });
 
   describe('clear', () => {

@@ -155,6 +155,19 @@ describe('resolveApiKeyForTarget — no wrong-key reuse', () => {
     );
     expect(result).toHaveProperty('error');
   });
+
+  it('reuses a real key for an unknown endpoint when only the model changes', () => {
+    const result = resolveApiKeyForTarget(
+      'https://models.internal.example/v1',
+      undefined,
+      {
+        baseURL: 'https://models.internal.example/v1',
+        apiKey: 'internal-session-key',
+      },
+      envOnly
+    );
+    expect(result).toEqual({ apiKey: 'internal-session-key' });
+  });
 });
 
 describe('nextUnusedFallback / one-shot per fallback', () => {

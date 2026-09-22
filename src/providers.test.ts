@@ -299,6 +299,12 @@ describe('providers.ts - Provider Resolution', () => {
       expect(getProviderForBaseURL('https://api.groq.com/openai/v1')?.id).toBe('groq');
     });
 
+    it('distinguishes localhost-based local runtimes by their exact endpoint', () => {
+      expect(getProviderForBaseURL('http://localhost:13305/api/v1')?.id).toBe('lemonade');
+      expect(getProviderForBaseURL('http://localhost:11434/v1')?.id).toBe('ollama');
+      expect(getProviderForBaseURL('https://gateway.example/ollama/v1')?.id).toBeUndefined();
+    });
+
     it('registers GMI Cloud and resolves GMI_API_KEY from env', () => {
       const gmi = getProvider('gmi-cloud');
       expect(gmi).toBeDefined();

@@ -37,6 +37,8 @@ import { useClipboardPaste } from './use-clipboard-paste.js';
 import { copyToClipboard } from '../clipboard.js';
 import { addNoticeMessage } from '../agent-messages.js';
 import { logWarn, logCrash, beginRunMarker, crashLogPath } from '../log.js';
+import { registerCleanup } from '../process-lifecycle.js';
+import { syncWorkspaceFromDisk } from '../workspace-history.js';
 
 /**
  * Messages the user can select/copy — shares ChatScreen's visibility filter
@@ -49,9 +51,11 @@ function selectableMessages(agent: AgentCore) {
 export function App({
   renderer,
   initialSession,
+  workspace,
 }: {
   renderer: CliRenderer;
   initialSession?: Session;
+  workspace?: string;
 }) {
   const store = useAppStore;
   const overlay = useAppStore((s) => s.overlay);
@@ -112,8 +116,17 @@ export function App({
   }, []);
 
   useEffect(() => {
-    const cfg = loadConfig();
+    const cfg = workspace ? loadConfig({ workspace }) : loadConfig();
     const agent = new AgentCore(cfg);
+    let shutdownPromise: Promise<void> | undefined;
+    const shutdown = (): Promise<void> => {
+      if (!shutdownPromise) shutdownPromise = agent.shutdown(store.getState().messageQueue);
+      return shutdownPromise;
+    };
+    const unregisterCleanup = registerCleanup(() => {
+      abortControllerRef.current?.abort();
+      return shutdown();
+    });
     agent.todos = [];
     agent.onToolResult = (r) => {
       store.getState().pushToolResult(r);
@@ -131,6 +144,9 @@ export function App({
       store.getState().setOverlay('question');
       // The resolver is already set by question-tool.ts executeAsync;
       // the QuestionOverlay will call resolveQuestion() when the user submits.
+    };
+    (globalThis as Record<string, unknown>)['__questionToolTimeout'] = () => {
+      store.getState().setOverlay(null);
     };
     // Assign before init so slash commands work while MCP (e.g. Serena) connects.
     // Gate onUpdate until init finishes so partial MCP/tool state doesn't thrash the UI.
@@ -177,7 +193,14 @@ export function App({
       })
       .catch((err) => {
         initDone.current = true;
-        console.error('Agent init failed:', err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        agent.messages.push({
+          id: `init-error-${Date.now()}`,
+          role: 'assistant',
+          content: `Agent initialization failed: ${message}`,
+          timestamp: Date.now(),
+        });
+        agent.setState('error');
         syncFromAgent(agent);
       });
 
@@ -193,11 +216,6 @@ export function App({
         .setSkillCommands(getSkillCommands(refreshedSkills, { includeDisabled: true }));
     };
     (globalThis as Record<string, unknown>)['__refreshSkills'] = handleSkillRefresh;
-
-    const handleSigint = () => {
-      agent.shutdown(store.getState().messageQueue).catch(() => {});
-    };
-    process.on('SIGINT', handleSigint);
 
     if (!initialSession && agent.messages.length === 0) {
       // Baseline status: was a snapshot of the workspace taken at
@@ -250,7 +268,7 @@ export function App({
     store.getState().setTheme(THEMES[cfg.theme || ''] || DEFAULT_THEME);
 
     return () => {
-      process.off('SIGINT', handleSigint);
+      unregisterCleanup();
       resolvePendingPermission('deny');
       abortControllerRef.current?.abort();
       if (timerRef.current) {
@@ -272,8 +290,9 @@ export function App({
       }
       delete (globalThis as Record<string, unknown>)['__refreshSkills'];
       delete (globalThis as Record<string, unknown>)['__questionToolNotify'];
+      delete (globalThis as Record<string, unknown>)['__questionToolTimeout'];
     };
-  }, [resolvePendingPermission]);
+  }, [resolvePendingPermission, workspace]);
 
   useEffect(() => {
     // H4: pause tick when any overlay is open to avoid unnecessary renders.
@@ -298,7 +317,7 @@ export function App({
         setElapsedMs(Date.now() - startTimeRef.current);
       }, 500);
     }
-  }, [state]);
+  }, [state, overlay]);
 
   // Drain the message queue: send the next queued message when the agent is idle.
   // Called directly from enqueue (when idle), ESC/Ctrl+D (after abort), and
@@ -539,7 +558,9 @@ export function App({
     setCurrentSessionId(session.id);
     setLiveSessionId(session.id);
 
-    // Restore queued messages from the session (if any).
+    // Replace, rather than merge, queued messages so a previous session's
+    // work cannot run after loading this session.
+    useAppStore.getState().clearQueue();
     if (session.messageQueue && session.messageQueue.length > 0) {
       useAppStore.setState({ messageQueue: session.messageQueue });
     }
@@ -558,6 +579,10 @@ export function App({
 
   const handleDeleteSession = useCallback((id: string) => {
     deleteSession(id);
+    if (id === store.getState().currentSessionId) {
+      store.setState({ currentSessionId: null });
+      setLiveSessionId(undefined);
+    }
     setSessions(loadSessions());
   }, []);
 
@@ -576,6 +601,14 @@ export function App({
       // No LLM call.
       const bang = parseBangCommand(text);
       if (bang.isBang) {
+        const currentState = store.getState().state;
+        if (currentState !== 'idle' && currentState !== 'error') {
+          if (currentState === 'waiting_for_user') resolvePendingPermission('deny');
+          const queued = store.getState().enqueueMessage(text);
+          if (!queued) addNoticeMessage(agent, 'Message queue full; bang command was not queued.');
+          store.getState().syncFromAgent(agent);
+          return;
+        }
         // Workspace is required to scope the command to the project. Never
         // fail silently — tell the user why nothing ran.
         const workspace = agent.cfg.workspace;
@@ -606,7 +639,13 @@ export function App({
             securityManager: agent.securityManager,
             cfg: agent.cfg,
             signal,
-            onOutput: (chunk) => store.getState().appendBangOutput(chunk),
+            onPermissionRequest: agent.onPermissionRequest,
+            onOutput: (chunk, _stream) =>
+              store
+                .getState()
+                .appendBangOutput(
+                  agent.securityManager.sanitizeOutput(chunk, agent.cfg.apiKey ?? undefined)
+                ),
           });
           recordBangExchange(agent, bang.command, result);
         } catch (err) {
@@ -620,6 +659,11 @@ export function App({
           );
         } finally {
           store.getState().endBangRun();
+          try {
+            syncWorkspaceFromDisk(workspace, 'shell');
+          } catch {
+            /* history tracking is best-effort */
+          }
         }
         agent.setState('idle');
         store.getState().syncFromAgent(agent);
@@ -630,6 +674,14 @@ export function App({
       // Slash commands must work even after errors / while waiting for permission.
       // Regular chat: if the agent is busy, enqueue the message instead of dropping it.
       const ready = state === 'idle' || state === 'error' || state === 'waiting_for_user';
+      if (!isSlash && store.getState().bangRun) {
+        const enqueued = store.getState().enqueueMessage(text);
+        if (!enqueued) {
+          addNoticeMessage(agent, 'Message queue full; wait for the `!` command to finish.');
+        }
+        store.getState().syncFromAgent(agent);
+        return;
+      }
       if (!isSlash && !ready) {
         const enqueued = store.getState().enqueueMessage(text);
         if (!enqueued) {
@@ -664,6 +716,14 @@ export function App({
       }
       if (startsRun && busy) {
         abortControllerRef.current?.abort();
+        const activeRun = agent._activeRunPromise;
+        if (activeRun) {
+          try {
+            await activeRun;
+          } catch {
+            /* the interrupted run reports its own error state */
+          }
+        }
       }
       if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
         abortControllerRef.current = new AbortController();
@@ -684,6 +744,7 @@ export function App({
             setToolResults: st.setToolResults,
             setTodos: st.setTodos,
             setSessions: st.setSessions,
+            setCurrentSessionId: st.setCurrentSessionId,
             setOverlay: st.setOverlay,
             setShowTodos: st.setShowTodos,
             setTheme: st.setTheme,
@@ -694,11 +755,12 @@ export function App({
             handleRename,
             clearQueue: st.clearQueue,
           });
+          drainQueue();
           return;
         }
 
         if (agent) {
-          checkAndAutoCompact(agent, (msgs) => store.getState().setMessages(msgs));
+          await checkAndAutoCompact(agent, (msgs) => store.getState().setMessages(msgs));
         }
 
         await agent.run(text, signal);
@@ -751,13 +813,24 @@ export function App({
       setOverlay(null);
       const skill = getSkill(skillName);
       if (skill && agentRef.current) {
-        agentRef.current
-          .run(`/skill-load ${skill.name}`)
+        const agent = agentRef.current;
+        const queuedText = `/skill-load ${skill.name}`;
+        const currentState = store.getState().state;
+        if (currentState !== 'idle' && currentState !== 'error') {
+          if (currentState === 'waiting_for_user') resolvePendingPermission('deny');
+          store.getState().enqueueMessage(queuedText);
+          store.getState().syncFromAgent(agent);
+          return;
+        }
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+        agent
+          .run(queuedText, controller.signal)
           .catch(console.error)
           .finally(() => drainQueue());
       }
     },
-    [drainQueue]
+    [drainQueue, resolvePendingPermission]
   );
 
   const handleConnectSelect = useCallback(
@@ -782,9 +855,18 @@ export function App({
         } else if (provider.isLocal) {
           newConfig.apiKey = 'lm-studio';
         }
-        await agent.reconfigure(newConfig);
+        try {
+          await agent.reconfigure(newConfig);
+        } catch (err) {
+          addNoticeMessage(
+            agent,
+            err instanceof Error ? err.message : `Provider switch failed: ${String(err)}`
+          );
+          store.getState().syncFromAgent(agent);
+          return;
+        }
         // Remember the selection so the next launch restores this provider and
-        // resolves its key from the trusted home-dir .env. The raw API key is
+        // resolves its key from the trusted state-root config/.env. The raw API key is
         // never written to the JSON config.
         try {
           saveConfigFile(
@@ -908,6 +990,7 @@ export function App({
         }
         case 'exit':
           if (agent) {
+            abortControllerRef.current?.abort();
             agent
               .shutdown(store.getState().messageQueue)
               .catch(() => {})
@@ -960,9 +1043,6 @@ export function App({
       if (busy) {
         resolvePendingPermission('deny');
         abortControllerRef.current?.abort();
-        agentRef.current?.setState('idle');
-        // Immediately process queued message after interrupt.
-        drainQueue();
       }
       keyEvent.preventDefault?.();
       return;
@@ -1032,9 +1112,6 @@ export function App({
       const busy = st.state !== 'idle' && st.state !== 'error' && st.state !== 'waiting_for_user';
       if (busy) {
         abortControllerRef.current?.abort();
-        agentRef.current?.setState('idle');
-        // Immediately process queued message after interrupt.
-        drainQueue();
       } else if (st.selectedMessageIndex !== null) {
         st.setSelectedMessageIndex(null);
       }
@@ -1074,6 +1151,7 @@ export function App({
       const agent = agentRef.current;
       keyEvent.preventDefault?.();
       if (agent) {
+        abortControllerRef.current?.abort();
         // Graceful shutdown (same as SIGINT): tear down MCP children etc.
         agent
           .shutdown(store.getState().messageQueue)

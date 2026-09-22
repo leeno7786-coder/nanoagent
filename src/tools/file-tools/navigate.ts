@@ -20,12 +20,17 @@ export const changeWorkspaceTool: Tool = {
     },
     required: ['path'],
   },
-  execute: (args, ws) => {
+  execute: (args, ws, cfg) => {
     try {
-      const next = resolve(ws, args.path);
+      // Model-driven workspace changes stay inside the user-selected root.
+      // Explicit `/cd` remains the user-controlled way to change projects.
+      const next = safe(args.path, ws, cfg);
       const harness = nanoagentHarnessError(rel(next, ws));
       if (harness) {
         return JSON.stringify({ ok: false, error: harness });
+      }
+      if (isAccessBlocked(next, cfg)) {
+        return JSON.stringify({ ok: false, error: 'Access denied (blocked path)' });
       }
       if (!existsSync(next) || !statSync(next).isDirectory()) {
         return JSON.stringify({

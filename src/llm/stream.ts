@@ -12,6 +12,7 @@ import {
 } from './utils.js';
 import { buildChatCompletionsParams } from './request.js';
 import { mergeToolCallArgumentDelta } from './tool-call-args.js';
+import { normalizeToolCallArguments } from './chat.js';
 import {
   awaitEndpointTurn,
   releaseEndpointTurn,
@@ -23,6 +24,16 @@ import {
   estimatePromptTokensForRequest,
 } from './rate-limit.js';
 
+function normalizeToolArgumentFragment(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  try {
+    return JSON.stringify(value) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function* streamChat(
   client: OpenAI,
   cfg: Config,
@@ -31,7 +42,7 @@ export async function* streamChat(
   signal?: AbortSignal,
   options?: ChatRequestOptions
 ): AsyncGenerator<StreamChunk, { usage?: { input_tokens: number; output_tokens: number } }, void> {
-  const baseMaxRetries = cfg.retryCount ?? 3;
+  const baseMaxRetries = Math.max(0, cfg.retryCount ?? 3);
   let lastError: Error | undefined;
   let attempt = 1;
 
@@ -53,12 +64,11 @@ export async function* streamChat(
         signal
       );
 
-      const streamReqParams = buildChatCompletionsParams(cfg, messages, tools, {
-        ...options,
-        stream: true,
-      });
-
       try {
+        const streamReqParams = buildChatCompletionsParams(cfg, messages, tools, {
+          ...options,
+          stream: true,
+        });
         const stream = (await client.chat.completions.create(
           streamReqParams as unknown as Parameters<typeof client.chat.completions.create>[0],
           { signal }
@@ -71,7 +81,10 @@ export async function* streamChat(
           }>;
         }>;
 
-        const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
+        const toolCallBuffers = new Map<
+          number,
+          { id: string; name: string; args: string; invalid: boolean }
+        >();
         let finishReason: string | undefined;
         let usage: { input_tokens: number; output_tokens: number } | undefined;
         let yieldedMeaningfulContent = false;
@@ -79,7 +92,7 @@ export async function* streamChat(
         let previousCompleteCallsStr = ''; // M3: avoid yielding duplicate tool-calls
 
         for await (const chunk of stream) {
-          if (signal?.aborted) break;
+          if (signal?.aborted) throw new Error('Aborted');
 
           const choice = chunk.choices[0];
           const delta = choice?.delta;
@@ -109,10 +122,18 @@ export async function* streamChat(
             [];
 
           if (Array.isArray(toolCallsAny) && toolCallsAny.length > 0) {
-            for (const tcRaw of toolCallsAny as Array<Record<string, unknown>>) {
-              const tcId = tcRaw.id as string | undefined;
-              const tcFn = tcRaw.function as Record<string, unknown> | undefined;
-              let idx = tcRaw.index as number | undefined;
+            for (const tcUnknown of toolCallsAny) {
+              if (!tcUnknown || typeof tcUnknown !== 'object') continue;
+              const tcRaw = tcUnknown as Record<string, unknown>;
+              const tcId = typeof tcRaw.id === 'string' ? tcRaw.id : undefined;
+              const tcFn =
+                tcRaw.function && typeof tcRaw.function === 'object'
+                  ? (tcRaw.function as Record<string, unknown>)
+                  : undefined;
+              let idx =
+                typeof tcRaw.index === 'number' && Number.isInteger(tcRaw.index) && tcRaw.index >= 0
+                  ? tcRaw.index
+                  : undefined;
               if (idx === undefined) {
                 if (tcId) {
                   let found: number | undefined;
@@ -133,15 +154,18 @@ export async function* streamChat(
                 const fallbackId = tcId || `call_${idx}_${Math.random().toString(36).slice(2, 10)}`;
                 toolCallBuffers.set(idx, {
                   id: fallbackId,
-                  name: (tcFn?.name as string) || '',
+                  name: typeof tcFn?.name === 'string' ? tcFn.name.trim() : '',
                   args: '',
+                  invalid: false,
                 });
               }
               const buf = toolCallBuffers.get(idx)!;
               if (tcId && !buf.id) buf.id = tcId;
-              if (tcFn?.name) buf.name = tcFn.name as string;
-              if (tcFn?.arguments) {
-                buf.args = mergeToolCallArgumentDelta(buf.args, tcFn.arguments as string);
+              if (typeof tcFn?.name === 'string' && tcFn.name.trim()) buf.name = tcFn.name.trim();
+              if (Object.prototype.hasOwnProperty.call(tcFn ?? {}, 'arguments')) {
+                const incoming = normalizeToolArgumentFragment(tcFn?.arguments);
+                if (incoming) buf.args = mergeToolCallArgumentDelta(buf.args, incoming);
+                else buf.invalid = true;
               }
             }
           }
@@ -154,10 +178,11 @@ export async function* streamChat(
 
           const completeToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
           for (const buf of toolCallBuffers.values()) {
-            if (buf.id && buf.name) {
-              completeToolCalls.push({ id: buf.id, name: buf.name, arguments: buf.args });
-            }
+            if (!buf.id || !buf.name || buf.invalid) continue;
+            const args = normalizeToolCallArguments(buf.args || undefined);
+            if (args) completeToolCalls.push({ id: buf.id, name: buf.name, arguments: args });
           }
+          const visibleToolCalls = finishReason === 'length' ? [] : completeToolCalls;
           const currentCallsStr = JSON.stringify(completeToolCalls);
           const hasNewToolCalls = currentCallsStr !== previousCompleteCallsStr;
           previousCompleteCallsStr = currentCallsStr;
@@ -166,7 +191,7 @@ export async function* streamChat(
             content,
             reasoningContent,
             toolCalls:
-              hasNewToolCalls && completeToolCalls.length > 0 ? completeToolCalls : undefined,
+              hasNewToolCalls && visibleToolCalls.length > 0 ? visibleToolCalls : undefined,
             finishReason,
           };
 
@@ -178,11 +203,11 @@ export async function* streamChat(
         if (!yieldedMeaningfulContent) {
           const completeToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
           for (const buf of toolCallBuffers.values()) {
-            if (buf.id && buf.name) {
-              completeToolCalls.push({ id: buf.id, name: buf.name, arguments: buf.args });
-            }
+            if (!buf.id || !buf.name || buf.invalid) continue;
+            const args = normalizeToolCallArguments(buf.args || undefined);
+            if (args) completeToolCalls.push({ id: buf.id, name: buf.name, arguments: args });
           }
-          if (completeToolCalls.length > 0) {
+          if (finishReason !== 'length' && completeToolCalls.length > 0) {
             yield {
               content: '',
               reasoningContent: '',
@@ -192,6 +217,7 @@ export async function* streamChat(
           }
         }
 
+        if (signal?.aborted) throw new Error('Aborted');
         // Only count a request as successful after the SSE stream was fully consumed.
         noteEndpointSuccess(cfg.baseURL);
         return { usage };
@@ -210,11 +236,11 @@ export async function* streamChat(
       const errStatus = e.status || e.status_code || e.response?.status || 0;
       lastError = err as Error;
       const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529;
-      const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
+      const maxAttempts = baseMaxRetries + 1;
       const details = providerErrorDetails(err);
 
-      if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
-        throw new ApiError(errorMessage(errStatus, attempt, err, effectiveMaxRetries), errStatus, {
+      if (!shouldRetry(errStatus, attempt, err) || attempt >= maxAttempts) {
+        throw new ApiError(errorMessage(errStatus, attempt, err, maxAttempts), errStatus, {
           ...details,
           cause: err,
         });
@@ -223,10 +249,10 @@ export async function* streamChat(
       const delayMs = calculateBackoffDelay(attempt, errStatus, err);
       if (isRateLimit) noteEndpointRateLimited(cfg.baseURL, delayMs, err);
 
-      const msgStr = errorMessage(errStatus, attempt, err, effectiveMaxRetries, delayMs);
+      const msgStr = errorMessage(errStatus, attempt, err, maxAttempts, delayMs);
       options?.onRetry?.({
         attempt,
-        maxAttempts: effectiveMaxRetries,
+        maxAttempts,
         delayMs,
         status: errStatus,
         message: msgStr,

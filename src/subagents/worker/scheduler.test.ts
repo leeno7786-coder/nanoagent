@@ -83,4 +83,23 @@ describe('SubAgentScheduler', () => {
     const fallback = await s.acquire(endpoints, 'b', 50);
     expect(fallback?.name).toBe('a');
   });
+
+  it('enforces a global dispatch limit across endpoints', async () => {
+    const s = new SubAgentScheduler();
+    const endpoints = [ep('a', 4), ep('b', 4)];
+    const first = await Promise.all([
+      s.acquire(endpoints, undefined, 50, undefined, 2),
+      s.acquire(endpoints, undefined, 50, undefined, 2),
+    ]);
+    expect(first.every(Boolean)).toBe(true);
+
+    const blocked = await s.acquire(endpoints, undefined, 30, undefined, 2);
+    expect(blocked).toBeUndefined();
+
+    s.release(first[0]!.name);
+    const afterRelease = await s.acquire(endpoints, undefined, 50, undefined, 2);
+    expect(afterRelease).toBeDefined();
+    s.release(first[1]!.name);
+    s.release(afterRelease!.name);
+  });
 });

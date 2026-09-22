@@ -6,32 +6,45 @@ import type { Tool, ToolExecutionHooks } from '../../tools/index.js';
 import type { Config } from '../../types.js';
 import type { WorkerContext } from './context.js';
 import { capToolResultForLlm, resolveToolResultTokenBudget } from '../../llm/tool-result-budget.js';
+import { parseToolCallArgumentsJson } from '../../llm/tool-call-args.js';
+
+export function parseWorkerToolArguments(raw: unknown): Record<string, unknown> {
+  const text =
+    typeof raw === 'string' ? raw : raw === undefined ? '' : JSON.stringify(raw) || String(raw);
+  const parsed = parseToolCallArgumentsJson(text);
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'raw_input')) return parsed;
+
+  // Match the parent execution path's recovery for tool-call wrappers that
+  // put prose around an otherwise valid JSON object.
+  const m = text.match(/\{[\s\S]*\}/);
+  if (m && m[0] !== text) {
+    const recovered = parseToolCallArgumentsJson(m[0]);
+    if (!Object.prototype.hasOwnProperty.call(recovered, 'raw_input')) return recovered;
+  }
+  return parsed;
+}
 
 function parseArgs(tc: { name: string; arguments: string }): Record<string, unknown> {
-  if (typeof tc.arguments !== 'string') return tc.arguments;
   try {
-    return JSON.parse(tc.arguments);
+    return parseWorkerToolArguments(tc.arguments);
   } catch {
-    const m = tc.arguments.match(/\{[\s\S]*\}/);
-    if (m) {
-      try {
-        return JSON.parse(m[0]);
-      } catch {
-        /* fall through */
-      }
-    }
     return { raw_input: tc.arguments };
   }
+}
+
+const MAX_WORKER_RESULT_CHARS = 80_000;
+
+function capWorkerResultCharacters(content: string): string {
+  if (content.length <= MAX_WORKER_RESULT_CHARS) return content;
+  const marker = `\n[truncated: worker result exceeded ${MAX_WORKER_RESULT_CHARS} characters]`;
+  const budget = Math.max(0, MAX_WORKER_RESULT_CHARS - marker.length);
+  return `${content.slice(0, budget)}${marker}`;
 }
 
 /** Read-only exploration tools exposed to sub-agents. */
 export const SUBAGENT_TOOLS = new Set([
   'read_file',
   'batch_read_files',
-  'list_dir',
-  'map_project_tree',
-  'find_files',
-  'stat_path',
   'grep_search',
   'search_and_view',
   'search_files',
@@ -72,7 +85,7 @@ export async function runWorkerTool(
       error: `Tool '${tc.name}' is not available to sub-agents. Use read_file, list_dir, or grep_search.`,
     });
   }
-  const tool: Tool | undefined = findTool(tc.name);
+  const tool: Tool | undefined = findTool(tc.name, wctx.cfg.workspace);
   const args = parseArgs(tc);
   if (typeof args?.path === 'string') {
     args.path = (await normalizeSubAgentPath(args.path, wctx.cfg.workspace)) ?? args.path;
@@ -102,24 +115,21 @@ export async function runWorkerTool(
       out = JSON.stringify({ ok: false, error: `Unknown tool: ${tc.name}` });
     }
 
-    const sanitized = wctx.security.sanitizeOutput(out);
+    const sanitized = wctx.security.sanitizeOutput(out, wctx.cfg.apiKey ?? undefined);
     let outForModel = sanitized;
-    if ((tc.name === 'read_file' || tc.name === 'batch_read_files') && sanitized.length > 80000) {
-      const lines = sanitized.split('\n');
-      if (lines.length > 2000) {
-        const head = lines.slice(0, 1500).join('\n');
-        const tail = lines.slice(-200).join('\n');
-        outForModel = `${head}\n\n... [${lines.length - 1700} middle lines omitted for sub-agent context budget] ...\n\n${tail}`;
-      }
-    }
     const budget = resolveToolResultTokenBudget(wctx.cfg);
-    return budget > 0
-      ? capToolResultForLlm(outForModel, { maxTokens: budget, modelId: wctx.cfg.model })
-      : outForModel;
+    if (budget > 0) {
+      outForModel = capToolResultForLlm(outForModel, {
+        maxTokens: budget,
+        modelId: wctx.cfg.model,
+      });
+    }
+    return capWorkerResultCharacters(outForModel);
   } catch (e: unknown) {
-    return JSON.stringify({
+    const error = JSON.stringify({
       ok: false,
       error: (e as { message?: string } | undefined)?.message || String(e),
     });
+    return wctx.security.sanitizeOutput(error, wctx.cfg.apiKey ?? undefined);
   }
 }

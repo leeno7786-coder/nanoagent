@@ -35,7 +35,14 @@ function normWorkspace(s: string): string {
  * install-global sessions dir. Matching global sessions are copied in once.
  */
 export function setActiveSessionWorkspace(workspace: string | undefined): void {
-  activeSessionWorkspace = workspace && workspace.length > 0 ? workspace : undefined;
+  const nextWorkspace = workspace && workspace.length > 0 ? workspace : undefined;
+  const changed =
+    (activeSessionWorkspace === undefined) !== (nextWorkspace === undefined) ||
+    (activeSessionWorkspace !== undefined &&
+      nextWorkspace !== undefined &&
+      normWorkspace(activeSessionWorkspace) !== normWorkspace(nextWorkspace));
+  if (changed) liveSessionId = undefined;
+  activeSessionWorkspace = nextWorkspace;
   if (activeSessionWorkspace) {
     migrateGlobalSessions(activeSessionWorkspace);
   }
@@ -130,6 +137,7 @@ export function buildConfigSnapshot(cfg: Config): Partial<Config> {
     maxConcurrentLlmRequests: cfg.maxConcurrentLlmRequests,
     maxTokensPerMinute: cfg.maxTokensPerMinute,
     maxToolResultTokens: cfg.maxToolResultTokens,
+    maxToolCallArgumentTokens: cfg.maxToolCallArgumentTokens,
     toolChoice: cfg.toolChoice,
     workspace: cfg.workspace,
     permissionMode: cfg.permissionMode,
@@ -316,8 +324,11 @@ export function loadSession(id: string): Session | null {
 
 export function saveSession(session: Session): string {
   ensureDir();
-  sessionStore(session.id).write(session);
-  return session.id;
+  const safeId = sanitizeSessionId(session.id);
+  if (!safeId) throw new Error('Invalid session id');
+  const toSave = safeId === session.id ? session : { ...session, id: safeId };
+  sessionStore(safeId).write(toSave);
+  return safeId;
 }
 
 export function loadSessions(): Session[] {
@@ -335,9 +346,23 @@ export function deleteSession(id: string): void {
   ensureDir();
   const safeId = sanitizeSessionId(id);
   if (!safeId) return;
+  if (liveSessionId && safeId.toLowerCase() === liveSessionId.toLowerCase()) {
+    liveSessionId = undefined;
+  }
   const path = join(sessionDir(), `${safeId}.json`);
   if (existsSync(path)) {
     rmSync(path);
+  }
+  const backups = join(sessionDir(), '.backups');
+  if (existsSync(backups)) {
+    for (const name of readdirSync(backups)) {
+      if (!name.startsWith(`${safeId}.json.`)) continue;
+      try {
+        rmSync(join(backups, name), { force: true });
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
   }
 }
 

@@ -4,8 +4,26 @@ import { AgentCore } from '../agent.js';
 import { loadConfig, applyModelProfile } from '../config/index.js';
 import { printRunHelp, cliError } from './help.js';
 import type { PermissionMode } from '../security/index.js';
+import { registerCleanup } from '../process-lifecycle.js';
+import {
+  getProviderForBaseURL,
+  resolveApiKeyFromEnv,
+  sanitizeBaseURL,
+} from '../providers/index.js';
+import { isLocalProvider } from '../llm/index.js';
 
 const PERMISSION_MODES: PermissionMode[] = ['read_only', 'ask', 'allow_edits', 'always_allow'];
+
+function parseCliLimit(raw: string, flag: string): number {
+  if (!/^\d+$/.test(raw)) {
+    cliError(`Invalid ${flag} "${raw}". Expected a non-negative integer.`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    cliError(`Invalid ${flag} "${raw}". Expected a safe non-negative integer.`);
+  }
+  return value;
+}
 
 export interface RunResult {
   ok: boolean;
@@ -71,7 +89,8 @@ export async function cmdRun(argv: string[]): Promise<number> {
     );
   }
 
-  const cfg = loadConfig();
+  const workspace = values.workspace ? resolve(values.workspace) : undefined;
+  const cfg = workspace ? loadConfig({ workspace }) : loadConfig();
   if (values.profile) {
     const applied = applyModelProfile(cfg, values.profile);
     if ('error' in applied) {
@@ -83,12 +102,28 @@ export async function cmdRun(argv: string[]): Promise<number> {
     }
     Object.assign(cfg, applied.patch);
   }
-  if (values.workspace) cfg.workspace = resolve(values.workspace);
   if (values.model) cfg.model = values.model;
-  if (values['base-url']) cfg.baseURL = values['base-url'];
+  if (values['base-url']) {
+    const previousBaseURL = cfg.baseURL;
+    const previousProvider = getProviderForBaseURL(previousBaseURL);
+    cfg.baseURL = sanitizeBaseURL(values['base-url']);
+    const nextProvider = getProviderForBaseURL(cfg.baseURL);
+    cfg.provider = nextProvider?.id;
+    if (isLocalProvider(cfg.baseURL)) {
+      cfg.apiKey = 'lm-studio';
+    } else if (
+      nextProvider &&
+      previousProvider &&
+      nextProvider.id.toLowerCase() === previousProvider.id.toLowerCase() &&
+      cfg.apiKey
+    ) {
+      // Reusing a key is safe only within the same catalog provider.
+    } else {
+      cfg.apiKey = resolveApiKeyFromEnv(cfg.baseURL) ?? null;
+    }
+  }
   if (values['max-iterations']) {
-    const n = parseInt(values['max-iterations'], 10);
-    if (!Number.isNaN(n)) cfg.maxIterations = n;
+    cfg.maxIterations = parseCliLimit(values['max-iterations'], '--max-iterations');
   }
   // Config-level verbose fallback: if --verbose not passed, use config setting
   if (!values.verbose && cfg.verbose) {
@@ -108,9 +143,18 @@ export async function cmdRun(argv: string[]): Promise<number> {
   if (values.yes) cfg.permissionMode = 'always_allow';
 
   const agent = new AgentCore(cfg);
+  const abortController = new AbortController();
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => {
+    if (!shutdownPromise) shutdownPromise = agent.shutdown();
+    return shutdownPromise;
+  };
+  registerCleanup(() => {
+    abortController.abort();
+    return shutdown();
+  });
   if (values['max-rounds']) {
-    const n = parseInt(values['max-rounds'], 10);
-    if (!Number.isNaN(n)) agent.maxRounds = n;
+    agent.maxRounds = parseCliLimit(values['max-rounds'], '--max-rounds');
   }
   agent.streaming = false;
 
@@ -137,12 +181,12 @@ export async function cmdRun(argv: string[]): Promise<number> {
     }
   };
 
-  await agent.init();
   try {
-    await agent.run(prompt);
+    await agent.init();
+    await agent.run(prompt, abortController.signal);
   } finally {
     // Tear down MCP child processes and cache watchers so the process can exit
-    await agent.shutdown();
+    await shutdown();
   }
 
   const lastAssistant = [...agent.messages]

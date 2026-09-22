@@ -187,11 +187,11 @@ describe('capToolArgumentsForLlm', () => {
   const bigArgs = (tool: string) =>
     JSON.stringify({ path: 'big.txt', content: 'x'.repeat(8 * 1024), tool });
 
-  it('never truncates file-payload tool arguments', () => {
+  it('fails closed for oversized file-payload tool arguments', () => {
     for (const name of ['write_file', 'edit_file', 'edit_file_lines']) {
       const args = JSON.stringify({ path: 'f', content: 'y'.repeat(8 * 1024) });
       const out = capToolArgumentsForLlm(name, args, { maxTokens: 100 });
-      expect(out).toBe(args);
+      expect(JSON.parse(out)).toMatchObject({ truncated: true, tool: name });
     }
   });
 

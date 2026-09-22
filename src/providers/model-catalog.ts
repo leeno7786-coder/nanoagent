@@ -29,10 +29,24 @@ export interface CatalogModel {
   isLoaded?: boolean;
 }
 
-// In-memory cache: providerId -> fetched models
+// In-memory cache: provider + endpoint/auth shape -> fetched models.
 const catalogCache: Map<string, ModelInfo[]> = new Map();
-let catalogTimestamp = 0;
+const catalogTimestamps: Map<string, number> = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function catalogKey(provider: RuntimeProvider, cfg?: Config): string {
+  const configuredURL =
+    cfg?.provider?.toLowerCase() === provider.id.toLowerCase() ? cfg.baseURL : '';
+  const baseURL = (configuredURL || getProviderBaseURL(provider) || cfg?.baseURL || '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+  const authenticated = provider.isLocal
+    ? 'anon'
+    : getApiKeyEnvVars(provider.id).some((name) => Boolean(getApiKey(name)))
+      ? 'auth'
+      : 'anon';
+  return `${provider.id}|${baseURL}|${authenticated}`;
+}
 
 /**
  * Detect which providers are currently connected (have API key or are local).
@@ -89,19 +103,29 @@ async function fetchModelsForProvider(
   cfg?: Config
 ): Promise<ModelInfo[]> {
   // Check cache
-  const cached = catalogCache.get(provider.id);
-  if (cached && Date.now() - catalogTimestamp < CACHE_TTL_MS) {
+  const key = catalogKey(provider, cfg);
+  const cached = catalogCache.get(key);
+  const timestamp = catalogTimestamps.get(key) ?? 0;
+  if (cached && Date.now() - timestamp < CACHE_TTL_MS) {
     return cached;
   }
 
+  const cache = (models: ModelInfo[]): ModelInfo[] => {
+    catalogCache.set(key, models);
+    catalogTimestamps.set(key, Date.now());
+    return models;
+  };
+
   try {
     if (provider.isLocal) {
-      const baseURL = getProviderBaseURL(provider);
+      const baseURL =
+        cfg?.provider?.toLowerCase() === provider.id.toLowerCase()
+          ? cfg.baseURL
+          : getProviderBaseURL(provider);
       const url = baseURL || cfg?.baseURL || 'http://127.0.0.1:1234/v1';
       const models = await fetchLocalModels(url);
       if (models.length > 0) {
-        catalogCache.set(provider.id, models);
-        return models;
+        return cache(models);
       }
     }
 
@@ -111,14 +135,13 @@ async function fetchModelsForProvider(
       if (apiKey) {
         const models = await fetchOpenRouterModels(apiKey);
         if (models.length > 0) {
-          catalogCache.set(provider.id, models);
-          return models;
+          return cache(models);
         }
       }
     }
 
     // Other cloud providers: try fetching from their API
-    if (provider.baseURL) {
+    if (provider.baseURL || cfg?.provider?.toLowerCase() === provider.id.toLowerCase()) {
       const apiKeyEnvVars = getApiKeyEnvVars(provider.id);
       let apiKey: string | undefined;
       for (const envVar of apiKeyEnvVars) {
@@ -130,18 +153,20 @@ async function fetchModelsForProvider(
       }
 
       if (apiKey) {
-        const models = await fetchRemoteModels(getProviderBaseURL(provider), apiKey);
+        const baseURL =
+          cfg?.provider?.toLowerCase() === provider.id.toLowerCase()
+            ? cfg.baseURL
+            : getProviderBaseURL(provider);
+        const models = await fetchRemoteModels(baseURL, apiKey);
         if (models.length > 0) {
-          catalogCache.set(provider.id, models);
-          return models;
+          return cache(models);
         }
       }
     }
 
     // Fallback to hardcoded models from the catalog
     if (provider.models.length > 0) {
-      catalogCache.set(provider.id, provider.models);
-      return provider.models;
+      return cache(provider.models);
     }
   } catch {
     // On error, fall through to hardcoded models
@@ -220,7 +245,7 @@ export async function getModelIdList(cfg?: Config): Promise<string[]> {
  */
 export function invalidateModelCatalog(): void {
   catalogCache.clear();
-  catalogTimestamp = 0;
+  catalogTimestamps.clear();
 }
 
 /**

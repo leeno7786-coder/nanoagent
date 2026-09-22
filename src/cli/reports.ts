@@ -1,6 +1,15 @@
 import type { Config, ModelInfo } from '../types.js';
 import { loadConfig, validateConfig } from '../config/index.js';
-import { checkRuntimeHealth, fetchLocalModels, RUNTIME_PROVIDERS } from '../providers/index.js';
+import {
+  checkRuntimeHealth,
+  fetchLocalModels,
+  fetchOpenRouterModels,
+  fetchRemoteModels,
+  getApiKeyEnvVars,
+  getProvider,
+  getProviderForBaseURL,
+} from '../providers/index.js';
+import { getApiKey } from '../config/api-keys.js';
 import {
   enrichConfigWithRuntime,
   isSmallModelFromConfig,
@@ -180,16 +189,35 @@ export async function getModelsList(baseURL?: string, cfg?: Config): Promise<Mod
     return fetchLocalModels(url);
   }
 
-  // For remote providers, return hardcoded models from the provider config
-  // Try to find the provider by baseURL
-  for (const provider of RUNTIME_PROVIDERS) {
-    if (provider.baseURL && url.includes(provider.baseURL.replace(/\/+$/, ''))) {
-      return provider.models || [];
+  // An explicit --base-url is authoritative; do not let the configured
+  // provider (often LM Studio) decide how a different endpoint is queried.
+  const provider = baseURL
+    ? getProviderForBaseURL(url)
+    : c.provider
+      ? getProvider(c.provider)
+      : getProviderForBaseURL(url);
+  const configuredProviderMatches =
+    !baseURL || !c.provider || c.provider.toLowerCase() === provider?.id.toLowerCase();
+  if (provider?.id === 'openrouter') {
+    const key =
+      (configuredProviderMatches ? c.apiKey : undefined) || getApiKey('OPENROUTER_API_KEY');
+    if (key) {
+      const models = await fetchOpenRouterModels(key);
+      if (models.length > 0) return models;
+    }
+  } else if (provider && !provider.isLocal) {
+    const key =
+      (configuredProviderMatches ? c.apiKey : undefined) ||
+      getApiKeyEnvVars(provider.id)
+        .map((name) => getApiKey(name))
+        .find((value): value is string => Boolean(value));
+    if (key) {
+      const models = await fetchRemoteModels(url, key);
+      if (models.length > 0) return models;
     }
   }
 
-  // If no matching provider found, return empty array
-  return [];
+  return provider?.models || [];
 }
 
 export function formatModelsList(models: ModelInfo[]): string {

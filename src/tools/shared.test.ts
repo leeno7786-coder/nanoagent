@@ -52,6 +52,28 @@ describe('getSanitizedEnv GIT_CONFIG_* family handling', () => {
     expect(env.MY_TEST_SECRET_TOKEN).toBeUndefined();
     delete process.env.MY_TEST_SECRET_TOKEN;
   });
+
+  it('filters credential-bearing connection strings even with neutral names', () => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgres://alice:secret@db.example/app';
+    expect(getSanitizedEnv().DATABASE_URL).toBeUndefined();
+    if (previous === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous;
+  });
+
+  it('does not discard similarly named non-secret environment variables', () => {
+    const previousAuthor = process.env.AUTHOR;
+    const previousHost = process.env.RAPIDAPI_HOST;
+    process.env.AUTHOR = 'NanoAgent';
+    process.env.RAPIDAPI_HOST = 'api.example.test';
+    const env = getSanitizedEnv();
+    expect(env.AUTHOR).toBe('NanoAgent');
+    expect(env.RAPIDAPI_HOST).toBe('api.example.test');
+    if (previousAuthor === undefined) delete process.env.AUTHOR;
+    else process.env.AUTHOR = previousAuthor;
+    if (previousHost === undefined) delete process.env.RAPIDAPI_HOST;
+    else process.env.RAPIDAPI_HOST = previousHost;
+  });
 });
 
 describe('safe() sandbox error message', () => {

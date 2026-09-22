@@ -118,6 +118,22 @@ describe('session load/delete with hostile ids', () => {
     expect(() => deleteSession('../../package')).not.toThrow();
     expect(() => deleteSession('')).not.toThrow();
   });
+
+  it('sanitizes hostile ids at the save boundary', () => {
+    const projectDir = join(tmpRoot, 'save-boundary');
+    mkdirSync(projectDir, { recursive: true });
+    setActiveSessionWorkspace(projectDir);
+    const saved = saveSession({
+      id: '../../outside',
+      messages: [],
+      todos: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    expect(saved).not.toContain('/');
+    expect(existsSync(join(projectDir, '.nanoagent', 'sessions', `${saved}.json`))).toBe(true);
+    expect(existsSync(join(tmpRoot, 'outside.json'))).toBe(false);
+  });
 });
 
 describe('project-local sessions under .nanoagent', () => {
@@ -283,6 +299,41 @@ describe('conversation hashes', () => {
     const second = loadSession(id2);
     expect(second?.createdAt).toBe(first?.createdAt);
     expect(second?.messages).toHaveLength(2);
+  });
+
+  it('clears the live hash when that active session is deleted', () => {
+    const liveId = 'deadbeef';
+    setLiveSessionId(liveId);
+    saveSession(sampleSession(liveId));
+
+    deleteSession(liveId);
+
+    expect(getLiveSessionId()).toBeUndefined();
+    const replacement = autoSaveSession(
+      [{ id: 'm1', role: 'user', content: 'replacement', timestamp: 1 }],
+      [],
+      projectDir
+    );
+    expect(replacement).not.toBe(liveId);
+    expect(existsSync(join(projectDir, '.nanoagent', 'sessions', `${liveId}.json`))).toBe(false);
+  });
+
+  it('clears the live hash when the active workspace changes', () => {
+    const otherWorkspace = join(tmpRoot, 'other-project');
+    mkdirSync(otherWorkspace, { recursive: true });
+    setLiveSessionId('aaaaaaaa');
+    saveSession(sampleSession('aaaaaaaa'));
+
+    setActiveSessionWorkspace(otherWorkspace);
+
+    expect(getLiveSessionId()).toBeUndefined();
+    const id = autoSaveSession(
+      [{ id: 'm1', role: 'user', content: 'other workspace', timestamp: 1 }],
+      [],
+      otherWorkspace
+    );
+    expect(id).not.toBe('aaaaaaaa');
+    expect(existsSync(join(otherWorkspace, '.nanoagent', 'sessions', 'aaaaaaaa.json'))).toBe(false);
   });
 
   it('resolveSessionId matches a unique prefix case-insensitively', () => {

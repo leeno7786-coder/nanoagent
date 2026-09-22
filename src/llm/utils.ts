@@ -1,5 +1,17 @@
 import { createRequire } from 'module';
 
+const KNOWN_LOCAL_HOSTS = new Set([
+  'lm-studio',
+  'lmstudio',
+  'ollama',
+  'llamacpp',
+  'foundry',
+  'fastflow',
+  'vllm',
+  'jan',
+  'localai',
+]);
+
 export function normalizeContent(v: unknown): string {
   if (v === null || v === undefined) return '';
   if (typeof v === 'string') return v;
@@ -26,21 +38,32 @@ export function normalizeContent(v: unknown): string {
 
 export function isLocalProvider(baseURL?: string): boolean {
   if (!baseURL) return false;
-  const u = baseURL.toLowerCase();
-  return (
-    u.includes('localhost') ||
-    u.includes('127.0.0.1') ||
-    u.includes('0.0.0.0') ||
-    u.includes('lm-studio') ||
-    u.includes('lmstudio') ||
-    u.includes('ollama') ||
-    u.includes('llamacpp') ||
-    u.includes('foundry') ||
-    u.includes('fastflow') ||
-    u.includes('vllm') ||
-    u.includes('jan') ||
-    u.includes('localai')
-  );
+  try {
+    const parsed = new URL(/:\/\//.test(baseURL) ? baseURL : `http://${baseURL}`);
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (
+      host === 'localhost' ||
+      host === '::1' ||
+      host === '0.0.0.0' ||
+      /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(host)
+    ) {
+      return true;
+    }
+    const octets = host.split('.').map((part) => Number(part));
+    const privateIpv4 =
+      octets.length === 4 &&
+      octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
+      (octets[0] === 10 ||
+        (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+        (octets[0] === 192 && octets[1] === 168));
+    if (privateIpv4 || host.endsWith('.local')) return true;
+
+    // Provider names are only accepted as hostnames, never as arbitrary URL
+    // path fragments such as https://gateway.example/ollama/v1.
+    return KNOWN_LOCAL_HOSTS.has(host);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -81,7 +104,12 @@ export function isSmallModel(
   if (lower.includes('nano')) return true;
 
   if (lower.includes('nemotron') && (lower.includes('4b') || lower.includes('nano'))) return true;
-  if (lower.includes('phi')) return true;
+  if (
+    lower.includes('phi') &&
+    (/(?:^|[^a-z])(?:mini|small|tiny)(?:[^a-z]|$)/.test(lower) || paramSize.test(lower))
+  ) {
+    return true;
+  }
   if (lower.includes('gemma') && paramSize.test(lower)) return true;
   if (lower.includes('qwen') && paramSize.test(lower)) return true;
   if (lower.includes('llama') && paramSize.test(lower)) return true;

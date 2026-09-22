@@ -26,11 +26,31 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSy
 import { join, relative } from 'node:path';
 import * as ts from 'typescript';
 import { logError, logInfo, logWarn } from '../log.js';
+import { validateSearchPattern } from '../tools/shared.js';
 
 const GRAPH_VERSION = '1.0.0';
 const GRAPH_DIRECTORY = '.qwen-graph';
 const GRAPH_FILE = 'memory-graph.json';
 const HASH_FILE = 'graph-hash.json';
+
+const SENSITIVE_FILE_RE =
+  /^(?:\.env(?:\..*)?|.*(?:secret|credential).*)(?:\..*)?$|.*\.(?:pem|key|p12|pfx|crt|cer)$/i;
+const SENSITIVE_CONFIG_KEY_RE =
+  /(api[_-]?key|token|secret|password|credential|authorization|private)/i;
+
+function isSensitiveFileName(name: string): boolean {
+  return SENSITIVE_FILE_RE.test(name);
+}
+
+function safeConfigValue(key: string, value: unknown): string {
+  if (SENSITIVE_CONFIG_KEY_RE.test(key)) return '[REDACTED]';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value) ?? '[unserializable]';
+  } catch {
+    return '[unserializable]';
+  }
+}
 
 export class MemoryGraph {
   private nodes: Map<string, GraphNode>;
@@ -226,8 +246,10 @@ export class MemoryGraph {
     const files: string[] = [];
 
     try {
-      for (const item of readdirSync(directory)) {
-        const fullPath = join(directory, item);
+      for (const item of readdirSync(directory, { withFileTypes: true })) {
+        // Do not follow symlinks: graph indexing must stay inside the project.
+        if (item.isSymbolicLink()) continue;
+        const fullPath = join(directory, item.name);
         // Normalize to forward slashes for consistent matching on Windows and Unix
         const normPath = fullPath.replace(/\\/g, '/');
 
@@ -242,7 +264,11 @@ export class MemoryGraph {
           // Skip excluded directories (match name exactly or as a path segment)
           if (
             this.options.excludedPaths?.some(
-              (p) => item === p || normPath.includes(`/${p}/`) || normPath.endsWith(`/${p}`)
+              (p) =>
+                item.name === p ||
+                normPath.includes(`/${p}/`) ||
+                normPath.endsWith(`/${p}`) ||
+                (p.startsWith('*.') && item.name.endsWith(p.slice(1)))
             )
           ) {
             continue;
@@ -255,7 +281,11 @@ export class MemoryGraph {
             // Only recurse if this directory is (or is under) an included path
             if (
               this.options.includedPaths.some(
-                (p) => item === p || normPath.includes(`/${p}/`) || normPath.endsWith(`/${p}`)
+                (p) =>
+                  item.name === p ||
+                  normPath.includes(`/${p}/`) ||
+                  normPath.endsWith(`/${p}`) ||
+                  (p.startsWith('*.') && item.name.endsWith(p.slice(1)))
               )
             ) {
               files.push(...this.findFiles(fullPath));
@@ -263,7 +293,15 @@ export class MemoryGraph {
           }
         } else if (stat.isFile()) {
           // Skip excluded files
-          if (this.options.excludedPaths?.some((p) => item === p || item.endsWith(p))) {
+          if (
+            isSensitiveFileName(item.name) ||
+            this.options.excludedPaths?.some(
+              (p) =>
+                item.name === p ||
+                item.name.endsWith(p) ||
+                (p.startsWith('*.') && item.name.endsWith(p.slice(1)))
+            )
+          ) {
             continue;
           }
 
@@ -1010,10 +1048,10 @@ export class MemoryGraph {
             id: `config:${fileNode.id}:${key}`,
             type: 'concept',
             name: key,
-            description: typeof value === 'string' ? value : JSON.stringify(value),
+            description: safeConfigValue(key, value),
             path: fileNode.path,
             metadata: {
-              value: value,
+              value: SENSITIVE_CONFIG_KEY_RE.test(key) ? '[REDACTED]' : value,
               configType: typeof value,
             },
             createdAt: Date.now(),
@@ -1099,11 +1137,11 @@ export class MemoryGraph {
             id: `config:${fileNode.id}:${key}`,
             type: 'concept',
             name: key,
-            description: value,
+            description: SENSITIVE_CONFIG_KEY_RE.test(key) ? '[REDACTED]' : value,
             path: fileNode.path,
             line: lineNum,
             metadata: {
-              value,
+              value: SENSITIVE_CONFIG_KEY_RE.test(key) ? '[REDACTED]' : value,
               configType: 'yaml',
             },
             createdAt: Date.now(),
@@ -1403,6 +1441,7 @@ export class MemoryGraph {
    */
   private queryByPattern(pattern: string): GraphNode[] {
     const results: GraphNode[] = [];
+    if (validateSearchPattern(pattern)) return results;
     const regex = new RegExp(pattern, 'i');
 
     for (const [, node] of this.nodes) {

@@ -9,6 +9,7 @@ import type {
   McpRemoteServerConfig,
 } from '../types.js';
 import type { Tool } from '../tools/index.js';
+import { getSanitizedEnv } from '../tools/shared.js';
 import { createSecurityManager } from '../security/index.js';
 import { readFileSync, realpathSync } from 'fs';
 import { createHash } from 'crypto';
@@ -93,6 +94,8 @@ interface McpServerConnection {
   state: McpServerState;
 }
 
+const MCP_CONNECT_TIMEOUT_MS = 30_000;
+
 /**
  * Manages connections to MCP servers and exposes their tools
  * in the agent's Tool format.
@@ -155,30 +158,71 @@ export class McpManager {
     const client = new Client({ name: 'nanoagent', version: '1.1.0' });
 
     try {
-      if (config.type === 'local') {
-        await this.connectLocal(client, name, config);
-      } else {
-        await this.connectRemote(client, name, config);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let timedOut = false;
+      const connection = (async () => {
+        if (config.type === 'local') {
+          await this.connectLocal(client, name, config);
+        } else {
+          await this.connectRemote(client, name, config);
+        }
+
+        // Discover tools
+        const { tools: mcpTools } = await client.listTools();
+        if (timedOut) throw new Error('MCP connection timed out');
+        const tools = mcpTools.map((t) => ({
+          name: t.name,
+          description: t.description ?? `MCP tool: ${t.name}`,
+          inputSchema: t.inputSchema ?? { type: 'object', properties: {} },
+        }));
+
+        const serverInfo = client.getServerVersion() ?? undefined;
+        return {
+          name,
+          status: 'connected' as const,
+          toolCount: tools.length,
+          serverInfo: serverInfo
+            ? { name: serverInfo.name, version: serverInfo.version }
+            : undefined,
+          tools,
+        };
+      })();
+      try {
+        const result = await Promise.race([
+          connection,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                (() => {
+                  timedOut = true;
+                  // Closing the client also closes stdio/HTTP transports when
+                  // a slow connect or tool discovery loses the race.
+                  void client.close().catch(() => {});
+                  reject(
+                    new Error(`MCP connection timed out after ${MCP_CONNECT_TIMEOUT_MS / 1000}s`)
+                  );
+                })(),
+              MCP_CONNECT_TIMEOUT_MS
+            );
+          }),
+        ]);
+        const state: McpServerState = {
+          name: result.name,
+          status: result.status,
+          toolCount: result.toolCount,
+          serverInfo: result.serverInfo,
+        };
+        this.connections.set(name, {
+          name,
+          client,
+          config,
+          tools: result.tools,
+          state,
+        });
+        return state;
+      } finally {
+        if (timer) clearTimeout(timer);
       }
-
-      // Discover tools
-      const { tools: mcpTools } = await client.listTools();
-      const tools = mcpTools.map((t) => ({
-        name: t.name,
-        description: t.description ?? `MCP tool: ${t.name}`,
-        inputSchema: t.inputSchema ?? { type: 'object', properties: {} },
-      }));
-
-      const serverInfo = client.getServerVersion() ?? undefined;
-      const state: McpServerState = {
-        name,
-        status: 'connected',
-        toolCount: tools.length,
-        serverInfo: serverInfo ? { name: serverInfo.name, version: serverInfo.version } : undefined,
-      };
-
-      this.connections.set(name, { name, client, config, tools, state });
-      return state;
     } catch (err: unknown) {
       const e = err as { message?: string };
       const state: McpServerState = {
@@ -203,13 +247,11 @@ export class McpManager {
    * explicitly declared in their config `env` block.
    */
   private sanitizedBaseEnv(): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v === undefined) continue;
-      if (/(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE)/i.test(k)) continue;
-      out[k] = v;
-    }
-    return out;
+    return Object.fromEntries(
+      Object.entries(getSanitizedEnv()).filter((entry): entry is [string, string] => {
+        return entry[1] !== undefined;
+      })
+    );
   }
 
   /**

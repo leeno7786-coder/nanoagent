@@ -38,7 +38,7 @@ This document verifies that the security hardening features work correctly in a 
 - ✅ `mkfs.ext4 /dev/sda1` - BLOCKED
 - ✅ `kill -9 1` - BLOCKED
 - ✅ `sudo rm -rf /` - BLOCKED
-- ✅ `chmod 777 /etc/passwd` - BLOCKED
+- ✅ `chmod 777 /etc/passwd` - structurally allowed; use the permission gate to deny it
 - ✅ `echo hello; rm -rf /` - BLOCKED (shell injection)
 - ✅ `echo hello | sh` - BLOCKED (pipe to shell)
 
@@ -155,7 +155,8 @@ Ran 191 tests across 15 files
 [9.58s]
 ```
 
-All existing tests continue to pass with the security hardening features integrated.
+The security-focused and full test suites are the source of truth for the current
+test count; this historical workflow checklist is intentionally not a pinned count.
 
 ---
 
@@ -164,14 +165,14 @@ All existing tests continue to pass with the security hardening features integra
 ### Command Validation
 - ✅ **Dangerous commands blocked**: rm -rf, dd, mkfs, kill -9, sudo, etc.
 - ✅ **Safe commands allowed**: ls, git status, cat, echo, pwd, etc.
-- ✅ **Shell injection prevented**: Commands with `;`, `&&`, `||`, backticks blocked
+- ✅ **Shell-loader payloads blocked**: Common destructive and pipe-to-shell patterns are blocked; general shell syntax remains subject to the permission gate
 - ✅ **Pipe to shell prevented**: `| sh`, `| bash` blocked
 
 ### File Access Control
 - ✅ **Workspace validation**: Paths outside workspace blocked
 - ✅ **Sensitive paths blocked**: .env, .git, .ssh, node_modules, etc.
 - ✅ **Custom patterns supported**: Glob patterns for allowed/blocked paths
-- ✅ **Allowed paths override**: Allowed paths take precedence over blocked paths
+- ✅ **Immutable paths**: Secrets, VCS metadata, `.nanoagent`, private keys, and system-auth paths cannot be re-enabled by a broad allowlist
 
 ### Output Sanitization
 - ✅ **API keys sanitized**: OpenAI, OpenRouter, Google, AWS, etc.
@@ -181,7 +182,7 @@ All existing tests continue to pass with the security hardening features integra
 - ✅ **File references sanitized**: .env file references
 
 ### Configuration
-- ✅ **JSON configuration**: Via `~/.qwen-agent.json`
+- ✅ **JSON configuration**: Via `$NANOAGENT_ROOT/config/nanogent.json`
 - ✅ **Environment variables**: Prefixed with `QWEN_SECURITY_`
 - ✅ **Programmatic API**: Via `SecurityManager` class
 - ✅ **Default values**: Sensible defaults for all options

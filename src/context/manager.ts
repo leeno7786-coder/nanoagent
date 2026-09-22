@@ -438,7 +438,7 @@ export class ContextManager {
   }
 
   /**
-   * True when history is already the post-compact shape: kept system
+   * True when history is already the minimal post-compact shape: kept system
    * messages, optional handoff summary, and the original user task.
    * Auto-compact must not loop on that form even if fill is still high
    * (huge system prompt on a small loaded window).
@@ -472,9 +472,10 @@ export class ContextManager {
    * Compact conversation history when fill exceeds ~80% of the loaded window
    * (or when `force` / `/compact`).
    *
-   * Replaces the conversation with: kept system messages, a summary of
-   * everything that happened, and the original user task. `keepCount` /
-   * `targetRatio` are ignored — those were the old drop-oldest path.
+   * Removes the oldest complete message groups until the requested target
+   * ratio is reached, while retaining the original task and at least the
+   * requested number of recent messages. Tool-call groups are atomic so an
+   * assistant call is never separated from its results.
    */
   compact(opts?: { force?: boolean; keepCount?: number; targetRatio?: number; summary?: string }): {
     removedCount: number;
@@ -485,25 +486,26 @@ export class ContextManager {
     }
 
     const force = opts?.force === true;
-    if (!force && (this.isAlreadyCompacted() || !this.getStats().needsCompaction)) {
+    const stats = this.getStats();
+    if (!force && (this.isAlreadyCompacted() || !stats.needsCompaction)) {
       return { removedCount: 0 };
     }
 
     const keptSystem: Message[] = [];
-    let i = 0;
-    while (i < this.messages.length && this.messages[i]!.role === 'system') {
-      const msg = this.messages[i]!;
+    let firstHistoryIndex = 0;
+    while (
+      firstHistoryIndex < this.messages.length &&
+      this.messages[firstHistoryIndex]!.role === 'system'
+    ) {
+      const msg = this.messages[firstHistoryIndex]!;
       if (msg.id === 'system-base' || msg.id === 'system-todos') {
         keptSystem.push(msg);
       }
-      i++;
-    }
-    while (i < this.messages.length && this.messages[i]!.role === 'system') {
-      i++;
+      firstHistoryIndex++;
     }
 
     let originalUser: Message | undefined;
-    for (; i < this.messages.length; i++) {
+    for (let i = firstHistoryIndex; i < this.messages.length; i++) {
       const msg = this.messages[i]!;
       if (msg.id.startsWith('notice-')) continue;
       if (msg.role === 'user') {
@@ -512,9 +514,71 @@ export class ContextManager {
       }
     }
 
-    const keepIds = new Set(keptSystem.map((m) => m.id));
-    if (originalUser) keepIds.add(originalUser.id);
-    const removed = this.messages.filter((m) => !keepIds.has(m.id));
+    const protectedIds = new Set(keptSystem.map((m) => m.id));
+    if (originalUser) protectedIds.add(originalUser.id);
+
+    // Build atomic groups for assistant tool calls and their contiguous tool
+    // results. Ordinary messages remain one-message groups.
+    const groups: Message[][] = [];
+    for (let i = firstHistoryIndex; i < this.messages.length; i++) {
+      const msg = this.messages[i]!;
+      if (msg.role !== 'assistant' || !msg.toolCalls?.length) {
+        groups.push([msg]);
+        continue;
+      }
+      const callIds = new Set(msg.toolCalls.map((call) => call.id));
+      const group = [msg];
+      let next = i + 1;
+      while (
+        next < this.messages.length &&
+        this.messages[next]!.role === 'tool' &&
+        this.messages[next]!.toolCallId &&
+        callIds.has(this.messages[next]!.toolCallId as string)
+      ) {
+        group.push(this.messages[next]!);
+        next++;
+      }
+      groups.push(group);
+      i = next - 1;
+    }
+
+    const effectiveKeep =
+      opts?.keepCount !== undefined
+        ? Math.max(0, Math.floor(opts.keepCount))
+        : force
+          ? 0
+          : Math.max(0, Math.floor(this.config.keepCount));
+    const tailKeepIds = new Set<string>();
+    let keptRecentCount = 0;
+    for (let i = groups.length - 1; i >= 0 && keptRecentCount < effectiveKeep; i--) {
+      const group = groups[i]!;
+      if (group.some((message) => protectedIds.has(message.id))) continue;
+      for (const message of group) tailKeepIds.add(message.id);
+      keptRecentCount += group.length;
+    }
+
+    const contextSize = this.getContextWindowSize();
+    const rawTargetRatio = opts?.targetRatio ?? DEFAULT_COMPACTION_TARGET_RATIO;
+    const targetRatio = Number.isFinite(rawTargetRatio)
+      ? Math.max(0, Math.min(1, rawTargetRatio))
+      : DEFAULT_COMPACTION_TARGET_RATIO;
+    const targetTokens = Math.floor(contextSize * targetRatio);
+    const forceFull = force && opts?.keepCount === undefined && opts?.targetRatio === undefined;
+    const forceDropToKeep = force && stats.currentTokens <= targetTokens;
+    const removeIds = new Set<string>();
+    let removedTokens = 0;
+    for (const group of groups) {
+      if (group.some((message) => protectedIds.has(message.id))) continue;
+      if (group.some((message) => tailKeepIds.has(message.id))) continue;
+      if (!forceFull && !forceDropToKeep && stats.currentTokens - removedTokens <= targetTokens)
+        break;
+      for (const message of group) {
+        removeIds.add(message.id);
+        removedTokens += this.countMessageTokens([message]);
+      }
+    }
+
+    const removed = this.messages.filter((message) => removeIds.has(message.id));
     if (removed.length === 0 && !opts?.summary?.trim()) {
       return { removedCount: 0 };
     }
@@ -525,15 +589,25 @@ export class ContextManager {
     }
 
     const next: Message[] = [...keptSystem];
-    next.push({
-      id: 'system-compaction',
-      role: 'system',
-      content: summaryText.startsWith('[Context compacted')
-        ? summaryText
-        : `[Context compacted]\n${summaryText}`,
-      timestamp: Date.now(),
-    });
-    if (originalUser) next.push(originalUser);
+    if (summaryText) {
+      next.push({
+        id: 'system-compaction',
+        role: 'system',
+        content: summaryText.startsWith('[Context compacted')
+          ? summaryText
+          : `[Context compacted]\n${summaryText}`,
+        timestamp: Date.now(),
+      });
+    }
+    next.push(
+      ...this.messages.filter(
+        (message) =>
+          message.role !== 'system' &&
+          !message.id.startsWith('notice-') &&
+          message.id !== 'system-compaction' &&
+          !removeIds.has(message.id)
+      )
+    );
 
     this.messages = next;
     this.reseedTokenCache();

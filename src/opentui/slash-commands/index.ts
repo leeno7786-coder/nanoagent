@@ -14,6 +14,7 @@ import {
   resumeSession,
   exportToMarkdown,
   allocateSessionHash,
+  ensureLiveSessionId,
   setLiveSessionId,
 } from '../../store.js';
 import { copyToClipboard } from '../../clipboard.js';
@@ -41,6 +42,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
     setToolResults,
     setTodos,
     setSessions,
+    setCurrentSessionId,
     setOverlay,
     setShowTodos,
     setTheme,
@@ -49,6 +51,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
     handleSave,
     handleLoad,
     handleRename,
+    clearQueue,
   } = ctx;
 
   const command = text.trim().substring(1).split(' ')[0];
@@ -202,6 +205,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       const { changeAgentWorkspace } = await import('../../agent-lifecycle.js');
       const result = await changeAgentWorkspace(agent, next);
       if (result.ok) {
+        setCurrentSessionId?.(ensureLiveSessionId());
         pushAssistant(
           agent,
           `Workspace changed to ${result.workspace}\n` +
@@ -277,12 +281,22 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       return;
     }
     case 'new': {
-      agent.messages = [];
+      const systemMessages = agent.messages.filter(
+        (m) => m.id === 'system-base' || m.id === 'system-todos'
+      );
+      agent.messages = systemMessages;
+      agent.contextManager.clear();
+      agent.contextManager.setMessages(systemMessages);
       agent.todos = [];
+      agent.currentTool = undefined;
+      agent.toolCache?.clear();
+      clearQueue?.();
       setMessages([]);
+      setToolResults([]);
       setTodos([]);
       const hash = allocateSessionHash();
       setLiveSessionId(hash);
+      setCurrentSessionId?.(hash);
       pushAssistant(
         agent,
         `Started a new session (${hash}). Previous conversation cleared. Resume later with \`nanoagent --resume ${hash}\`.`,
@@ -524,8 +538,8 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
             : []),
           '',
           '**Configuration Files:**',
-          '- Local: `.nanogent.json` in workspace root',
-          '- Global: `~/.nanogent.json` in home directory',
+          '- Local: `nanogent.json` in the selected workspace (when using --workspace)',
+          '- Global: `<NANOAGENT_ROOT>/config/nanogent.json`',
           '',
           '**Usage:**',
           '- `/config set model <name>` (set model locally)',

@@ -117,10 +117,22 @@ export class AgentCore {
   /** Build (and cache) the OpenAI tool schemas for the current tool/skill set. */
   /** @internal Accessed by agent/run.ts. */
   public buildToolSchemas(activeSkills: Set<string>): ReturnType<typeof toOpenAI> {
-    const all = getAllTools();
+    const all = getAllTools(this);
     // Include tool names (not just count) so MCP reconnects with same cardinality
     // but different schemas still invalidate the cache.
-    const key = `${all.map((t) => t.name).join(',')}|${[...activeSkills].sort().join(',')}`;
+    const key = JSON.stringify({
+      tools: all.map((t) => ({
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      })),
+      skills: [...activeSkills].sort(),
+      model: this.cfg.model,
+      baseURL: this.cfg.baseURL,
+      small: this._smallModel,
+      smallModelMode: this.cfg.smallModelMode,
+      subAgents: this.cfg.subAgentEnabled,
+    });
     if (this.toolSchemaCache?.key === key) return this.toolSchemaCache.tools;
     // H5: tool-set change changes schema overhead — reset the high-water.
     this.contextManager.resetOverhead();
@@ -167,6 +179,12 @@ export class AgentCore {
   _systemPromptContent: string = '';
   /** @internal Guard so auto-compact and `/compact` cannot overlap. */
   _compacting = false;
+  /** @internal Prevent concurrent user turns and live config races. */
+  _activeRun = false;
+  /** @internal Promise used by shutdown to wait for the active turn to settle. */
+  _activeRunPromise: Promise<void> | undefined;
+  /** @internal Set only around compaction initiated by the active run. */
+  _allowRunCompaction = false;
   /** Public accessor for small model flag (used by TUI skill operations). */
   get isSmallModel(): boolean {
     return this._smallModel;
@@ -239,8 +257,8 @@ export class AgentCore {
     return reconfigureAgent(this, newCfg);
   }
 
-  async applyRuntimeProfile() {
-    return applyRuntimeProfile(this);
+  async applyRuntimeProfile(allowActiveRun = false) {
+    return applyRuntimeProfile(this, { allowActiveRun });
   }
 
   async reloadFromDisk() {
@@ -252,7 +270,32 @@ export class AgentCore {
   }
 
   async run(userText: string, signal?: AbortSignal) {
-    return agentRun(this, userText, signal);
+    if (this._activeRun) {
+      throw new Error(
+        'An agent run is already active; wait for it to finish before starting another.'
+      );
+    }
+    this._activeRun = true;
+    const runPromise = (async (): Promise<void> => {
+      try {
+        await agentRun(this, userText, signal);
+      } finally {
+        this.currentTool = undefined;
+        this._allowRunCompaction = false;
+        this._activeRun = false;
+      }
+    })();
+    this._activeRunPromise = runPromise;
+    try {
+      return await runPromise;
+    } finally {
+      if (this._activeRunPromise === runPromise) this._activeRunPromise = undefined;
+    }
+  }
+
+  /** @internal Used only by failover during the active run. */
+  async _reconfigureDuringRun(newCfg: Partial<Config>) {
+    return reconfigureAgent(this, newCfg, { allowActiveRun: true });
   }
 
   spawnBackgroundSubAgent(prompt: string, focusPath?: string): string {
@@ -287,8 +330,8 @@ export class AgentCore {
   }
 
   /** @internal Accessed by agent/run.ts. */
-  public toChatMessages(): ChatMessage[] {
-    return toChatMessages(this);
+  public toChatMessages(includeTrailingAssistant = false): ChatMessage[] {
+    return toChatMessages(this, includeTrailingAssistant);
   }
 
   /** @internal Accessed by agent/run.ts. */
@@ -317,11 +360,13 @@ export class AgentCore {
   }
 
   public async checkAndCompactContext(signal?: AbortSignal): Promise<boolean> {
+    if (this._activeRun && !this._allowRunCompaction) return false;
     return checkAndCompactContext(this, false, signal);
   }
 
   /** User `/compact` — may run below the auto 80% threshold. */
   public async forceCompactContext(escalationLevel = 0, signal?: AbortSignal): Promise<boolean> {
+    if (this._activeRun && !this._allowRunCompaction) return false;
     return forceCompactContext(this, escalationLevel, signal);
   }
 

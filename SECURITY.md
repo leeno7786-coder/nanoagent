@@ -12,7 +12,30 @@ The security system provides three main layers of protection:
 
 The interactive **policy gate** lives in `PermissionManager`, not in `validateCommand`. It decides whether each command requires user confirmation (`ask` / `allow_edits`), runs freely (`always_allow`), or is denied (`read_only`).
 
-> **Note:** NanoAgent no longer ships a built-in dangerous-pattern blocklist. `SecurityManager.validateCommand` is now a structural validator (empty check + your custom allow/block lists). The human-in-the-loop is the safety net — review each command when prompted, then choose `always_allow` for any command/category you trust.
+> **Note:** NanoAgent includes a small built-in denylist for universally destructive
+> commands and common shell-loader patterns. The interactive policy gate remains
+> the primary safety control: review commands when prompted, and use `always_allow`
+> only for commands/categories you trust.
+
+---
+
+## Canonical State Root
+
+The launcher keeps the package/install root separate from the writable state root. `NANOAGENT_ROOT` always names the state root and contains the install-global files:
+
+```text
+NANOAGENT_ROOT/
+├── config/      nanogent.json, .env, skill-config.json
+├── skills/      bundled and user skills
+├── tools/       managed tools
+├── sessions/    install-global session fallback
+├── workspace/   default workspace
+└── logs/        launcher and crash logs
+```
+
+The launcher resolves `dist/main.js` from the package directory containing `scripts/run-nanoagent.mjs`, not from `NANOAGENT_ROOT`. A source checkout uses its checkout root as state when it is writable. A packaged install whose files live in a read-only system directory uses a per-user state directory (`$XDG_STATE_HOME/nanoagent` or `$HOME/.local/state/nanoagent` on Linux, `%LOCALAPPDATA%\nanoagent` on Windows). Set `NANOAGENT_ROOT` explicitly to choose another writable state root.
+
+Project-specific sessions and rollback history remain under `<workspace>/.nanoagent/`; that directory is NanoAgent harness state and is also protected by the file-access rules below.
 
 ---
 
@@ -22,30 +45,32 @@ Anything shipped inside a cloned repository is **untrusted** — a malicious rep
 able to escalate privileges just by being opened in the agent:
 
 - **Workspace `.env` files are untrusted.** Trust-sensitive variables —
-  `NANOGENT_TRUST_PROJECT_MCP`, `QWEN_SECURITY_*`, `QWEN_BASE_URL`, `REMOTE_LMSTUDIO_URL`,
+  `NANOGENT_TRUST_PROJECT_MCP`, `QWEN_SECURITY_*`, `QWEN_BASE_URL`, `QWEN_WORKSPACE`,
+  `REMOTE_LMSTUDIO_URL`,
   `AZURE_OPENAI_ENDPOINT`, `HF_TOKEN`, `QWEN_FALLBACK_MODEL`, `QWEN_FALLBACK_BASE_URL`,
   `QWEN_FALLBACK_PROVIDER`, and all `*_API_KEY` overrides — are only honored
-  from the **real process environment**
-  (or the trusted home-directory `.env`), never from a workspace/project `.env` loaded
-  via dotenv. `getApiKey()` also reads only home-directory `.env` files.
+  from the **real process environment** or `$NANOAGENT_ROOT/config/.env`, never from a
+  workspace/project `.env` loaded via dotenv. `getApiKey()` also reads only the
+  canonical `$NANOAGENT_ROOT/config/.env`.
   This prevents a repo from disabling security, redirecting the API, sub-agent,
   or failover endpoint (key/code exfiltration), or auto-trusting its own MCP servers.
-- **MCP trust = exact global config paths.** Only the global config files directly in
-  the home directory (`~/.nanogent.json`, `~/.nanoagent.json`, `~/.nanogent/config.json`,
-  `~/.qwen-agent.json`) or an explicitly-passed config path are trusted to auto-connect
-  MCP servers. A project config anywhere else — including repos cloned under `~/` — is
+- **MCP trust = the canonical global config.** Only `$NANOAGENT_ROOT/config/nanogent.json`
+  or an explicitly-passed config path is trusted to auto-connect MCP servers. A project
+  config anywhere else — including repos cloned under `~/` — is
   treated as project-local and blocked from auto-connecting.
 - **Configs merge, trust doesn't leak.** The global config is the base and the project
-  config overrides it key-by-key. MCP server maps merge: global servers stay trusted
+  config may override ordinary model/runtime settings, but cannot override the
+  workspace, endpoint/key, permission, security, system-prompt, profile, failover,
+  sub-agent, or MCP trust fields. MCP server maps merge: global servers stay trusted
   and connect normally; servers that came from the project config are tracked
   (`mcpUntrusted`) and blocked individually.
-- **Project-local MCP configs never auto-connect.** Trust = global `~/.nanogent.json`,
+- **Project-local MCP configs never auto-connect.** Trust = `$NANOAGENT_ROOT/config/nanogent.json`,
   an explicitly-passed config path, or `NANOGENT_TRUST_PROJECT_MCP=1` set in the real
   environment. (RCE guard — MCP servers are arbitrary local processes.)
 - **Project-local skills are disabled by default.** Skills loaded from the workspace
   `skills/` directory (both `.json` and `SKILL.md`) start `enabled: false` and must be
   explicitly enabled, because skill prompts are injected into the system prompt.
-  Home-directory/user-scope skills keep their previous defaults.
+  Install-global skills keep their previous defaults.
 - **Explicit paths are trusted.** A config file passed explicitly by path is treated as
   user-approved, regardless of where it lives on disk.
 
@@ -55,7 +80,7 @@ able to escalate privileges just by being opened in the agent:
 
 Security settings can be configured via:
 
-1. **Configuration file** (`~/.nanogent.json` or `~/.nanoagent.json`; legacy `~/.qwen-agent.json` is still read)
+1. **Configuration file** (`$NANOAGENT_ROOT/config/nanogent.json`)
 2. **Environment variables** (prefixed with `QWEN_SECURITY_`)
 3. **Programmatically** via the `SecurityManager` API
 
@@ -122,7 +147,7 @@ stay readable/editable):
 
 ### Example Configuration
 
-**Via `~/.nanogent.json`:**
+**Via `$NANOAGENT_ROOT/config/nanogent.json`:**
 
 ```json
 {
@@ -163,14 +188,15 @@ export QWEN_SECURITY_MAX_BATCH_FILES=50
 
 ## Command Validation
 
-`SecurityManager.validateCommand` is a **structural** validator. It does **not**
-ship a list of dangerous patterns anymore; that responsibility moved to the
-policy gate (next section).
+`SecurityManager.validateCommand` performs structural validation plus a small
+default denylist for commands that are destructive outside ordinary project
+operations or commonly used for shell payload loading.
 
 What it does, in order:
 
 1. Refuse empty / whitespace-only commands.
-2. If you configured custom `blockedCommands` (regex), reject any match.
+2. Reject built-in destructive/shell-loader patterns and any custom
+   `blockedCommands` (regex) match.
 3. If you configured custom `allowedCommands` (set of exact prefixes), reject
    anything not in the set. An empty `allowedCommands` switches validation to
    deny-all (explicit allowlist enforcement).
@@ -208,9 +234,10 @@ You can extend validation in two places:
   case-insensitive). Switches validation to allowlist enforcement; anything not
   in the list is rejected even if the policy gate would allow it.
 
-> **Note (L1):** With no `allowedCommands` configured, validation is default-allow.
-> Setting `allowedCommands: new Set()` switches to deny-all — see
-> `src/security/index.ts`.
+> **Note:** With no `allowedCommands` configured, ordinary command validation is
+> default-allow after the built-in denylist. Setting `allowedCommands` enables
+> strict prefix enforcement, and shell operators cannot be appended to an allowed
+> prefix.
 
 ---
 
@@ -249,7 +276,9 @@ Path patterns use glob-style matching:
 }
 ```
 
-> **Note:** Allowed paths take precedence over blocked paths. If a path matches both an allowed and blocked pattern, it will be **allowed**.
+> **Note:** Explicit allowed paths can override ordinary custom blocked paths, but
+> secrets, VCS metadata, `.nanoagent`, private-key files, and system-auth paths
+> remain immutable blocks.
 
 ---
 
@@ -265,6 +294,8 @@ The following sensitive data is **automatically sanitized** from tool outputs an
 - **Google:** `AIza[0-9A-Za-z\-_]{35}` → `[GOOGLE_KEY_REDACTED]`
 - **AWS Access Keys:** `AKIA[0-9A-Z]{16}` → `[AWS_ACCESS_KEY_REDACTED]`
 - **Generic API Keys:** Patterns matching `api_key=...`, `apikey=...`, etc.
+- **Connection strings:** Credentials in `scheme://user:password@host/...` and
+  password/token query parameters are redacted.
 
 #### Tokens
 - **JWT Tokens:** `eyJ[...].eyJ[...].[...]` → `[JWT_REDACTED]`

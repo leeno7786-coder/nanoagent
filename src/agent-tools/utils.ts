@@ -44,11 +44,25 @@ export function parseToolArgs(
     return argsStr as Record<string, unknown>;
   }
   const args = parseToolCallArgumentsJson(argsStr);
-  if (!('raw_input' in args)) return args;
+  if (!('raw_input' in args)) {
+    if (args.truncated === true) {
+      throw new Error(
+        'Tool-call arguments were truncated before execution. Retry with a smaller argument payload.'
+      );
+    }
+    return args;
+  }
   const jsonMatch = argsStr.match(/\{[\s\S]*\}/);
   if (jsonMatch && jsonMatch[0] !== argsStr) {
     const retry = parseToolCallArgumentsJson(jsonMatch[0]);
-    if (!('raw_input' in retry)) return retry;
+    if (!('raw_input' in retry)) {
+      if (retry.truncated === true) {
+        throw new Error(
+          'Tool-call arguments were truncated before execution. Retry with a smaller argument payload.'
+        );
+      }
+      return retry;
+    }
   }
   return args;
 }
@@ -169,6 +183,7 @@ export async function handleSpecialToolResults(
               action: 'list',
               todos: pending.map((t) => ({ id: t.id, text: t.text, done: t.done })),
             });
+            agent.contextManager.updateMessage(listMsg);
           }
           agent.onUpdate?.();
         }

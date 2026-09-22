@@ -23,6 +23,7 @@ export interface SlashCommandContext {
   setToolResults: (r: ToolResult[]) => void;
   setTodos: (t: Todo[]) => void;
   setSessions: (s: Session[]) => void;
+  setCurrentSessionId?: (id: string) => void;
   setOverlay: (o: Overlay) => void;
   setShowTodos: (fn: (s: boolean) => boolean) => void;
   setTheme: (t: Theme) => void;

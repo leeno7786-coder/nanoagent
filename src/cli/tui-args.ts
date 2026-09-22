@@ -13,6 +13,7 @@
 
 export type TuiLaunchArgs =
   | { kind: 'not-tui' }
+  | { kind: 'parse-error'; error: string }
   | { kind: 'tui-help' }
   | { kind: 'list-sessions'; workspace?: string }
   | { kind: 'tui'; resume?: string; workspace?: string };
@@ -42,6 +43,7 @@ export function parseTuiLaunchArgs(argv: string[]): TuiLaunchArgs {
   let workspace: string | undefined;
   let list = false;
   let help = false;
+  let missingWorkspace = false;
   const leftover: string[] = [];
 
   const tokens = argv.slice(i);
@@ -65,15 +67,30 @@ export function parseTuiLaunchArgs(argv: string[]): TuiLaunchArgs {
       }
       continue;
     }
+    if (t.startsWith('--resume=')) {
+      resume = t.slice('--resume='.length);
+      continue;
+    }
     if (t === '--workspace' || t === '-w') {
       const next = tokens[j + 1];
       if (next && !next.startsWith('-')) {
         workspace = next;
         j++;
+      } else {
+        missingWorkspace = true;
       }
       continue;
     }
-    if (t.startsWith('-')) return { kind: 'not-tui' };
+    if (t.startsWith('--workspace=')) {
+      workspace = t.slice('--workspace='.length);
+      if (!workspace) missingWorkspace = true;
+      continue;
+    }
+    if (t.startsWith('-')) {
+      return head === 'tui' || head === 'resume'
+        ? { kind: 'parse-error', error: `Unknown TUI option "${t}"` }
+        : { kind: 'not-tui' };
+    }
     leftover.push(t);
   }
 
@@ -85,7 +102,22 @@ export function parseTuiLaunchArgs(argv: string[]): TuiLaunchArgs {
     }
   }
 
+  if (missingWorkspace) {
+    return { kind: 'parse-error', error: '--workspace requires a directory path' };
+  }
+  if (resume === '') {
+    return { kind: 'parse-error', error: '--resume requires a conversation hash' };
+  }
+  if (resume !== undefined && !isSessionHashToken(resume)) {
+    return { kind: 'parse-error', error: `Invalid conversation hash "${resume}"` };
+  }
+  if (head === 'resume' && resume === undefined) {
+    return { kind: 'parse-error', error: 'resume requires a conversation hash' };
+  }
   if (leftover.length > 0) return { kind: 'not-tui' };
+  if (resume !== undefined && list) {
+    return { kind: 'parse-error', error: '--resume cannot be combined with --sessions' };
+  }
   if (help) return { kind: 'tui-help' };
   if (list) {
     return workspace ? { kind: 'list-sessions', workspace } : { kind: 'list-sessions' };

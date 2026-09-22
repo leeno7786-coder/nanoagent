@@ -83,7 +83,7 @@ async function main() {
   if (which('bun')) {
     sh('bun install --frozen-lockfile');
   } else {
-    sh('npm install');
+    sh('npm install --no-package-lock');
   }
   sh('npm run build');
   if (!existsSync(path.join(ROOT, 'dist', 'main.js'))) {
@@ -100,7 +100,13 @@ async function main() {
   }
 
   // npm's --os/--cpu selects optionalDependencies for the target platform.
-  sh('npm install --omit=dev --ignore-scripts --os=win32 --cpu=x64', { cwd: prodDir });
+  sh('npm install --omit=dev --ignore-scripts --os=win32 --cpu=x64', {
+    cwd: prodDir,
+    // npm 11 can inherit a user-level allow-scripts policy and reject an
+    // otherwise safe --ignore-scripts install. Clear that policy for this
+    // isolated production dependency install.
+    env: { ...process.env, NPM_CONFIG_ALLOW_SCRIPTS: '' },
+  });
 
   const winNative = path.join(prodDir, 'node_modules', '@opentui', 'core-win32-x64');
   if (!existsSync(winNative)) {
@@ -108,6 +114,7 @@ async function main() {
     const corePkg = require(path.join(prodDir, 'node_modules', '@opentui', 'core', 'package.json'));
     sh(`npm install @opentui/core-win32-x64@${corePkg.version} --ignore-scripts --no-save`, {
       cwd: prodDir,
+      env: { ...process.env, NPM_CONFIG_ALLOW_SCRIPTS: '' },
     });
   }
   if (!existsSync(winNative)) {

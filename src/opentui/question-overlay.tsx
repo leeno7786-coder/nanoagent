@@ -73,6 +73,32 @@ export function QuestionOverlay({ theme, onClose }: QuestionOverlayProps) {
     onClose();
   }, [questions, selections, customText, isCustomMode, onClose]);
 
+  const submitSingleSelection = useCallback(
+    (qi: number, oi: number) => {
+      const nextSelections = { ...selectionsRef.current, [qi]: new Set([oi]) };
+      const answers = questions.map((q, index) => {
+        const custom = isCustomModeRef.current[index];
+        const customValue = customTextRef.current[index];
+        if (custom && customValue) {
+          return { question: q.question, answers: [customValue] };
+        }
+        const selected = nextSelections[index];
+        return {
+          question: q.question,
+          answers:
+            selected && selected.size > 0
+              ? Array.from(selected)
+                  .filter((si) => si >= 0 && si < q.options.length)
+                  .map((si) => q.options[si]?.label ?? '')
+              : [],
+        };
+      });
+      resolveQuestion(answers);
+      onClose();
+    },
+    [questions, onClose]
+  );
+
   const handleCancel = useCallback(() => {
     cancelQuestion();
     onClose();
@@ -108,16 +134,13 @@ export function QuestionOverlay({ theme, onClose }: QuestionOverlayProps) {
           // On "Type your own" option — switch to custom mode
           setIsCustomMode((prev) => ({ ...prev, [qi]: true }));
         } else if (currentQ.multiple) {
-          // Toggle selection in multi-select mode
-          setSelections((prev) => {
-            const current = new Set(prev[qi] ?? []);
-            if (current.has(oi)) {
-              current.delete(oi);
-            } else {
-              current.add(oi);
-            }
-            return { ...prev, [qi]: current };
-          });
+          // Space toggles choices; Enter confirms the current question.
+          if (qi < totalQ - 1) {
+            setQuestionIndex((i) => i + 1);
+            setOptionIndex(0);
+          } else {
+            handleSubmit();
+          }
         } else {
           // Single select: pick and advance or submit
           setSelections((prev) => ({
@@ -128,7 +151,7 @@ export function QuestionOverlay({ theme, onClose }: QuestionOverlayProps) {
             setQuestionIndex((i) => i + 1);
             setOptionIndex(0);
           } else {
-            handleSubmit();
+            submitSingleSelection(qi, oi);
           }
         }
         keyEvent.preventDefault?.();

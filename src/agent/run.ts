@@ -1,9 +1,9 @@
 import type { AgentCore } from './core.js';
 import { chat, streamChat, isEndpointRateLimited } from '../llm/index.js';
 import { switchSessionToFallback } from '../llm/failover.js';
-import { groupToolsForParallelExecution } from '../tools/index.js';
+import { canRunInParallel } from '../tools/index.js';
 import { SkillManager } from '../skill-manager.js';
-import type { Message } from '../types.js';
+import type { Config, Message } from '../types.js';
 import { rnd, now } from '../agent-utils.js';
 import { logError } from '../log.js';
 import { EARLY_STOP_CONTINUE_NUDGE, looksLikePrematureCheckin } from './early-stop.js';
@@ -15,6 +15,7 @@ import {
 import { parseXmlToolCalls } from '../llm/tool-call-parser.js';
 import { isContextOverflowError } from '../llm/overflow.js';
 import { maybePromoteProseQuestion } from '../tools/question-prose.js';
+import { syncContextManagerMessages } from '../agent-messages.js';
 
 const DEFAULT_MAX_REASONING_ONLY = 5;
 /** Small models rarely recover from reasoning-only turns — stop them sooner. */
@@ -41,12 +42,57 @@ const EARLY_STOP_MAX_CONTINUES = 2;
  */
 const REASONING_ONLY_OUTPUT_CAP_CEILING = 32768;
 
+/** Remove or trim tool calls that did not receive a result before a run stops. */
+function reconcileAssistantToolCalls(agent: AgentCore, assistantMsg: Message): void {
+  const calls = assistantMsg.toolCalls;
+  if (!calls || calls.length === 0) {
+    if (calls) delete assistantMsg.toolCalls;
+    return;
+  }
+
+  const resultIds = new Set(
+    agent.messages
+      .filter((message) => message.role === 'tool' && message.toolCallId)
+      .map((message) => message.toolCallId as string)
+  );
+  const completed = calls.filter((call) => resultIds.has(call.id));
+  if (completed.length > 0) assistantMsg.toolCalls = completed;
+  else delete assistantMsg.toolCalls;
+
+  const tracked = agent.contextManager
+    .getMessages()
+    .some((message) => message.id === assistantMsg.id);
+  if (tracked) {
+    if (assistantMsg.toolCalls?.length) agent.contextManager.updateMessage(assistantMsg);
+    else if (assistantMsg.content.trim() || assistantMsg.reasoningContent) {
+      agent.contextManager.updateMessage(assistantMsg);
+    } else {
+      agent.messages = agent.messages.filter((message) => message.id !== assistantMsg.id);
+      syncContextManagerMessages(agent);
+    }
+  } else if (
+    !assistantMsg.toolCalls?.length &&
+    !assistantMsg.content.trim() &&
+    !assistantMsg.reasoningContent
+  ) {
+    agent.messages = agent.messages.filter((message) => message.id !== assistantMsg.id);
+  }
+}
+
+function finishAbortedRun(agent: AgentCore, assistantMsg?: Message): void {
+  if (assistantMsg) reconcileAssistantToolCalls(agent, assistantMsg);
+  agent.currentTool = undefined;
+  agent.setState('idle');
+  agent.onUpdate?.();
+}
+
 export async function agentRun(
   agent: AgentCore,
   userText: string,
   signal?: AbortSignal
 ): Promise<void> {
   agent.setState('thinking');
+  agent.roundCounter = 0;
 
   // Per-turn state. Declared up front so the user-message reset path can
   // clear them safely before the first loop iteration.
@@ -90,6 +136,7 @@ export async function agentRun(
             '4. Give me a short description and example prompt.\n' +
             "I'll generate a complete, ready-to-use `.json` skill file for you."
     );
+    agent.setState('idle');
     return;
   }
 
@@ -110,6 +157,9 @@ export async function agentRun(
         `[System Notice: The skill "${skill.name}" has just been activated. Please review its context, introduce yourself according to this skill's persona or capabilities, summarize what you can do, and proceed to work or ask the user for clarifying questions.]`
       );
       skipUserMessage = true;
+      agent.consecutiveToolRounds = 0;
+      agent.toolRepeat = createToolRepeatState();
+      earlyStopContinues = 0;
     } else if (skill) {
       agent.addAssistantMessage(`Skill "${skillName}" is already loaded.`);
       agent.setState('idle');
@@ -129,6 +179,7 @@ export async function agentRun(
     agent.addAssistantMessage(
       unloaded ? `Skill "${name}" unloaded.` : `Skill "${name}" not found in active skills.`
     );
+    agent.setState('idle');
     return;
   }
 
@@ -139,6 +190,7 @@ export async function agentRun(
       lines.push(`- /skill:${s.name} — ${s.description}${s.active ? ' (active)' : ''}`);
     }
     agent.addAssistantMessage(lines.join('\n'));
+    agent.setState('idle');
     return;
   }
 
@@ -146,7 +198,7 @@ export async function agentRun(
     const pool = await agent.getSubAgentPool();
     if (!pool) {
       agent.addAssistantMessage(
-        'No remote sub-agent pool configured. Set `subagents` in ~/.nanogent.json or set REMOTE_LMSTUDIO_URL.'
+        'No remote sub-agent pool configured. Set `subagents` in the canonical config or set REMOTE_LMSTUDIO_URL.'
       );
     } else {
       const lines = [
@@ -176,7 +228,7 @@ export async function agentRun(
   if (trimmed === '/mcp') {
     if (agent.mcpStates.length === 0) {
       agent.addAssistantMessage(
-        'No MCP servers configured. Add `mcp` to ~/.nanogent.json.\n\n' +
+        'No MCP servers configured. Add `mcp` to the canonical config.\n\n' +
           'Example:\n```json\n"mcp": {\n  "filesystem": {\n    "type": "local",\n    "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]\n  },\n  "remote": {\n    "type": "remote",\n    "url": "https://mcp.example.com/sse"\n  }\n}\n```\n\nYou can also ask me to add an MCP server — just describe what you need and I\'ll use manage_mcp to configure it.'
       );
     } else {
@@ -276,15 +328,28 @@ export async function agentRun(
   }
 
   let iterationCount = 0;
+  let toolRoundCount = 0;
   let reasoningOnlyStreak = 0;
   let reasoningOnlyTotal = 0;
+  /** Raised only for requests in this user turn; never mutates cfg.maxTokens. */
+  let reasoningOutputCapOverride: number | undefined;
   /** Retries after silent context overflow (finish_reason=length, 0 output). */
   let overflowRetries = 0;
   const MAX_OVERFLOW_RETRIES = 2;
 
+  async function compactForActiveRun(): Promise<boolean> {
+    const previous = agent._allowRunCompaction;
+    agent._allowRunCompaction = true;
+    try {
+      return await agent.checkAndCompactContext(signal);
+    } finally {
+      agent._allowRunCompaction = previous;
+    }
+  }
+
   async function compactIfWindowFull(): Promise<boolean> {
     if (!agent.contextManager.needsCompaction()) return false;
-    return agent.checkAndCompactContext(signal);
+    return compactForActiveRun();
   }
   /**
    * Force-thinking-off escalation counter. When nudges can't break a
@@ -305,6 +370,13 @@ export async function agentRun(
   let duplicateNudged = false;
   /** Each configured fallback is tried at most once per user turn. */
   const triedFallbacks = new Set<string>();
+  const activeFailoverSession = {
+    get cfg(): Config {
+      return agent.cfg;
+    },
+    reconfigure: (patch: Partial<Config>) => agent._reconfigureDuringRun(patch),
+    addNoticeMessage: (content: string) => agent.addNoticeMessage(content),
+  };
 
   const tryContinueAfterPrematureCheckin = (content: string): boolean => {
     if (earlyStopContinues >= EARLY_STOP_MAX_CONTINUES) return false;
@@ -339,10 +411,10 @@ export async function agentRun(
     reasoningOnlyStreak++;
     reasoningOnlyTotal++;
     if (finishReason === 'length') {
-      const cur = agent.cfg.maxTokens ?? 0;
+      const cur = reasoningOutputCapOverride ?? agent.cfg.maxTokens ?? 0;
       if (cur > 0 && cur < REASONING_ONLY_OUTPUT_CAP_CEILING) {
         const next = Math.min(cur * 2, REASONING_ONLY_OUTPUT_CAP_CEILING);
-        agent.cfg.maxTokens = next;
+        reasoningOutputCapOverride = next;
         agent.addRecoveryNotice(
           `↻ Model spent its whole ${cur}-token output budget on thinking and never replied. ` +
             `Raised the output cap to ${next} and nudging it to answer (${reasoningOnlyStreak}/${maxReasoningOnly})…`
@@ -388,20 +460,16 @@ export async function agentRun(
   };
   while (true) {
     if (signal?.aborted) {
-      agent.setState('idle');
-      agent.onUpdate?.();
+      finishAbortedRun(agent);
       return;
     }
 
-    // Effective turn limit: whichever positive cap is stricter.
+    // Max rounds limits model requests; maxIterations limits executed tool
+    // rounds and still permits the follow-up answer after the final round.
     const maxIter = agent.cfg.maxIterations > 0 ? agent.cfg.maxIterations : Infinity;
     const maxRnd = agent.maxRounds > 0 ? agent.maxRounds : Infinity;
-    const turnLimit = Math.min(maxIter, maxRnd);
-    if (Number.isFinite(turnLimit) && iterationCount >= turnLimit) {
-      const label =
-        turnLimit === maxRnd && maxRnd < maxIter
-          ? `Round limit reached (${maxRnd} rounds)`
-          : `Turn limit reached (${turnLimit} iterations)`;
+    if (Number.isFinite(maxRnd) && iterationCount > maxRnd) {
+      const label = `Round limit reached (${maxRnd} rounds)`;
       agent.addNoticeMessage(`${label}. Resuming on your next prompt.`);
       agent.setState('idle');
       agent.onUpdate?.();
@@ -412,8 +480,9 @@ export async function agentRun(
       await new Promise((r) => setTimeout(r, agent.cfg.rateLimitMs));
     }
     iterationCount++;
+    agent.roundCounter++;
 
-    await agent.checkAndCompactContext(signal);
+    await compactForActiveRun();
 
     let assistantMsg: Message;
 
@@ -444,6 +513,9 @@ export async function agentRun(
             // entirely so it can't burn the output budget again. Reset on
             // any turn that produces content or tool calls (see below).
             ...(forceThinkingOffRetries > 0 ? { enableThinking: false as const } : {}),
+            ...(reasoningOutputCapOverride !== undefined
+              ? { maxTokens: reasoningOutputCapOverride }
+              : {}),
             onRetry: () => {
               assistantMsg.content = '';
               assistantMsg.reasoningContent = undefined;
@@ -610,9 +682,16 @@ export async function agentRun(
           } else {
             agent.contextManager.addMessage(assistantMsg);
           }
-          agent.setState('idle');
-          agent.onUpdate?.();
+          finishAbortedRun(agent);
           return;
+        }
+
+        // A length finish can contain a complete-looking prefix of a tool
+        // call. Treat it as an incomplete answer, never as executable work.
+        if (finishReason === 'length') {
+          hasToolCalls = false;
+          toolCallBuffers = [];
+          delete assistantMsg.toolCalls;
         }
 
         if (hasToolCalls && toolCallBuffers.length > 0) {
@@ -677,19 +756,17 @@ export async function agentRun(
               agent.onUpdate?.();
               return;
             }
-            if (agent.contextManager.needsCompaction()) {
-              overflowRetries++;
-              const compacted = await compactIfWindowFull();
-              agent.addRecoveryNotice(
-                compacted
-                  ? `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
-                  : `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Retrying with current history (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
-              );
-              agent.setState('thinking');
-              agent.onUpdate?.();
-              await new Promise((r) => setTimeout(r, 0));
-              continue;
-            }
+            overflowRetries++;
+            const compacted = await compactIfWindowFull();
+            agent.addRecoveryNotice(
+              compacted
+                ? `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Compacted history and retrying (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+                : `Context overflow detected (empty \`${finishReason || 'length'}\` finish). Retrying with current history (${overflowRetries}/${MAX_OVERFLOW_RETRIES})…`
+            );
+            agent.setState('thinking');
+            agent.onUpdate?.();
+            await new Promise((r) => setTimeout(r, 0));
+            continue;
           }
 
           agent.addNoticeMessage(
@@ -758,15 +835,26 @@ export async function agentRun(
           e.message?.toLowerCase().includes('abort');
 
         if (isAborted) {
+          delete assistantMsg.toolCalls;
           if (!assistantMsg.content.trim() && !assistantMsg.reasoningContent) {
             agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
+          } else if (!agent.contextManager.getMessages().some((m) => m.id === assistantMsg.id)) {
+            agent.contextManager.addMessage(assistantMsg);
           }
-          agent.setState('idle');
-          agent.onUpdate?.();
+          finishAbortedRun(agent);
           return;
         }
 
-        const switched = await switchSessionToFallback(agent, err, triedFallbacks, signal);
+        // streamChat may have yielded a partial tool-call snapshot before the
+        // final transport error. It is never executable or safe to persist.
+        delete assistantMsg.toolCalls;
+
+        const switched = await switchSessionToFallback(
+          activeFailoverSession,
+          err,
+          triedFallbacks,
+          signal
+        );
         if (switched) {
           agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
           agent.addRecoveryNotice(`Switched to ${switched.model} after ${switched.reason}`);
@@ -777,15 +865,12 @@ export async function agentRun(
         }
 
         const status = e.status || e.status_code;
-        const msg = [e.message, e.providerMessage, e.code, e.type, String(err)]
-          .filter(Boolean)
-          .join(' ');
+        const msg = agent.securityManager.sanitizeOutput(
+          [e.message, e.providerMessage, e.code, e.type, String(err)].filter(Boolean).join(' '),
+          agent.cfg.apiKey ?? undefined
+        );
         const overflowHint = isContextOverflowError(msg);
-        if (
-          overflowHint &&
-          overflowRetries < MAX_OVERFLOW_RETRIES &&
-          agent.contextManager.needsCompaction()
-        ) {
+        if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
           if (isEndpointRateLimited(agent.cfg.baseURL)) {
             agent.messages = agent.messages.filter((m) => m.id !== assistantMsg.id);
             agent.addNoticeMessage(
@@ -845,7 +930,14 @@ export async function agentRun(
           agent.toChatMessages(),
           agent.buildToolSchemas(activeSkills),
           signal,
-          forceThinkingOffRetries > 0 ? { enableThinking: false } : undefined
+          forceThinkingOffRetries > 0 || reasoningOutputCapOverride !== undefined
+            ? {
+                ...(forceThinkingOffRetries > 0 ? { enableThinking: false as const } : {}),
+                ...(reasoningOutputCapOverride !== undefined
+                  ? { maxTokens: reasoningOutputCapOverride }
+                  : {}),
+              }
+            : undefined
         );
       } catch (err: unknown) {
         const e = err as {
@@ -864,12 +956,16 @@ export async function agentRun(
           e.message?.toLowerCase().includes('abort');
 
         if (isAborted) {
-          agent.setState('idle');
-          agent.onUpdate?.();
+          finishAbortedRun(agent);
           return;
         }
 
-        const switched = await switchSessionToFallback(agent, err, triedFallbacks, signal);
+        const switched = await switchSessionToFallback(
+          activeFailoverSession,
+          err,
+          triedFallbacks,
+          signal
+        );
         if (switched) {
           agent.addRecoveryNotice(`Switched to ${switched.model} after ${switched.reason}`);
           iterationCount -= 1;
@@ -879,15 +975,12 @@ export async function agentRun(
         }
 
         const status = e.status || e.status_code;
-        const msg = [e.message, e.providerMessage, e.code, e.type, String(err)]
-          .filter(Boolean)
-          .join(' ');
+        const msg = agent.securityManager.sanitizeOutput(
+          [e.message, e.providerMessage, e.code, e.type, String(err)].filter(Boolean).join(' '),
+          agent.cfg.apiKey ?? undefined
+        );
         const overflowHint = isContextOverflowError(msg);
-        if (
-          overflowHint &&
-          overflowRetries < MAX_OVERFLOW_RETRIES &&
-          agent.contextManager.needsCompaction()
-        ) {
+        if (overflowHint && overflowRetries < MAX_OVERFLOW_RETRIES) {
           if (isEndpointRateLimited(agent.cfg.baseURL)) {
             agent.addNoticeMessage(
               `Context overflow from API (${status || 'error'}), but the provider is rate-limited — skipping extra retry.`
@@ -984,7 +1077,7 @@ export async function agentRun(
         reasoningContent: msg.reasoning_content || undefined,
         timestamp: now(),
       };
-      if (msg.tool_calls) {
+      if (msg.tool_calls && msg.tool_calls.length > 0 && response.finishReason !== 'length') {
         const argBudget = resolveToolCallArgumentTokenBudget(agent.cfg);
         assistantMsg.toolCalls = msg.tool_calls.map((tc) => ({
           id: tc.id,
@@ -1027,12 +1120,21 @@ export async function agentRun(
     }
 
     if (signal?.aborted) {
-      agent.setState('idle');
-      agent.onUpdate?.();
+      finishAbortedRun(agent, assistantMsg);
       return;
     }
 
     const tcs = assistantMsg.toolCalls || [];
+
+    if (tcs.length > 0 && Number.isFinite(maxIter) && toolRoundCount >= maxIter) {
+      agent.addNoticeMessage(
+        `Tool iteration limit reached (${maxIter} iterations). Resuming on your next prompt.`
+      );
+      reconcileAssistantToolCalls(agent, assistantMsg);
+      agent.setState('idle');
+      agent.onUpdate?.();
+      return;
+    }
 
     if (tcs.length === 0) {
       agent.consecutiveToolRounds = 0;
@@ -1056,6 +1158,7 @@ export async function agentRun(
           `⚠️ Stuck loop detected: the model issued the identical tool call(s) ${MAX_SAME_SIGNATURE_STREAK} rounds in a row. ` +
             `Stopping here to avoid an infinite loop — rephrase your request or take over manually.`
         );
+        reconcileAssistantToolCalls(agent, assistantMsg);
         agent.setState('idle');
         agent.onUpdate?.();
         return;
@@ -1064,6 +1167,7 @@ export async function agentRun(
       const checkinLimit = agent.cfg.maxToolRoundsBeforeCheckin ?? 0;
       if (checkinLimit > 0 && agent.consecutiveToolRounds >= checkinLimit) {
         agent.consecutiveToolRounds = 0;
+        reconcileAssistantToolCalls(agent, assistantMsg);
         const todoSummary =
           agent.todos.length > 0
             ? '\n\n**Task status:**\n' +
@@ -1080,15 +1184,42 @@ export async function agentRun(
       }
     }
 
-    const { parallel, sequential } = groupToolsForParallelExecution(tcs);
-
     agent.toolRepeat.blockedThisRound = 0;
-    if (parallel.length > 0) {
-      await agent.executeToolsParallel(parallel, signal);
-    }
+    // Execute contiguous read-only groups in parallel, but keep group order
+    // around sequential tools so tool-result messages match assistant order.
+    let parallelBatch: Array<{
+      name: string;
+      arguments: string;
+      index: number;
+      id: string;
+    }> = [];
+    const flushParallel = async (): Promise<void> => {
+      if (parallelBatch.length > 0) {
+        const batch = parallelBatch;
+        parallelBatch = [];
+        await agent.executeToolsParallel(batch, signal);
+      }
+    };
 
-    for (const tc of sequential) {
-      await agent.executeToolSequential(tc, signal);
+    for (const [index, tc] of tcs.entries()) {
+      if (signal?.aborted) {
+        finishAbortedRun(agent, assistantMsg);
+        return;
+      }
+      if (canRunInParallel(tc.name)) {
+        parallelBatch.push({ ...tc, index });
+      } else {
+        await flushParallel();
+        await agent.executeToolSequential({ ...tc, id: tc.id }, signal);
+      }
+    }
+    await flushParallel();
+
+    if (tcs.length > 0) toolRoundCount++;
+
+    if (signal?.aborted) {
+      finishAbortedRun(agent, assistantMsg);
+      return;
     }
 
     if (tcs.length > 0) {
@@ -1116,6 +1247,8 @@ export async function agentRun(
       }
     }
 
+    agent.setState('thinking');
+    agent.onUpdate?.();
     // Yield so abort signals and TUI updates can process between tool rounds.
     await new Promise((r) => setTimeout(r, 0));
   }

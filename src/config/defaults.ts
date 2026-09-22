@@ -52,7 +52,7 @@ export const MODELS: Record<string, { baseURL: string; model: string }> = {
 
 export function getDefault(): Config {
   return {
-    baseURL: 'http://127.0.0.1:1234/',
+    baseURL: 'http://127.0.0.1:1234/v1',
     model: 'model-identifier',
     apiKey: null,
     maxIterations: 50,

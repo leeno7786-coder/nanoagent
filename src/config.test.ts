@@ -5,6 +5,7 @@
 
 import { describe, it, expect } from 'bun:test';
 import { applySubAgentDefaults, MODELS } from './config/index.js';
+import { getDefault } from './config/defaults.js';
 import type { Config } from './types.js';
 
 describe('config.ts - Configuration Management', () => {
@@ -44,6 +45,10 @@ describe('config.ts - Configuration Management', () => {
       const modelKeys = Object.keys(MODELS);
       expect(modelKeys.some((k) => k.toLowerCase().includes('qwen'))).toBe(true);
     });
+  });
+
+  it('uses the OpenAI-compatible v1 path for the default LM Studio endpoint', () => {
+    expect(getDefault().baseURL).toBe('http://127.0.0.1:1234/v1');
   });
 
   describe('loadConfig workspace isolation & scratchpad', () => {

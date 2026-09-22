@@ -177,15 +177,16 @@ export function formatSubAgentResults(results: SubAgentResult[]): string {
     const body = r.ok ? r.output : `ERROR: ${r.error || 'unknown'}\n${r.output}`;
     return `${header}\n\n${body}`.trim();
   });
-  const summary = `Sub-agent pool returned ${results.filter((r) => r.ok).length}/${results.length} successful.`;
+  const successful = results.filter((r) => r.ok).length;
+  const summary = `Sub-agent pool returned ${successful}/${results.length} successful.`;
   return JSON.stringify({
-    ok: true,
+    ok: successful > 0,
     summary,
-    batch_status: 'COMPLETED',
+    batch_status: successful > 0 ? 'COMPLETED' : 'FAILED',
     directive:
       'All sub-agents have finished execution. Do NOT wait for any agents. Synthesize the findings above immediately.',
     agents: results.length,
-    successful: results.filter((r) => r.ok).length,
+    successful,
     results: blocks.join('\n\n---\n\n'),
   });
 }

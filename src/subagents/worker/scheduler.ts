@@ -13,25 +13,32 @@ export const MAX_CONCURRENT_SUBAGENTS = 4;
  */
 export class SubAgentScheduler {
   private inUse = new Map<string, number>();
+  private totalInUse = 0;
   private cursor = 0;
   private queue: Array<{ fired: boolean; wake: () => void }> = [];
+
+  private endpointKey(endpoint: SubAgentEndpoint): string {
+    return `${endpoint.name}\u0000${endpoint.baseURL}\u0000${endpoint.model}`;
+  }
 
   async acquire(
     endpoints: SubAgentEndpoint[],
     preferred?: string,
     timeoutMs = 60000,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    globalLimit = MAX_CONCURRENT_SUBAGENTS
   ): Promise<SubAgentEndpoint | undefined> {
     const usable = endpoints.filter((e) => e.baseURL && e.model);
     if (usable.length === 0) return undefined;
+    const limit = Math.max(1, Math.floor(globalLimit));
 
-    let ep = this.tryAcquire(usable, preferred);
+    let ep = this.tryAcquire(usable, preferred, limit);
     if (ep) {
       try {
         await awaitEndpointRateLimit(ep.baseURL, signal);
         return ep;
       } catch (err) {
-        this.release(ep.name);
+        this.release(ep);
         throw err;
       }
     }
@@ -64,22 +71,29 @@ export class SubAgentScheduler {
         };
         this.queue.push(waiter);
       });
-      ep = this.tryAcquire(usable, preferred);
+      ep = this.tryAcquire(usable, preferred, limit);
     }
     try {
       await awaitEndpointRateLimit(ep.baseURL, signal);
       return ep;
     } catch (err) {
-      this.release(ep.name);
+      this.release(ep);
       throw err;
     }
   }
 
-  private tryAcquire(usable: SubAgentEndpoint[], preferred?: string): SubAgentEndpoint | undefined {
+  private tryAcquire(
+    usable: SubAgentEndpoint[],
+    preferred: string | undefined,
+    globalLimit: number
+  ): SubAgentEndpoint | undefined {
+    if (this.totalInUse >= globalLimit) return undefined;
     if (preferred) {
       const p = usable.find((e) => e.name === preferred);
       if (p && this.hasCapacity(p)) {
-        this.inUse.set(p.name, (this.inUse.get(p.name) ?? 0) + 1);
+        const key = this.endpointKey(p);
+        this.inUse.set(key, (this.inUse.get(key) ?? 0) + 1);
+        this.totalInUse++;
         return p;
       }
     }
@@ -87,22 +101,31 @@ export class SubAgentScheduler {
     if (free.length === 0) return undefined;
     const ep = free[this.cursor % free.length];
     this.cursor++;
-    this.inUse.set(ep.name, (this.inUse.get(ep.name) ?? 0) + 1);
+    const key = this.endpointKey(ep);
+    this.inUse.set(key, (this.inUse.get(key) ?? 0) + 1);
+    this.totalInUse++;
     return ep;
   }
 
   private hasCapacity(ep: SubAgentEndpoint): boolean {
     const capacity = Math.max(1, ep.concurrency ?? 1);
-    return (this.inUse.get(ep.name) ?? 0) < capacity;
+    return (this.inUse.get(this.endpointKey(ep)) ?? 0) < capacity;
   }
 
-  release(name: string) {
-    const count = this.inUse.get(name) ?? 0;
+  release(endpoint: SubAgentEndpoint | string) {
+    const key =
+      typeof endpoint === 'string'
+        ? [...this.inUse.keys()].find((candidate) => candidate.startsWith(`${endpoint}\u0000`))
+        : this.endpointKey(endpoint);
+    if (!key) return;
+    const count = this.inUse.get(key) ?? 0;
+    if (count <= 0) return;
     if (count <= 1) {
-      this.inUse.delete(name);
+      this.inUse.delete(key);
     } else {
-      this.inUse.set(name, count - 1);
+      this.inUse.set(key, count - 1);
     }
+    this.totalInUse = Math.max(0, this.totalInUse - 1);
     // Skip stale waiters whose 1s poll timer already fired — waking one of
     // those would consume the release while a live waiter keeps waiting.
     while (this.queue.length > 0) {

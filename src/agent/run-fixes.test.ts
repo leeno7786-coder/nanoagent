@@ -399,6 +399,57 @@ describe('run-loop review fixes', () => {
     expect(agent.state).toBe('idle');
   }, 20000);
 
+  it('does not execute tool calls from a length-truncated stream', async () => {
+    const agent = newAgent();
+    await agent.init();
+    agent.onPermissionRequest = async () => 'allow';
+
+    scripted.push([
+      {
+        finishReason: 'length',
+        toolCalls: [
+          { id: 'partial-call', name: 'read_file', arguments: JSON.stringify({ path: 'a.txt' }) },
+        ],
+      },
+    ]);
+
+    await agent.run('read a file');
+
+    expect(agent.messages.some((m) => m.role === 'tool')).toBe(false);
+    expect(agent.messages.flatMap((m) => m.toolCalls ?? [])).toEqual([]);
+    expect(agent.state).toBe('idle');
+  }, 20000);
+
+  it('trims unexecuted calls when abort fires after the response', async () => {
+    const agent = newAgent();
+    await agent.init();
+    const controller = new AbortController();
+    agent.onPermissionRequest = async () => {
+      controller.abort();
+      return 'deny';
+    };
+    scripted.push([
+      {
+        toolCalls: [
+          { id: 'post-abort-1', name: 'write_file', arguments: '{"path":"out.txt","content":"x"}' },
+          { id: 'post-abort-2', name: 'read_file', arguments: '{"path":"out.txt"}' },
+        ],
+      },
+    ]);
+
+    await agent.run('write and then read a file', controller.signal);
+
+    const assistant = agent.messages.find((message) => message.toolCalls?.length);
+    expect(assistant?.toolCalls?.map((call) => call.id)).toEqual(['post-abort-1']);
+    expect(
+      agent.messages.filter(
+        (message) => message.role === 'tool' && message.toolCallId === 'post-abort-2'
+      )
+    ).toEqual([]);
+    expect(agent.currentTool).toBeUndefined();
+    expect(agent.state).toBe('idle');
+  }, 20000);
+
   it('doubles the output cap when a reasoning-only turn is truncated at maxTokens', async () => {
     const agent = newAgent();
     await agent.init();
@@ -412,7 +463,8 @@ describe('run-loop review fixes', () => {
 
     await agent.run('hi');
 
-    expect(agent.cfg.maxTokens).toBe(8192);
+    expect(agent.cfg.maxTokens).toBe(4096);
+    expect((sentBodies[1] as { max_tokens?: number }).max_tokens).toBe(8192);
     expect(agent.messages.some((m) => m.id.startsWith('nudge-'))).toBe(true);
     expect(agent.state).toBe('idle');
     const last = agent.messages[agent.messages.length - 1];
@@ -483,5 +535,22 @@ describe('run-loop review fixes', () => {
     expect(agent.state).toBe('idle');
     const last = agent.messages[agent.messages.length - 1];
     expect(last.content).toBe('finally answered');
+  }, 20000);
+
+  it('rejects reconfiguration and external compaction while a run is active', async () => {
+    const agent = newAgent();
+    await agent.init();
+    hangAfterFirstChunk = true;
+    scripted.push([{ content: 'partial' }]);
+
+    const controller = new AbortController();
+    const running = agent.run('keep working', controller.signal);
+    await expect(agent.reconfigure({ maxTokens: 2048 })).rejects.toThrow(/run is active/i);
+    expect(await agent.checkAndCompactContext()).toBe(false);
+
+    controller.abort();
+    await running;
+    expect(agent._activeRun).toBe(false);
+    expect(agent.currentTool).toBeUndefined();
   }, 20000);
 });

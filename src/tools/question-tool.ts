@@ -48,10 +48,23 @@ function truncateAtWordBoundary(text: string, maxLength: number): string {
  */
 export type QuestionResolver = (answers: QuestionAnswer[]) => void;
 
+type QuestionController = {
+  settled: boolean;
+  timeoutId?: ReturnType<typeof setTimeout>;
+  abortListener?: () => void;
+  signal?: AbortSignal;
+};
+
 let _pendingResolver: QuestionResolver | null = null;
 let _pendingQuestions: QuestionPrompt[] | null = null;
-let _activeController: { settled: boolean; timeoutId?: ReturnType<typeof setTimeout> } | null =
-  null;
+let _activeController: QuestionController | null = null;
+
+function clearController(controller: QuestionController): void {
+  if (controller.timeoutId) clearTimeout(controller.timeoutId);
+  if (controller.signal && controller.abortListener) {
+    controller.signal.removeEventListener('abort', controller.abortListener);
+  }
+}
 
 /** Called by the TUI overlay when the user submits answers. */
 export function resolveQuestion(answers: QuestionAnswer[]): void {
@@ -62,9 +75,7 @@ export function resolveQuestion(answers: QuestionAnswer[]): void {
   _activeController = null;
   if (controller && !controller.settled) {
     controller.settled = true;
-    if (controller.timeoutId) {
-      clearTimeout(controller.timeoutId);
-    }
+    clearController(controller);
     resolver?.(answers);
   }
 }
@@ -78,9 +89,7 @@ export function cancelQuestion(): void {
   _activeController = null;
   if (controller && !controller.settled) {
     controller.settled = true;
-    if (controller.timeoutId) {
-      clearTimeout(controller.timeoutId);
-    }
+    clearController(controller);
     resolver?.([{ question: '', answers: [QUESTION_CANCELLED] }]);
   }
 }
@@ -197,9 +206,21 @@ Usage notes:
       }
     }
 
+    // Headless runs have no overlay resolver. Returning a structured result is
+    // important: waiting here would hold the agent loop for the full timeout.
+    const g = globalThis as Record<string, unknown>;
+    const notify = g.__questionToolNotify;
+    if (typeof notify !== 'function') {
+      return JSON.stringify({
+        error: 'Question tool is unavailable outside the interactive TUI',
+        headless: true,
+      });
+    }
+
     // Set up state atomically before creating Promise to prevent race conditions
-    const controller: { settled: boolean; timeoutId?: ReturnType<typeof setTimeout> } = {
+    const controller: QuestionController = {
       settled: false,
+      signal,
     };
     _pendingQuestions = clamped;
     _activeController = controller;
@@ -211,6 +232,7 @@ Usage notes:
         _pendingResolver = null;
         _pendingQuestions = null;
         _activeController = null;
+        clearController(controller);
         resolve(JSON.stringify({ error: 'Cancelled' }));
         return;
       }
@@ -240,9 +262,14 @@ Usage notes:
           _pendingResolver = null;
           _pendingQuestions = null;
           _activeController = null;
-          // Clean up signal listener if present
-          if (signal && abortListener) {
-            signal.removeEventListener('abort', abortListener);
+          clearController(controller);
+          const timeoutNotify = g.__questionToolTimeout;
+          if (typeof timeoutNotify === 'function') {
+            try {
+              timeoutNotify();
+            } catch {
+              /* overlay cleanup is best-effort */
+            }
           }
           resolve(
             JSON.stringify({
@@ -256,20 +283,22 @@ Usage notes:
       // Store timeout ID in controller for cleanup
       controller.timeoutId = timeoutId;
 
-      // Notify the TUI to open the question overlay
-      const g = globalThis as Record<string, unknown>;
-      if (typeof g.__questionToolNotify === 'function') {
-        (g.__questionToolNotify as () => void)();
+      // Notify the TUI to open the question overlay.
+      try {
+        (notify as () => void)();
+      } catch {
+        cancelQuestion();
+        return;
       }
 
       // Set up abort signal listener with proper cleanup
-      let abortListener: (() => void) | undefined;
       if (signal) {
-        abortListener = () => {
+        const abortListener = () => {
           if (!controller.settled) {
             cancelQuestion();
           }
         };
+        controller.abortListener = abortListener;
         signal.addEventListener('abort', abortListener, { once: true });
       }
     });

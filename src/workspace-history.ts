@@ -18,6 +18,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   watch,
@@ -32,7 +33,7 @@ import {
   SESSIONS_DIR_FOR,
   WORKTREE_DIR_FOR,
 } from './config/paths.js';
-import { SKIP_DIRS } from './tools/shared.js';
+import { isProtectedProjectPath, safe, SKIP_DIRS } from './tools/shared.js';
 
 const NANOAGENT_GITIGNORE_LINE = '.nanoagent/';
 const NANOAGENT_GITIGNORE_COMMENT =
@@ -96,6 +97,7 @@ function skipName(name: string): boolean {
 
 function skipRel(relPath: string): boolean {
   if (!relPath || relPath === '.' || relPath.startsWith('..')) return true;
+  if (isProtectedProjectPath(relPath)) return true;
   return relPath.split('/').some((part) => skipName(part) || part === '..');
 }
 
@@ -370,10 +372,13 @@ export function restoreOriginal(workspace: string, path: string): boolean {
   if (!relPath) return false;
   const src = join(originalsDir(workspace), relPath);
   if (!existsSync(src)) return false;
-  const dest = join(workspace, relPath);
   try {
+    const dest = safe(relPath, workspace);
+    const realSrc = realpathSync(src).replace(/\\/g, '/');
+    const realOriginals = realpathSync(originalsDir(workspace)).replace(/\\/g, '/');
+    if (realSrc !== realOriginals && !realSrc.startsWith(realOriginals + '/')) return false;
     mkdirSync(dirname(dest), { recursive: true });
-    copyFileSync(src, dest);
+    copyFileSync(realSrc, dest);
     return true;
   } catch {
     return false;

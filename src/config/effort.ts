@@ -61,7 +61,7 @@ export function applyEffortFromEnvAndDefault(cfg: Pick<Config, 'effort'>): void 
     }
     logError(
       `Error: effort must be ${formatEffortAllowed()}, got ${JSON.stringify(cfg.effort)}.\n` +
-        `  Example: QWEN_EFFORT=low or { "effort": "low" } in ~/.nanogent.json`
+        `  Example: QWEN_EFFORT=low or { "effort": "low" } in $NANOAGENT_ROOT/config/nanogent.json`
     );
     delete cfg.effort;
   }

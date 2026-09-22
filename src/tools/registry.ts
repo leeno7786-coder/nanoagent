@@ -282,16 +282,22 @@ export function groupToolsForParallelExecution(
   return { parallel, sequential };
 }
 
-let externalTools: Tool[] = [];
+export type ToolRegistryScope = object | string;
+const externalToolsByScope = new Map<ToolRegistryScope, Tool[]>();
+let defaultExternalTools: Tool[] = [];
 
-export function registerExternalTools(tools: Tool[]): void {
-  externalTools = tools;
+export function registerExternalTools(tools: Tool[], scope?: ToolRegistryScope): void {
+  if (scope) {
+    externalToolsByScope.set(scope, tools);
+  } else {
+    defaultExternalTools = tools;
+  }
 }
 
-export function getAllTools(): Tool[] {
-  return [...tools, ...externalTools];
+export function getAllTools(scope?: ToolRegistryScope): Tool[] {
+  return [...tools, ...(scope ? (externalToolsByScope.get(scope) ?? []) : defaultExternalTools)];
 }
 
-export function findTool(name: string): Tool | undefined {
-  return getAllTools().find((t) => t.name === name);
+export function findTool(name: string, scope?: ToolRegistryScope): Tool | undefined {
+  return getAllTools(scope).find((t) => t.name === name);
 }

@@ -57,14 +57,6 @@ export function canonicalToolSignature(name: string, args: Record<string, unknow
   return `${name}:${JSON.stringify(canonicalArgs(name, args))}`;
 }
 
-function clearGitSignatures(state: ToolRepeatState): void {
-  for (const s of [...state.seenSignatures]) {
-    if (s.startsWith('git_status:') || s.startsWith('git_diff:')) {
-      state.seenSignatures.delete(s);
-    }
-  }
-}
-
 /** True when a tool error string is the harness duplicate-call block. */
 export function isDuplicateBlockError(error: string): boolean {
   return error.startsWith('Duplicate call blocked.') || /^You already called \S+\./.test(error);
@@ -98,7 +90,9 @@ export function evaluateToolRepeat(
   }
 
   if (TREE_MUTATING_TOOLS.has(name)) {
-    clearGitSignatures(state);
+    // A mutation invalidates every read/search result, not only git state.
+    // Reading a file again after editing it is a valid verification step.
+    state.seenSignatures.clear();
   }
   state.seenSignatures.add(sig);
   return { blocked: false };

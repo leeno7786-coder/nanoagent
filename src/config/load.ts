@@ -1,8 +1,17 @@
-import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync } from 'fs';
+import {
+  readFileSync,
+  existsSync,
+  statSync,
+  writeFileSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+  chmodSync,
+} from 'fs';
 import { resolve, join } from 'path';
 import { config as dotenvConfig } from 'dotenv';
 import type { Config, FallbackEndpoint } from '../types.js';
-import { isSmallModel } from '../llm/index.js';
+import { isLocalProvider, isSmallModel } from '../llm/index.js';
 import { logError, logWarn } from '../log.js';
 import { getDefault, sanitizeBaseURL, MODELS } from './defaults.js';
 import { validateConfig } from './validate.js';
@@ -41,6 +50,7 @@ function defaultWorkspace(): string {
 const TRUST_SENSITIVE_ENV_VARS = new Set([
   'NANOGENT_TRUST_PROJECT_MCP',
   'QWEN_BASE_URL',
+  'QWEN_WORKSPACE',
   'OPENAI_BASE_URL',
   // Sub-agent endpoint: prompts carry workspace code, so redirecting it is
   // the same exfiltration class as QWEN_BASE_URL.
@@ -62,6 +72,41 @@ function isTrustSensitiveEnvVar(key: string): boolean {
     key.endsWith('_API_KEY')
   );
 }
+
+/** Fields a cloned repository must not be able to control through nanogent.json. */
+const PROJECT_CONFIG_BLOCKED_FIELDS = new Set([
+  'workspace',
+  'baseURL',
+  'provider',
+  'apiKey',
+  'fallbacks',
+  'profiles',
+  'profile',
+  'systemPrompt',
+  'subagents',
+  'subAgentEnabled',
+  'subAgentModel',
+  'subAgentBaseURL',
+  'subAgentApiKey',
+  'mcp',
+  'mcpUntrusted',
+  'mcpTrustedSource',
+  'configFilePath',
+  'configPathExplicit',
+  'allowedPaths',
+  'permissionMode',
+  'permissionRules',
+  'securityEnabled',
+  'securityValidateCommands',
+  'securityValidateFileAccess',
+  'securitySanitizeOutput',
+  'securityMaxFileSize',
+  'securityMaxBatchFiles',
+  'securityAllowedPaths',
+  'securityBlockedPaths',
+  'securityManager',
+  'permissionManager',
+]);
 
 // Snapshot of the real environment at module load, before any .env file
 // could have been merged in by loadEnv().
@@ -113,6 +158,22 @@ function asConfigFile(p: string | undefined): string | undefined {
   }
 }
 
+function writeTextAtomically(path: string, content: string, mode = 0o600): void {
+  const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(temp, content, { encoding: 'utf-8', mode });
+    if (process.platform !== 'win32') chmodSync(temp, mode);
+    renameSync(temp, path);
+  } catch (err) {
+    try {
+      unlinkSync(temp);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err;
+  }
+}
+
 function fallbacksFromEnv(): FallbackEndpoint[] | undefined {
   const modelRaw = process.env.QWEN_FALLBACK_MODEL;
   const urlRaw = process.env.QWEN_FALLBACK_BASE_URL;
@@ -130,7 +191,7 @@ function fallbacksFromEnv(): FallbackEndpoint[] | undefined {
     logError(
       `Error: QWEN_FALLBACK_MODEL must be a non-empty model id (max 256 chars), got ${JSON.stringify(modelRaw)}.\n` +
         `  Example: QWEN_FALLBACK_MODEL=qwen/qwen3-8b QWEN_FALLBACK_BASE_URL=https://openrouter.ai/api/v1\n` +
-        `  Or in ~/.nanogent.json: { "fallbacks": [{ "model": "qwen/qwen3-8b", "baseURL": "https://openrouter.ai/api/v1" }] }`
+       `  Or in $NANOAGENT_ROOT/config/nanogent.json: { "fallbacks": [{ "model": "qwen/qwen3-8b", "baseURL": "https://openrouter.ai/api/v1" }] }`
     );
     return undefined;
   }
@@ -161,6 +222,11 @@ function fallbacksFromEnv(): FallbackEndpoint[] | undefined {
     fb.provider = provider;
   }
   return [fb];
+}
+
+function parseIntegerEnv(raw: string): number {
+  const value = raw.trim();
+  return /^[-+]?\d+$/.test(value) ? Number(value) : Number.NaN;
 }
 
 function applyFallbacksFromConfigAndEnv(cfg: Config): void {
@@ -218,6 +284,12 @@ function normalizeProfiles(cfg: Config): void {
     if (typeof rec.maxToolResultTokens === 'number' && Number.isFinite(rec.maxToolResultTokens)) {
       profile.maxToolResultTokens = rec.maxToolResultTokens;
     }
+    if (
+      typeof rec.maxToolCallArgumentTokens === 'number' &&
+      Number.isFinite(rec.maxToolCallArgumentTokens)
+    ) {
+      profile.maxToolCallArgumentTokens = rec.maxToolCallArgumentTokens;
+    }
     if (typeof rec.maxRequestsPerMinute === 'number' && Number.isFinite(rec.maxRequestsPerMinute)) {
       profile.maxRequestsPerMinute = rec.maxRequestsPerMinute;
     }
@@ -238,8 +310,9 @@ function normalizeProfiles(cfg: Config): void {
 }
 
 export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
-  const explicitWorkspace =
-    (typeof pathOrConfig === 'object' && pathOrConfig?.workspace) || process.env.QWEN_WORKSPACE;
+  const optionWorkspace = typeof pathOrConfig === 'object' ? pathOrConfig?.workspace : undefined;
+  const explicitWorkspace = optionWorkspace || process.env.QWEN_WORKSPACE;
+  const workspaceOptionProvided = typeof optionWorkspace === 'string' && optionWorkspace.length > 0;
 
   const cfg: Config = {
     ...getDefault(),
@@ -297,28 +370,41 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
       const parsed = readConfigFile(globalConfigPath);
       if (parsed) {
         // A global config must not pin the workspace.
-        if (!explicitWorkspace) delete parsed.workspace;
+        delete parsed.workspace;
         Object.assign(cfg, parsed);
         cfg.configFilePath = globalConfigPath;
+        if (parsed.mcp && typeof parsed.mcp === 'object') {
+          cfg.mcpTrustedSource = globalConfigPath;
+        }
       }
     }
     // Optional workspace-local override (only when --workspace was passed).
     if (workspaceLocalPath && existsSync(workspaceLocalPath)) {
       const parsed = readConfigFile(workspaceLocalPath);
       if (parsed) {
+        const projectMcp = parsed.mcp && typeof parsed.mcp === 'object' ? parsed.mcp : undefined;
+        const hasProjectMcp = projectMcp !== undefined;
         // Workspace-local MCP servers are UNTRUSTED — the trust guard in
         // agent-lifecycle.ts reads mcpUntrusted and refuses to auto-connect.
-        if (parsed.mcp && typeof parsed.mcp === 'object') {
-          const projectMcp = parsed.mcp as NonNullable<Config['mcp']>;
+        if (hasProjectMcp) {
+          const projectServers = projectMcp as NonNullable<Config['mcp']>;
           const globalMcp = cfg.mcp ?? {};
-          cfg.mcp = { ...globalMcp, ...projectMcp };
+          cfg.mcp = { ...globalMcp, ...projectServers };
           cfg.mcpUntrusted = [
-            ...new Set([...(cfg.mcpUntrusted ?? []), ...Object.keys(projectMcp)]),
+            ...new Set([...(cfg.mcpUntrusted ?? []), ...Object.keys(projectServers)]),
           ];
-          delete parsed.mcp;
         }
-        Object.assign(cfg, parsed);
-        cfg.configFilePath = workspaceLocalPath;
+        const projectSettings = { ...parsed };
+        for (const field of PROJECT_CONFIG_BLOCKED_FIELDS) delete projectSettings[field];
+        Object.assign(cfg, projectSettings);
+        // Keep the trusted global source when the project only contributes
+        // ordinary settings. If the project is the only source, it remains
+        // untrusted and the MCP guard blocks its servers.
+        if (hasProjectMcp) {
+          cfg.configFilePath = workspaceLocalPath;
+        } else if (!cfg.configFilePath) {
+          cfg.configFilePath = workspaceLocalPath;
+        }
       }
     }
   }
@@ -351,7 +437,7 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   cfg.baseURL = sanitizeBaseURL(cfg.baseURL);
 
   const explicitBaseURL = process.env.QWEN_BASE_URL || cfg.baseURL;
-  const isDefaultLocal = /localhost|127\.0\.0\.1/.test(explicitBaseURL);
+  const isDefaultLocal = isLocalProvider(explicitBaseURL);
   const isOpenAIEndpoint = /openai\.com|api\.openai\.com/i.test(explicitBaseURL);
   if (
     !process.env.QWEN_BASE_URL &&
@@ -387,24 +473,24 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   }
   const rpmEnv = process.env.QWEN_MAX_REQUESTS_PER_MINUTE ?? process.env.QWEN_MAX_RPM;
   if (rpmEnv !== undefined && rpmEnv !== '') {
-    const n = parseInt(rpmEnv, 10);
+    const n = parseIntegerEnv(rpmEnv);
     if (Number.isNaN(n) || n < 0 || n > 10000) {
       logError(
         `Error: QWEN_MAX_REQUESTS_PER_MINUTE must be an integer 0-10000, got ${JSON.stringify(rpmEnv)}.\n` +
           `  Example: QWEN_MAX_REQUESTS_PER_MINUTE=20\n` +
-          `  Or in ~/.nanogent.json: { "maxRequestsPerMinute": 20 }`
+          `  Or in $NANOAGENT_ROOT/config/nanogent.json: { "maxRequestsPerMinute": 20 }`
       );
     } else if (cfg.maxRequestsPerMinute === undefined) {
       cfg.maxRequestsPerMinute = n;
     }
   }
   if (process.env.QWEN_MAX_CONCURRENT_LLM) {
-    const n = parseInt(process.env.QWEN_MAX_CONCURRENT_LLM, 10);
+    const n = parseIntegerEnv(process.env.QWEN_MAX_CONCURRENT_LLM);
     if (Number.isNaN(n) || n < 0 || n > 100) {
       logError(
         `Error: QWEN_MAX_CONCURRENT_LLM must be an integer 0-100, got ${JSON.stringify(process.env.QWEN_MAX_CONCURRENT_LLM)}.\n` +
           `  Example: QWEN_MAX_CONCURRENT_LLM=2\n` +
-          `  Or in ~/.nanogent.json: { "maxConcurrentLlmRequests": 2 }`
+          `  Or in $NANOAGENT_ROOT/config/nanogent.json: { "maxConcurrentLlmRequests": 2 }`
       );
     } else if (cfg.maxConcurrentLlmRequests === undefined) {
       cfg.maxConcurrentLlmRequests = n;
@@ -412,12 +498,12 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   }
   const tpmEnv = process.env.QWEN_MAX_TOKENS_PER_MINUTE ?? process.env.QWEN_MAX_TPM;
   if (tpmEnv !== undefined && tpmEnv !== '') {
-    const n = parseInt(tpmEnv, 10);
+    const n = parseIntegerEnv(tpmEnv);
     if (Number.isNaN(n) || n < 0 || n > 10_000_000) {
       logError(
         `Error: QWEN_MAX_TOKENS_PER_MINUTE must be an integer 0-10000000, got ${JSON.stringify(tpmEnv)}.\n` +
           `  Example: QWEN_MAX_TOKENS_PER_MINUTE=200000\n` +
-          `  Or in ~/.nanogent.json: { "maxTokensPerMinute": 200000 }`
+          `  Or in $NANOAGENT_ROOT/config/nanogent.json: { "maxTokensPerMinute": 200000 }`
       );
     } else if (cfg.maxTokensPerMinute === undefined) {
       cfg.maxTokensPerMinute = n;
@@ -425,12 +511,12 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   }
   const toolTokEnv = process.env.QWEN_MAX_TOOL_RESULT_TOKENS;
   if (toolTokEnv !== undefined && toolTokEnv !== '') {
-    const n = parseInt(toolTokEnv, 10);
+    const n = parseIntegerEnv(toolTokEnv);
     if (Number.isNaN(n) || n < 0 || n > 1_000_000) {
       logError(
         `Error: QWEN_MAX_TOOL_RESULT_TOKENS must be an integer 0-1000000, got ${JSON.stringify(toolTokEnv)}.\n` +
           `  Example: QWEN_MAX_TOOL_RESULT_TOKENS=8000\n` +
-          `  Or in ~/.nanogent.json: { "maxToolResultTokens": 8000 }`
+          `  Or in $NANOAGENT_ROOT/config/nanogent.json: { "maxToolResultTokens": 8000 }`
       );
     } else if (cfg.maxToolResultTokens === undefined) {
       cfg.maxToolResultTokens = n;
@@ -438,12 +524,12 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   }
   const toolCallArgTokEnv = process.env.QWEN_MAX_TOOL_CALL_ARG_TOKENS;
   if (toolCallArgTokEnv !== undefined && toolCallArgTokEnv !== '') {
-    const n = parseInt(toolCallArgTokEnv, 10);
+    const n = parseIntegerEnv(toolCallArgTokEnv);
     if (Number.isNaN(n) || n < 0 || n > 1_000_000) {
       logError(
         `Error: QWEN_MAX_TOOL_CALL_ARG_TOKENS must be an integer 0-1000000, got ${JSON.stringify(toolCallArgTokEnv)}.\n` +
           `  Example: QWEN_MAX_TOOL_CALL_ARG_TOKENS=4000\n` +
-          `  Or in ~/.nanogent.json: { "maxToolCallArgumentTokens": 4000 }`
+          `  Or in $NANOAGENT_ROOT/config/nanogent.json: { "maxToolCallArgumentTokens": 4000 }`
       );
     } else if (cfg.maxToolCallArgumentTokens === undefined) {
       cfg.maxToolCallArgumentTokens = n;
@@ -451,12 +537,12 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   }
   const reasoningBudgetEnv = process.env.QWEN_REASONING_BUDGET;
   if (reasoningBudgetEnv !== undefined && reasoningBudgetEnv !== '') {
-    const n = parseInt(reasoningBudgetEnv, 10);
+    const n = parseIntegerEnv(reasoningBudgetEnv);
     if (Number.isNaN(n) || n < -1 || n > 1_000_000) {
       logError(
         `Error: QWEN_REASONING_BUDGET must be -1 (unrestricted) or an integer 0-1000000, got ${JSON.stringify(reasoningBudgetEnv)}.\n` +
           `  Example: QWEN_REASONING_BUDGET=2048\n` +
-          `  Or in ~/.nanogent.json: { "reasoningBudget": 2048 }`
+          `  Or in $NANOAGENT_ROOT/config/nanogent.json: { "reasoningBudget": 2048 }`
       );
     } else if (cfg.reasoningBudget === undefined) {
       cfg.reasoningBudget = n;
@@ -464,12 +550,12 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   }
   const promptPriceEnv = process.env.QWEN_PROMPT_PRICE_PER_MILLION;
   if (promptPriceEnv !== undefined && promptPriceEnv !== '') {
-    const n = parseFloat(promptPriceEnv);
+    const n = Number(promptPriceEnv);
     if (Number.isNaN(n) || n < 0 || n > 10000) {
       logError(
         `Error: QWEN_PROMPT_PRICE_PER_MILLION must be a number 0-10000 ($/1M tokens), got ${JSON.stringify(promptPriceEnv)}.\n` +
           `  Example: QWEN_PROMPT_PRICE_PER_MILLION=0.15\n` +
-          `  Or in ~/.nanogent.json: { "promptPricePerMillion": 0.15 }`
+          `  Or in $NANOAGENT_ROOT/config/nanogent.json: { "promptPricePerMillion": 0.15 }`
       );
     } else if (cfg.promptPricePerMillion === undefined) {
       cfg.promptPricePerMillion = n;
@@ -477,12 +563,12 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   }
   const completionPriceEnv = process.env.QWEN_COMPLETION_PRICE_PER_MILLION;
   if (completionPriceEnv !== undefined && completionPriceEnv !== '') {
-    const n = parseFloat(completionPriceEnv);
+    const n = Number(completionPriceEnv);
     if (Number.isNaN(n) || n < 0 || n > 10000) {
       logError(
         `Error: QWEN_COMPLETION_PRICE_PER_MILLION must be a number 0-10000 ($/1M tokens), got ${JSON.stringify(completionPriceEnv)}.\n` +
           `  Example: QWEN_COMPLETION_PRICE_PER_MILLION=0.60\n` +
-          `  Or in ~/.nanogent.json: { "completionPricePerMillion": 0.6 }`
+          `  Or in $NANOAGENT_ROOT/config/nanogent.json: { "completionPricePerMillion": 0.6 }`
       );
     } else if (cfg.completionPricePerMillion === undefined) {
       cfg.completionPricePerMillion = n;
@@ -498,21 +584,26 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     }
   }
   if (process.env.QWEN_MAX_ITERATIONS) {
-    const n = parseInt(process.env.QWEN_MAX_ITERATIONS, 10);
+    const n = parseIntegerEnv(process.env.QWEN_MAX_ITERATIONS);
     if (!Number.isNaN(n)) cfg.maxIterations = n;
   }
-  if (process.env.QWEN_WORKSPACE) cfg.workspace = resolve(process.env.QWEN_WORKSPACE);
+  // A CLI/programmatic workspace must win over every environment source. The
+  // workspace .env is scrubbed above, so a trusted process/canonical-env value
+  // is safe to use only when no explicit workspace option was supplied.
+  if (!workspaceOptionProvided && process.env.QWEN_WORKSPACE) {
+    cfg.workspace = resolve(process.env.QWEN_WORKSPACE);
+  }
   if (process.env.QWEN_RETRY_COUNT) {
-    const n = parseInt(process.env.QWEN_RETRY_COUNT, 10);
+    const n = parseIntegerEnv(process.env.QWEN_RETRY_COUNT);
     if (!Number.isNaN(n)) cfg.retryCount = n;
   }
   if (process.env.QWEN_TIMEOUT) {
-    const n = parseInt(process.env.QWEN_TIMEOUT, 10);
+    const n = parseIntegerEnv(process.env.QWEN_TIMEOUT);
     if (!Number.isNaN(n)) cfg.timeout = n;
   }
   if (process.env.QWEN_THEME) cfg.theme = process.env.QWEN_THEME;
   if (process.env.QWEN_RATE_LIMIT_MS) {
-    const n = parseInt(process.env.QWEN_RATE_LIMIT_MS, 10);
+    const n = parseIntegerEnv(process.env.QWEN_RATE_LIMIT_MS);
     if (!Number.isNaN(n) && n >= 0 && n <= 10000) cfg.rateLimitMs = n;
   }
 
@@ -533,11 +624,11 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
   }
   applyEffortFromEnvAndDefault(cfg);
   if (process.env.QWEN_TOOL_CACHE_TTL_MS) {
-    const n = parseInt(process.env.QWEN_TOOL_CACHE_TTL_MS, 10);
+    const n = parseIntegerEnv(process.env.QWEN_TOOL_CACHE_TTL_MS);
     if (!Number.isNaN(n) && n >= 0) cfg.toolCacheTtlMs = n;
   }
   if (process.env.QWEN_TOOL_CACHE_MAX_SIZE) {
-    const n = parseInt(process.env.QWEN_TOOL_CACHE_MAX_SIZE, 10);
+    const n = parseIntegerEnv(process.env.QWEN_TOOL_CACHE_MAX_SIZE);
     if (!Number.isNaN(n) && n > 0) cfg.toolCacheMaxSize = n;
   }
 
@@ -548,19 +639,19 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     cfg.contextManagementEnabled = false;
   }
   if (process.env.QWEN_CONTEXT_COMPACT_THRESHOLD) {
-    const n = parseFloat(process.env.QWEN_CONTEXT_COMPACT_THRESHOLD);
+    const n = Number(process.env.QWEN_CONTEXT_COMPACT_THRESHOLD);
     if (!Number.isNaN(n) && n >= 0 && n <= 1) cfg.contextCompactThreshold = n;
   }
   if (process.env.QWEN_CONTEXT_SUMMARY_RESERVED_PERCENT) {
-    const n = parseFloat(process.env.QWEN_CONTEXT_SUMMARY_RESERVED_PERCENT);
+    const n = Number(process.env.QWEN_CONTEXT_SUMMARY_RESERVED_PERCENT);
     if (!Number.isNaN(n) && n >= 0 && n <= 1) cfg.contextSummaryReservedPercent = n;
   }
   if (process.env.QWEN_CONTEXT_KEEP_COUNT) {
-    const n = parseInt(process.env.QWEN_CONTEXT_KEEP_COUNT, 10);
+    const n = parseIntegerEnv(process.env.QWEN_CONTEXT_KEEP_COUNT);
     if (!Number.isNaN(n) && n > 0) cfg.contextKeepCount = n;
   }
   if (process.env.QWEN_CONTEXT_MAX_HISTORY_TOKENS) {
-    const n = parseInt(process.env.QWEN_CONTEXT_MAX_HISTORY_TOKENS, 10);
+    const n = parseIntegerEnv(process.env.QWEN_CONTEXT_MAX_HISTORY_TOKENS);
     if (!Number.isNaN(n) && n > 0) cfg.contextMaxHistoryTokens = n;
   }
 
@@ -586,11 +677,11 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
     cfg.securitySanitizeOutput = false;
   }
   if (process.env.QWEN_SECURITY_MAX_FILE_SIZE) {
-    const n = parseInt(process.env.QWEN_SECURITY_MAX_FILE_SIZE, 10);
+    const n = parseIntegerEnv(process.env.QWEN_SECURITY_MAX_FILE_SIZE);
     if (!Number.isNaN(n) && n > 0) cfg.securityMaxFileSize = n;
   }
   if (process.env.QWEN_SECURITY_MAX_BATCH_FILES) {
-    const n = parseInt(process.env.QWEN_SECURITY_MAX_BATCH_FILES, 10);
+    const n = parseIntegerEnv(process.env.QWEN_SECURITY_MAX_BATCH_FILES);
     if (!Number.isNaN(n) && n > 0) cfg.securityMaxBatchFiles = n;
   }
   if (process.env.QWEN_SECURITY_ALLOWED_PATHS) {
@@ -665,14 +756,18 @@ export function saveConfigFile(
   if (existsSync(targetPath)) {
     try {
       currentData = JSON.parse(readFileSync(targetPath, 'utf-8'));
-    } catch {
-      currentData = {};
+    } catch (err) {
+      throw new Error(
+        `[nanoagent] refusing to overwrite invalid config file ${targetPath}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
     }
   }
 
   const updatedData = { ...currentData, ...updates };
-  writeFileSync(targetPath, JSON.stringify(updatedData, null, 2), 'utf-8');
+  writeTextAtomically(targetPath, JSON.stringify(updatedData, null, 2) + '\n');
 
-  const reloadedConfig = loadConfig(workspace);
+  const reloadedConfig = workspace ? loadConfig({ workspace }) : loadConfig();
   return { targetPath, config: reloadedConfig };
 }

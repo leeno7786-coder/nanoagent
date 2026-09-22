@@ -9,6 +9,7 @@ import {
 
 // Reset module state between tests
 beforeEach(() => {
+  (globalThis as Record<string, unknown>).__questionToolNotify = () => {};
   // Cancel any pending question to reset state
   if (hasPendingQuestion()) {
     cancelQuestion();
@@ -25,6 +26,21 @@ describe('questionTool', () => {
     const result = questionTool.execute({}, '', undefined);
     const parsed = JSON.parse(result);
     expect(parsed.error).toBe('question tool requires async execution');
+  });
+
+  it('returns immediately when no interactive overlay is installed', async () => {
+    delete (globalThis as Record<string, unknown>).__questionToolNotify;
+    const result = JSON.parse(
+      await questionTool.executeAsync(
+        {
+          questions: [{ question: 'Q', options: [{ label: 'A' }] }],
+        },
+        '',
+        undefined
+      )
+    );
+    expect(result.headless).toBe(true);
+    (globalThis as Record<string, unknown>).__questionToolNotify = () => {};
   });
 });
 

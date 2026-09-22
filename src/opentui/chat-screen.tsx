@@ -603,6 +603,10 @@ export function ChatScreen({
       // of landing in the input for an argument.
       const name = cmd.trim();
       const trimmed = inputValue.trim();
+      if (cmd.endsWith(' ') && trimmed === name && ARG_BEARING.has(name)) {
+        setInputValue(name + ' ');
+        return;
+      }
       if (trimmed === name || trimmed.startsWith(name + ' ')) {
         handleSubmitLocal(trimmed);
       } else if (ARG_BEARING.has(name)) {
@@ -1272,9 +1276,9 @@ function AssistantMessageView({
     content: string;
     segments: CodeSegment[];
     tailOffset: number;
-  } | null>(null);
+  }>({ content: '', segments: [], tailOffset: 0 });
   const segments = useMemo(
-    () => parseCodeBlocksStreaming(displayContent, parseCacheRef.current ?? undefined),
+    () => parseCodeBlocksStreaming(displayContent, parseCacheRef.current),
     [displayContent]
   );
   // Pre-sanitize code/diff blocks once per content change, not per render.

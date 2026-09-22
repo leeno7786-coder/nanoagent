@@ -11,19 +11,27 @@ export async function executeToolDirect(
   toolName: string,
   args: Record<string, unknown>
 ): Promise<string> {
-  const tool = findTool(toolName);
+  const tool = findTool(toolName, agent);
   if (!tool) return JSON.stringify({ ok: false, error: `Unknown tool: ${toolName}` });
 
   const perm = agent.securityManager.permissionManager.checkPermission(toolName, args);
   if (!perm.allowed) {
     if (perm.requiresConfirmation && agent.onPermissionRequest) {
-      const userDecision = await agent.onPermissionRequest({
-        id: Math.random().toString(36).slice(2, 10),
-        tool: toolName,
-        category: perm.category,
-        command: perm.command,
-        args,
-      });
+      let userDecision: 'allow' | 'always_allow' | 'deny';
+      try {
+        userDecision = await agent.onPermissionRequest({
+          id: Math.random().toString(36).slice(2, 10),
+          tool: toolName,
+          category: perm.category,
+          command: perm.command,
+          args,
+        });
+      } catch {
+        return JSON.stringify({
+          ok: false,
+          error: 'Permission request failed; tool execution was denied',
+        });
+      }
       if (userDecision === 'deny') {
         return JSON.stringify({
           ok: false,
@@ -54,7 +62,7 @@ export async function executeToolSequential(
   tc: { name: string; arguments: string; id: string },
   signal?: AbortSignal
 ): Promise<void> {
-  const tool = findTool(tc.name);
+  const tool = findTool(tc.name, agent);
 
   agent.currentTool = { name: tc.name, args: tc.arguments };
   agent.setState('executing_tool');
@@ -71,13 +79,25 @@ export async function executeToolSequential(
       if (perm.requiresConfirmation) {
         if (agent.onPermissionRequest) {
           agent.setState('waiting_for_user');
-          const userDecision = await agent.onPermissionRequest({
-            id: tc.id,
-            tool: tc.name,
-            category: perm.category,
-            command: perm.command,
-            args,
-          });
+          let userDecision: 'allow' | 'always_allow' | 'deny';
+          try {
+            userDecision = await agent.onPermissionRequest({
+              id: tc.id,
+              tool: tc.name,
+              category: perm.category,
+              command: perm.command,
+              args,
+            });
+          } catch {
+            agent.setState('executing_tool');
+            output = JSON.stringify({
+              ok: false,
+              error: 'Permission request failed; tool execution was denied',
+            });
+            addToolMessage(agent, output, tc.id);
+            agent.currentTool = undefined;
+            return;
+          }
           agent.setState('executing_tool');
           if (userDecision === 'deny') {
             output = JSON.stringify({
@@ -268,7 +288,7 @@ export async function executeToolSequential(
   // tool_calls after compaction.
   addToolMessage(agent, output, tc.id);
 
-  handleSpecialToolResults(agent, tc.name, output, tc.id);
+  await handleSpecialToolResults(agent, tc.name, output, tc.id);
 
   const finalOutput = agent.messages[agent.messages.length - 1]?.content || output;
   agent.onToolResult?.({
@@ -290,18 +310,38 @@ export async function executeToolsParallel(
   const permissionResults = new Map<string, 'allow' | 'always_allow' | 'deny'>();
   const blockedByRepeat = new Map<string, string>();
   for (const tc of parallelTools) {
-    const args = parseToolArgs(tc);
+    if (signal?.aborted) {
+      agent.setState('idle');
+      agent.currentTool = undefined;
+      return;
+    }
+    let args: Record<string, unknown>;
+    try {
+      args = parseToolArgs(tc);
+    } catch (err: unknown) {
+      permissionResults.set(tc.id, 'deny');
+      blockedByRepeat.set(
+        tc.id,
+        JSON.stringify({ ok: false, error: (err as { message?: string }).message || String(err) })
+      );
+      continue;
+    }
     const perm = agent.securityManager.permissionManager.checkPermission(tc.name, args);
     if (!perm.allowed) {
       if (perm.requiresConfirmation && agent.onPermissionRequest) {
         agent.setState('waiting_for_user');
-        const decision = await agent.onPermissionRequest({
-          id: tc.id,
-          tool: tc.name,
-          category: perm.category,
-          command: perm.command,
-          args,
-        });
+        let decision: 'allow' | 'always_allow' | 'deny';
+        try {
+          decision = await agent.onPermissionRequest({
+            id: tc.id,
+            tool: tc.name,
+            category: perm.category,
+            command: perm.command,
+            args,
+          });
+        } catch {
+          decision = 'deny';
+        }
         agent.setState('executing_tool');
         permissionResults.set(tc.id, decision);
         if (decision === 'always_allow') {
@@ -337,13 +377,33 @@ export async function executeToolsParallel(
   }> = [];
 
   const promises = parallelTools.map(async (tc) => {
-    const tool = findTool(tc.name);
+    const tool = findTool(tc.name, agent);
     const toolStart = performance.now();
     let output: string;
     let wasCached = false;
 
     try {
+      if (signal?.aborted) {
+        return {
+          index: tc.index,
+          id: tc.id,
+          output: JSON.stringify({ ok: false, error: 'Tool execution cancelled' }),
+          duration: performance.now() - toolStart,
+          wasCached: false,
+        };
+      }
       const args = parseToolArgs(tc);
+
+      const argumentError = blockedByRepeat.get(tc.id);
+      if (argumentError && permissionResults.get(tc.id) === 'deny') {
+        return {
+          index: tc.index,
+          id: tc.id,
+          output: argumentError,
+          duration: performance.now() - toolStart,
+          wasCached: false,
+        };
+      }
 
       const decision = permissionResults.get(tc.id);
       if (decision === 'deny') {
@@ -492,7 +552,10 @@ export async function executeToolsParallel(
       return {
         index: tc.index,
         id: tc.id,
-        output: JSON.stringify({ ok: false, error: pErr.message || String(e) }),
+        output: agent.securityManager.sanitizeOutput(
+          JSON.stringify({ ok: false, error: pErr.message || String(e) }),
+          agent.cfg.apiKey ?? undefined
+        ),
         duration: performance.now() - toolStart,
         wasCached: false,
       };
@@ -510,7 +573,10 @@ export async function executeToolsParallel(
       results.push({
         index: originalTc?.index ?? index,
         id: originalTc?.id ?? '',
-        output: JSON.stringify({ ok: false, error: result.reason?.message || 'Unknown error' }),
+        output: agent.securityManager.sanitizeOutput(
+          JSON.stringify({ ok: false, error: result.reason?.message || 'Unknown error' }),
+          agent.cfg.apiKey ?? undefined
+        ),
         duration: 0,
         wasCached: false,
       });

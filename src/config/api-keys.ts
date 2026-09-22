@@ -1,4 +1,12 @@
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import {
+  readFileSync,
+  existsSync,
+  writeFileSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+  chmodSync,
+} from 'fs';
 import { resolve } from 'path';
 import { config as dotenvConfig } from 'dotenv';
 import { logError, logWarn } from '../log.js';
@@ -32,12 +40,32 @@ function ensureEnvFile(): string {
   }
   if (!existsSync(envPath)) {
     try {
-      writeFileSync(envPath, '# NanoAgent Environment Variables\n', 'utf-8');
+      writeFileSync(envPath, '# NanoAgent Environment Variables\n', {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+      if (process.platform !== 'win32') chmodSync(envPath, 0o600);
     } catch (err) {
       logWarn('Warning: failed to create .env file:', err);
     }
   }
   return envPath;
+}
+
+function writeEnvAtomically(path: string, content: string): void {
+  const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(temp, content, { encoding: 'utf-8', mode: 0o600 });
+    if (process.platform !== 'win32') chmodSync(temp, 0o600);
+    renameSync(temp, path);
+  } catch (err) {
+    try {
+      unlinkSync(temp);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err;
+  }
 }
 
 export function saveApiKeyToEnv(envVarName: string, apiKey: string, envPath?: string): boolean {
@@ -70,7 +98,8 @@ export function saveApiKeyToEnv(envVarName: string, apiKey: string, envPath?: st
       updatedLines.push(`# ${new Date().toISOString().slice(0, 10)}`);
       updatedLines.push(`${varName}${apiKey}`);
     }
-    writeFileSync(targetPath, updatedLines.join('\n'), 'utf-8');
+    writeEnvAtomically(targetPath, updatedLines.join('\n'));
+    if (process.platform !== 'win32') chmodSync(targetPath, 0o600);
     dotenvConfig({ path: resolve(targetPath), quiet: true });
     process.env[envVarName] = apiKey;
     return true;
@@ -122,7 +151,8 @@ export function removeApiKeyFromEnv(envVarName: string): boolean {
       }
     }
     if (removed) {
-      writeFileSync(envPath, updatedLines.join('\n'), 'utf-8');
+      writeEnvAtomically(envPath, updatedLines.join('\n'));
+      if (process.platform !== 'win32') chmodSync(envPath, 0o600);
       return true;
     }
     return false;

@@ -8,7 +8,12 @@ import type { Message } from './types.js';
 import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';
 import { syncTodoMessage } from './agent-todos.js';
-import { capToolResultForLlm, resolveToolResultTokenBudget } from './llm/tool-result-budget.js';
+import {
+  capToolArgumentsForLlm,
+  capToolResultForLlm,
+  resolveToolCallArgumentTokenBudget,
+  resolveToolResultTokenBudget,
+} from './llm/tool-result-budget.js';
 import { compactOutputBudget, llmCompactSummary } from './context/summarize.js';
 /** UI-only assistant notices (overflow retry, stuck-loop, etc.). Never sent to the LLM. */
 export function isNoticeMessage(m: Message): boolean {
@@ -65,7 +70,7 @@ export function ensureSystemBase(agent: AgentCore) {
 }
 
 /** Map one internal message to the LLM chat payload shape (non-system). */
-function toChatMessage(m: Message): ChatMessage {
+function toChatMessage(m: Message, agent: AgentCore): ChatMessage {
   if (m.role === 'tool') {
     return {
       role: 'tool' as const,
@@ -73,14 +78,24 @@ function toChatMessage(m: Message): ChatMessage {
       tool_call_id: m.toolCallId!,
     };
   }
-  if (m.role === 'assistant' && m.toolCalls) {
+  if (m.role === 'assistant' && m.toolCalls?.length) {
+    const argumentBudget = resolveToolCallArgumentTokenBudget(agent.cfg);
     return {
       role: 'assistant' as const,
       content: m.content,
       tool_calls: m.toolCalls.map((tc) => ({
         id: tc.id,
         type: 'function' as const,
-        function: { name: tc.name, arguments: tc.arguments },
+        function: {
+          name: tc.name,
+          arguments:
+            argumentBudget > 0
+              ? capToolArgumentsForLlm(tc.name, tc.arguments, {
+                  maxTokens: argumentBudget,
+                  modelId: agent.cfg.model,
+                })
+              : tc.arguments,
+        },
       })),
     };
   }
@@ -94,7 +109,7 @@ function toChatMessage(m: Message): ChatMessage {
 }
 
 /** Convert internal messages to the format expected by the LLM layer. */
-export function toChatMessages(agent: AgentCore): ChatMessage[] {
+export function toChatMessages(agent: AgentCore, includeTrailingAssistant = false): ChatMessage[] {
   // Restore system-base before todo sync so todos land after the main prompt.
   ensureSystemBase(agent);
   refreshSystemPrompt(agent);
@@ -139,18 +154,20 @@ export function toChatMessages(agent: AgentCore): ChatMessage[] {
     out.push({ role: 'system', content: systemParts.join('\n\n') });
   }
   for (const m of rest) {
-    out.push(toChatMessage(m));
+    out.push(toChatMessage(m, agent));
   }
 
   // Safety net for Bonsai/Qwen multi-step templates: a trailing assistant with
   // no tool_calls looks like a completed turn. The generation prompt then opens
   // a second assistant block and the model often stops immediately.
-  while (
-    out.length > 0 &&
-    out[out.length - 1]!.role === 'assistant' &&
-    !out[out.length - 1]!.tool_calls?.length
-  ) {
-    out.pop();
+  if (!includeTrailingAssistant) {
+    while (
+      out.length > 0 &&
+      out[out.length - 1]!.role === 'assistant' &&
+      !out[out.length - 1]!.tool_calls?.length
+    ) {
+      out.pop();
+    }
   }
 
   return out;
@@ -293,7 +310,7 @@ export async function checkAndCompactContext(
       const handoff = await llmCompactSummary({
         client: agent.client,
         cfg: agent.cfg,
-        history: toChatMessages(agent),
+        history: toChatMessages(agent, true),
         maxOutputTokens: budget,
         signal,
       });

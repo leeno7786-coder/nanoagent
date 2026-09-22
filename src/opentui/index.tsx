@@ -15,6 +15,7 @@ import {
 } from '../store.js';
 import { App } from './app.js';
 import type { Session } from '../types.js';
+import { isLocalProvider } from '../llm/index.js';
 
 export interface TuiRunOptions {
   resume?: string;
@@ -65,7 +66,7 @@ export async function runTui(opts: TuiRunOptions = {}): Promise<number> {
     ensureLiveSessionId();
   }
 
-  const isLocal = /localhost|127\.0\.0\.1/i.test(cfg.baseURL);
+  const isLocal = isLocalProvider(cfg.baseURL);
   const hasKey = !!(cfg.apiKey || getApiKey('OPENAI_API_KEY') || getApiKey('DASHSCOPE_API_KEY'));
 
   if (!hasKey && !isLocal) {
@@ -94,6 +95,8 @@ export async function runTui(opts: TuiRunOptions = {}): Promise<number> {
   // Without this, keystrokes before the data listener is attached get silently
   // dropped on Windows/Bun (stdin startup race).
   await new Promise<void>((r) => setTimeout(r, 50));
-  createRoot(appRenderer).render(<App renderer={appRenderer} initialSession={initialSession} />);
+  createRoot(appRenderer).render(
+    <App renderer={appRenderer} initialSession={initialSession} workspace={cfg.workspace} />
+  );
   return 0;
 }

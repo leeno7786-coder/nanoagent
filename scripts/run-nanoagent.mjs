@@ -6,8 +6,8 @@
  * Packaged install (.deb, Windows zip, npm): bun + dist/main.js when bun
  * is on PATH (TUI), otherwise Node + dist/main.js (headless).
  *
- * The launcher is the ONE place that resolves the canonical install root.
- * Everything the child process owns lives under NANOAGENT_ROOT:
+ * The launcher is the ONE place that resolves the package root and writable
+ * state root. Everything the child process owns lives under NANOAGENT_ROOT:
  *
  *   NANOAGENT_ROOT/
  *   ├── config/      global config + skill-config.json
@@ -24,6 +24,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import {
   appendFileSync,
+  accessSync,
+  constants as fsConstants,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -40,20 +42,40 @@ const BUN_EXE = process.platform === 'win32' ? 'bun.exe' : 'bun';
 const REQUIRED_SUBDIRS = ['config', 'skills', 'tools', 'sessions', 'workspace', 'logs'];
 
 /**
- * The canonical install root. One source of truth, no fallback chain.
+ * Resolve the package/install root from the launcher location.
  *
- * Resolution order (first wins):
- *   1. NANOAGENT_ROOT env var, if set, after canonicalization
- *   2. Directory containing scripts/run-nanoagent.mjs (parent of scripts/)
+ * NANOAGENT_ROOT is the writable state root, not the package root. Keeping
+ * this resolution independent means an explicit state root cannot make a
+ * packaged install search for dist/main.js in the state directory.
  */
-export function resolveInstallRoot({ env = process.env, launcherFile } = {}) {
-  if (env.NANOAGENT_ROOT && env.NANOAGENT_ROOT.length > 0) {
-    return resolve(env.NANOAGENT_ROOT);
-  }
+export function resolveInstallRoot({ launcherFile } = {}) {
   const file = launcherFile ?? fileURLToPath(import.meta.url);
   // For source checkouts: scripts/run-nanoagent.mjs → ../../ = repo root
   // For packaged installs: scripts/run-nanoagent.mjs → ../../ = package root
   return resolve(dirname(file), '..');
+}
+
+/**
+ * Choose a writable state root for installed packages. Source checkouts and
+ * user-local installs keep state beside the launcher; system installs (for
+ * example /usr/lib/nanoagent) use the user's platform data directory instead
+ * of failing before --help can run.
+ */
+export function resolveStateRoot(packageRoot, { env = process.env } = {}) {
+  if (env.NANOAGENT_ROOT && env.NANOAGENT_ROOT.length > 0) {
+    return resolve(env.NANOAGENT_ROOT);
+  }
+  try {
+    accessSync(packageRoot, fsConstants.W_OK);
+    return packageRoot;
+  } catch {
+    const base =
+      process.platform === 'win32'
+        ? env.LOCALAPPDATA || env.APPDATA || homedir()
+        : env.XDG_STATE_HOME ||
+          (env.HOME ? join(env.HOME, '.local', 'state') : join(homedir(), '.local', 'state'));
+    return resolve(base, 'nanoagent');
+  }
 }
 
 /**
@@ -197,11 +219,11 @@ export function teeStderrToCrashLog(child, logPath) {
     child.stderr.on('data', (chunk) => {
       try {
         process.stderr.write(chunk);
+        appendFileSync(logPath, chunk);
         if (existsSync(logPath) && statSync(logPath).size > STDERR_LOG_MAX_BYTES) {
           const tail = readFileSync(logPath, 'utf-8').slice(-(STDERR_LOG_MAX_BYTES / 2));
           writeFileSync(logPath, `# truncated ${new Date().toISOString()}\n${tail}`, 'utf-8');
         }
-        appendFileSync(logPath, chunk);
       } catch {
         /* best-effort */
       }
@@ -213,7 +235,8 @@ export function teeStderrToCrashLog(child, logPath) {
 
 async function main() {
   const launcherFile = fileURLToPath(import.meta.url);
-  const packageRoot = resolveInstallRoot({ env: process.env, launcherFile });
+  const packageRoot = resolveInstallRoot({ launcherFile });
+  const stateRoot = resolveStateRoot(packageRoot, { env: process.env });
 
   // The directory the user actually launched from. The child gets chdir'd to
   // the install root (so cwd is never an accident), but the agent's default
@@ -225,11 +248,11 @@ async function main() {
   // the whole point is no duplicate resolution.
 
   // Create the canonical layout if missing. Idempotent.
-  ensureRootLayout(packageRoot);
+  ensureRootLayout(stateRoot);
 
   // Diagnostic banner — printed once, before child starts.
   if (process.stdout.isTTY || env('NANOAGENT_DIAGNOSTIC') === '1') {
-    process.stderr.write(formatRootDiagnostic(packageRoot) + '\n');
+    process.stderr.write(formatRootDiagnostic(stateRoot) + '\n');
   }
 
   const srcMain = join(packageRoot, 'src', 'main.ts');
@@ -241,10 +264,10 @@ async function main() {
     bunPath: findBundledBun(packageRoot) || findBun(),
   });
 
-  const stderrLogPath = join(packageRoot, 'logs', 'stderr.log');
+  const stderrLogPath = join(stateRoot, 'logs', 'stderr.log');
   const childEnv = {
     ...process.env,
-    NANOAGENT_ROOT: packageRoot,
+    NANOAGENT_ROOT: stateRoot,
     NANOAGENT_LAUNCH_CWD: launchCwd,
   };
 
@@ -304,5 +327,8 @@ function env(name) {
 }
 
 if (isMainModule()) {
-  void main();
+  void main().catch((err) => {
+    console.error('[nanoagent] launcher failed:', err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
 }

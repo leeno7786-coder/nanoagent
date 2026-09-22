@@ -40,7 +40,7 @@ export function HelpOverlay({ theme, onClose }: HelpOverlayProps) {
       <text fg={theme.headerFg}> /clear Clear chat history</text>
       <text fg={theme.headerFg}> /compact Compact conversation context</text>
       <text fg={theme.headerFg}> /auto ... Autonomous subagent mode</text>
-      <text fg={theme.headerFg}> /config Live config overlay (saves ~/.nanogent.json)</text>
+      <text fg={theme.headerFg}> /config Live config overlay (saves canonical config)</text>
       <text fg={theme.headerFg}> /config show Print config summary</text>
       <text fg={theme.headerFg}>
         {' '}

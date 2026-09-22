@@ -74,6 +74,14 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
   const [runtimeStatus, setRuntimeStatus] = useState<string | null>(null);
   const providerScrollRef = useRef<ScrollBoxRenderable>(null);
   const modelScrollRef = useRef<ScrollBoxRenderable>(null);
+  const requestVersionRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      requestVersionRef.current++;
+    },
+    []
+  );
 
   const handleApiKeyInput = (display: string) => {
     setApiKeyInput(sanitizePastedLine(display));
@@ -111,6 +119,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
 
   const fetchCloudModels = useCallback(
     async (provider: RuntimeProvider, key: string, baseURL: string) => {
+      const version = requestVersionRef.current;
       setState('fetching-models');
       setIsCheckingRuntime(true);
       setRuntimeError(null);
@@ -119,6 +128,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
           provider.id === 'openrouter'
             ? await fetchOpenRouterModels(key)
             : await fetchRemoteModels(baseURL, key);
+        if (version !== requestVersionRef.current) return;
         if (models.length > 0) {
           setRuntimeModels(models);
         } else if (provider.models.length > 0) {
@@ -130,6 +140,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
         setState('selecting-model');
         setSelectedModelIndex(0);
       } catch (error) {
+        if (version !== requestVersionRef.current) return;
         if (provider.models.length > 0) {
           setRuntimeModels([]);
           setState('selecting-model');
@@ -139,7 +150,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
           setState(provider.requiresCustomBaseURL ? 'entering-base-url' : 'entering-api-key');
         }
       } finally {
-        setIsCheckingRuntime(false);
+        if (version === requestVersionRef.current) setIsCheckingRuntime(false);
       }
     },
     []
@@ -173,15 +184,18 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
       setState('checking-runtime');
       setIsCheckingRuntime(true);
       setRuntimeError(null);
+      const version = ++requestVersionRef.current;
 
       try {
         const baseURL = getProviderBaseURL(selectedProvider) || 'http://localhost:1234/v1';
         setCustomBaseURL(baseURL);
         const isHealthy = await checkRuntimeHealth(baseURL);
+        if (version !== requestVersionRef.current) return;
 
         if (isHealthy) {
           setRuntimeStatus('Runtime is running');
           const models = await fetchLocalModels(baseURL);
+          if (version !== requestVersionRef.current) return;
           if (models.length > 0) {
             const sorted = [...models].sort((a, b) => {
               if (a.default && !b.default) return -1;
@@ -201,10 +215,11 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
           setState('selecting-provider');
         }
       } catch (error) {
+        if (version !== requestVersionRef.current) return;
         setRuntimeError(`Error checking runtime: ${error}`);
         setState('selecting-provider');
       } finally {
-        setIsCheckingRuntime(false);
+        if (version === requestVersionRef.current) setIsCheckingRuntime(false);
       }
       return;
     }
@@ -243,8 +258,8 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     }
 
     if (key && key !== existingApiKey) {
-      // C2: the trusted save path is shown above; pressing Enter here is the
-      // explicit user consent to persist to the trusted home-dir config only.
+      // The trusted save path is shown above; pressing Enter here is the
+      // explicit user consent to persist to the canonical state-root .env only.
       const saved = saveApiKeyToEnv(envVar, key);
       if (!saved) {
         setRuntimeError('Could not save API key');
@@ -283,13 +298,19 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     const envVar = getApiKeyEnvVar(selectedProvider.id);
     const apiKey = envVar ? existingProviderApiKey(selectedProvider) : undefined;
     const model: ModelInfo = { id, name: id };
-    await onSelect?.(
-      selectedProvider,
-      model,
-      apiKey,
-      customBaseURL || getProviderBaseURL(selectedProvider)
-    );
-    onClose();
+    try {
+      await onSelect?.(
+        selectedProvider,
+        model,
+        apiKey,
+        customBaseURL || getProviderBaseURL(selectedProvider)
+      );
+      onClose();
+    } catch (error) {
+      setRuntimeError(
+        `Unable to connect: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }, [selectedProvider, modelIdInput, customBaseURL, onSelect, onClose]);
 
   const handleModelSelect = useCallback(async () => {
@@ -305,16 +326,23 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
     const envVar = getApiKeyEnvVar(selectedProvider.id);
     const apiKey = envVar ? existingProviderApiKey(selectedProvider) : undefined;
 
-    await onSelect?.(
-      selectedProvider,
-      selectedModel,
-      apiKey,
-      customBaseURL || getProviderBaseURL(selectedProvider)
-    );
-    onClose();
+    try {
+      await onSelect?.(
+        selectedProvider,
+        selectedModel,
+        apiKey,
+        customBaseURL || getProviderBaseURL(selectedProvider)
+      );
+      onClose();
+    } catch (error) {
+      setRuntimeError(
+        `Unable to connect: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }, [selectedProvider, selectedModel, customBaseURL, onSelect, onClose]);
 
   const handleBack = useCallback(() => {
+    requestVersionRef.current++;
     if (state === 'entering-model-id') {
       setState('selecting-model');
       setModelIdInput('');
@@ -520,7 +548,7 @@ export function ConnectOverlay({ theme, onClose, onSelect }: ConnectOverlayProps
           </text>
           <text fg={theme.mutedFg}>API key for {getApiKeyEnvVar(selectedProvider.id)}</text>
           <text fg={theme.mutedFg}>
-            Saved to trusted home config (~/.nanoagent/.env) — never workspace .env
+            Saved to the trusted canonical config/.env — never the workspace .env
           </text>
           {hasExisting && (
             <text fg={theme.agentFg}>Current key is set · Type to replace or Enter to keep</text>

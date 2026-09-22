@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { countTokens } from './utils.js';
 import {
   capToolResultForLlm,
+  capToolArgumentsForLlm,
   formatApproxTokens,
   resolveToolResultTokenBudget,
   resolveToolCallArgumentTokenBudget,
@@ -85,5 +86,15 @@ describe('C0 regression — tool argument budget', () => {
     const hugeArgs = JSON.stringify({ content: 'a '.repeat(20_000) });
     const capped = capToolResultForLlm(hugeArgs, { maxTokens: 4000, modelId: 'qwen' });
     expect(capped).toContain('truncated');
+  });
+
+  it('fails closed for an oversized file payload instead of truncating content', () => {
+    const hugeArgs = JSON.stringify({ path: 'large.txt', content: 'a '.repeat(20_000) });
+    const capped = capToolArgumentsForLlm('write_file', hugeArgs, {
+      maxTokens: 4000,
+      modelId: 'qwen',
+    });
+    expect(JSON.parse(capped)).toMatchObject({ truncated: true, tool: 'write_file' });
+    expect(capped).not.toContain('a '.repeat(100));
   });
 });

@@ -8,10 +8,46 @@ import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
-import { resolveNanoagentLaunch, findBundledBun, teeStderrToCrashLog } from './run-nanoagent.mjs';
+import {
+  resolveInstallRoot,
+  resolveStateRoot,
+  resolveNanoagentLaunch,
+  findBundledBun,
+  teeStderrToCrashLog,
+} from './run-nanoagent.mjs';
 
 const root = '/pkg/nanoagent';
 const repoRoot = join(import.meta.dir, '..');
+
+describe('launcher roots', () => {
+  it('keeps an explicit state root separate from a Node-only package root', () => {
+    const packageRoot = join(tmpdir(), 'nanoagent-package');
+    const launcherFile = join(packageRoot, 'scripts', 'run-nanoagent.mjs');
+    const stateRoot = join(tmpdir(), 'nanoagent-state');
+
+    expect(resolveInstallRoot({ env: { NANOAGENT_ROOT: stateRoot }, launcherFile })).toBe(
+      packageRoot
+    );
+    expect(resolveStateRoot(packageRoot, { env: { NANOAGENT_ROOT: stateRoot } })).toBe(stateRoot);
+    expect(
+      resolveNanoagentLaunch({
+        packageRoot,
+        srcExists: false,
+        distExists: true,
+        bunPath: null,
+      })
+    ).toEqual({ kind: 'node-dist', entry: join(packageRoot, 'dist', 'main.js') });
+  });
+
+  it('uses a user state location when an installed package root is absent', () => {
+    const packageRoot = join(tmpdir(), 'nanoagent-missing-package');
+    const stateBase = mkdtempSync(join(tmpdir(), 'nanoagent-state-base-'));
+    const env =
+      process.platform === 'win32' ? { LOCALAPPDATA: stateBase } : { XDG_STATE_HOME: stateBase };
+
+    expect(resolveStateRoot(packageRoot, { env })).toBe(join(stateBase, 'nanoagent'));
+  });
+});
 
 describe('resolveNanoagentLaunch', () => {
   it('uses bun + src/main.ts when a source tree and bun are available', () => {

@@ -24,12 +24,14 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
   type Dirent,
 } from 'fs';
 import { join, relative, sep } from 'path';
-import { SKIP_DIRS } from './tools/shared.js';
+import { isProtectedProjectPath, safe, SKIP_DIRS } from './tools/shared.js';
 import { ensureWorkspaceGitignore } from './workspace-history.js';
 
 interface SnapshotManifest {
@@ -40,7 +42,15 @@ interface SnapshotManifest {
   against: string | null;
   /** Map of relative file path → full file content. */
   files: Record<string, string>;
+  /** Binary file contents encoded as base64 so restores are lossless. */
+  binaryFiles?: Record<string, string>;
+  /** Relative paths deleted since the previous named snapshot. */
+  deleted?: string[];
 }
+
+type SnapshotContent = { kind: 'text'; data: string } | { kind: 'binary'; data: Buffer };
+
+const BASELINE_NAME = 'init';
 
 function snapshotsDir(workspace: string): string {
   return join(workspace, '.nanoagent', 'snapshots');
@@ -50,11 +60,89 @@ function safeName(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64) || `snap-${Date.now()}`;
 }
 
+function safeSnapshotPath(workspace: string, relPath: string): string {
+  if (!relPath || relPath.includes('\0')) {
+    throw new Error('[nanoagent] invalid snapshot path');
+  }
+  const normalized = relPath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const parts = normalized.split('/');
+  if (
+    parts.some((part) => part === '.nanoagent' || SKIP_DIRS.has(part)) ||
+    isProtectedProjectPath(normalized)
+  ) {
+    throw new Error('[nanoagent] snapshot path targets a protected directory');
+  }
+  return safe(relPath, workspace);
+}
+
 export interface SnapshotInfo {
   name: string;
   path: string;
   createdAt: string;
   filesChanged: number;
+}
+
+function isBinaryContent(data: Buffer): boolean {
+  if (data.includes(0)) return true;
+  if (data.toString('utf-8').includes('\uFFFD')) return true;
+  for (const byte of data) {
+    if (byte < 0x09 || (byte > 0x0d && byte < 0x20) || byte === 0x7f) return true;
+  }
+  return false;
+}
+
+function contentsEqual(a: SnapshotContent | undefined, b: SnapshotContent | undefined): boolean {
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === 'text' && b.kind === 'text') return a.data === b.data;
+  if (a.kind === 'binary' && b.kind === 'binary') return a.data.equals(b.data);
+  return false;
+}
+
+function serializeContents(contents: Map<string, SnapshotContent>): {
+  files: Record<string, string>;
+  binaryFiles?: Record<string, string>;
+} {
+  const files: Record<string, string> = {};
+  const binaryFiles: Record<string, string> = {};
+  for (const [relPath, content] of contents) {
+    if (content.kind === 'text') files[relPath] = content.data;
+    else binaryFiles[relPath] = content.data.toString('base64');
+  }
+  return {
+    files,
+    ...(Object.keys(binaryFiles).length > 0 ? { binaryFiles } : {}),
+  };
+}
+
+function writeSnapshotContent(path: string, content: SnapshotContent): void {
+  writeFileSync(path, content.data);
+}
+
+function applyManifest(
+  workspace: string,
+  snap: SnapshotManifest,
+  merged: Map<string, SnapshotContent>
+): void {
+  for (const relPath of snap.deleted ?? []) {
+    safeSnapshotPath(workspace, relPath);
+    merged.delete(relPath);
+  }
+  for (const [relPath, content] of Object.entries(snap.files ?? {})) {
+    safeSnapshotPath(workspace, relPath);
+    merged.set(relPath, { kind: 'text', data: content });
+  }
+  for (const [relPath, encoded] of Object.entries(snap.binaryFiles ?? {})) {
+    safeSnapshotPath(workspace, relPath);
+    merged.set(relPath, { kind: 'binary', data: Buffer.from(encoded, 'base64') });
+  }
+}
+
+function snapshotFileCount(snap: SnapshotManifest): number {
+  return (
+    Object.keys(snap.files ?? {}).length +
+    Object.keys(snap.binaryFiles ?? {}).length +
+    (snap.deleted?.length ?? 0)
+  );
 }
 
 function readSnapshot(name: string, workspace: string): SnapshotManifest | null {
@@ -71,7 +159,22 @@ function writeSnapshot(snap: SnapshotManifest, workspace: string): void {
   const dir = snapshotsDir(workspace);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const file = join(dir, `${safeName(snap.name)}.json`);
-  writeFileSync(file, JSON.stringify(snap, null, 2), 'utf-8');
+  writeSnapshotManifest(file, snap);
+}
+
+function writeSnapshotManifest(file: string, snap: SnapshotManifest): void {
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(temp, JSON.stringify(snap, null, 2), 'utf-8');
+    renameSync(temp, file);
+  } catch (err) {
+    try {
+      unlinkSync(temp);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err;
+  }
 }
 
 /** List every saved snapshot for `workspace`, newest first. */
@@ -88,7 +191,7 @@ export function listSnapshots(workspace: string): SnapshotInfo[] {
         name: snap.name,
         path: file,
         createdAt: snap.createdAt,
-        filesChanged: Object.keys(snap.files).length,
+        filesChanged: snapshotFileCount(snap),
       });
     } catch {
       /* skip unreadable */
@@ -101,7 +204,7 @@ function skipSnapshotEntry(name: string): boolean {
   // Never snapshot the rollback store, VCS, deps, or caches (.pytest_cache,
   // node_modules, .git, ...). The skip list matches tool search so rollback
   // cannot delete those trees either.
-  return name === '.nanoagent' || SKIP_DIRS.has(name);
+  return name === '.nanoagent' || SKIP_DIRS.has(name) || isProtectedProjectPath(name);
 }
 
 function readDirEntries(dir: string): Dirent[] {
@@ -115,8 +218,8 @@ function readDirEntries(dir: string): Dirent[] {
 }
 
 /** Walk the working tree and capture every project file's content. */
-function snapshotTree(treePath: string): Map<string, string> {
-  const out = new Map<string, string>();
+function snapshotTree(treePath: string): Map<string, SnapshotContent> {
+  const out = new Map<string, SnapshotContent>();
   if (!existsSync(treePath)) return out;
   const stack: string[] = [treePath];
   while (stack.length) {
@@ -130,13 +233,61 @@ function snapshotTree(treePath: string): Map<string, string> {
       }
       if (!entry.isFile()) continue;
       try {
-        out.set(relative(treePath, full).split(sep).join('/'), readFileSync(full, 'utf-8'));
+        const data = readFileSync(full);
+        const relPath = relative(treePath, full).split(sep).join('/');
+        if (isProtectedProjectPath(relPath)) continue;
+        out.set(
+          relPath,
+          isBinaryContent(data)
+            ? { kind: 'binary', data }
+            : { kind: 'text', data: data.toString('utf-8') }
+        );
       } catch {
-        /* binary or unreadable — skip */
+        /* unreadable — skip */
       }
     }
   }
   return out;
+}
+
+interface SnapshotChain {
+  chain: SnapshotManifest[];
+  missingIntermediate: string[];
+}
+
+function collectSnapshotChain(target: SnapshotManifest, workspace: string): SnapshotChain {
+  const chain: SnapshotManifest[] = [];
+  const missingIntermediate: string[] = [];
+  const seen = new Set<string>();
+  let current: SnapshotManifest | null = target;
+
+  while (current) {
+    const key = safeName(current.name);
+    if (seen.has(key)) {
+      throw new Error(`[nanoagent] snapshot chain contains a self-reference: ${current.name}`);
+    }
+    seen.add(key);
+    chain.push(current);
+    if (!current.against) break;
+    const previous = readSnapshot(current.against, workspace);
+    if (!previous) {
+      missingIntermediate.push(current.against);
+      break;
+    }
+    current = previous;
+  }
+
+  chain.reverse();
+  return { chain, missingIntermediate };
+}
+
+function materializeSnapshotChain(
+  chain: SnapshotManifest[],
+  workspace: string
+): Map<string, SnapshotContent> {
+  const merged = new Map<string, SnapshotContent>();
+  for (const snap of chain) applyManifest(workspace, snap, merged);
+  return merged;
 }
 
 /**
@@ -151,39 +302,50 @@ export function captureSnapshot(workspace: string, name: string): SnapshotInfo {
     throw new Error(`[nanoagent] cannot snapshot: workspace does not exist: ${workspace}`);
   }
   const safe = safeName(name);
-  const existing = listSnapshots(workspace).filter((s) => s.name !== 'init');
-  const prev: Map<string, string> =
-    existing.length > 0
-      ? readSnapshot(existing[0]!.name, workspace)?.files
-        ? new Map(Object.entries(readSnapshot(existing[0]!.name, workspace)!.files))
-        : new Map()
-      : new Map();
+  if (safe === BASELINE_NAME || snapshotExists(workspace, safe)) {
+    throw new Error(`[nanoagent] snapshot name already exists: ${safe}`);
+  }
+  const existing = listSnapshots(workspace).filter((s) => s.name !== BASELINE_NAME);
+  const previous = existing.length > 0 ? readSnapshot(existing[0]!.name, workspace) : null;
+  let prev = new Map<string, SnapshotContent>();
+  if (previous) {
+    const previousChain = collectSnapshotChain(previous, workspace);
+    if (previousChain.missingIntermediate.length > 0) {
+      throw new Error(
+        `[nanoagent] cannot capture snapshot: missing intermediate snapshot(s): ${previousChain.missingIntermediate.join(', ')}`
+      );
+    }
+    prev = materializeSnapshotChain(previousChain.chain, workspace);
+  }
   const next = snapshotTree(workspace);
 
-  const files: Record<string, string> = {};
+  const changed = new Map<string, SnapshotContent>();
+  const deleted: string[] = [];
   const allKeys = new Set<string>([...next.keys(), ...prev.keys()]);
   for (const key of allKeys) {
     const a = prev.get(key);
     const b = next.get(key);
-    if (a !== b) {
-      if (b !== undefined) files[key] = b;
-      else if (a !== undefined) files[key] = a;
+    if (!contentsEqual(a, b)) {
+      if (b !== undefined) changed.set(key, b);
+      else if (a !== undefined) deleted.push(key);
     }
   }
+  const serialized = serializeContents(changed);
 
   const manifest: SnapshotManifest = {
     name: safe,
     createdAt: new Date().toISOString(),
     base: workspace,
-    against: existing.length > 0 ? existing[0]!.name : null,
-    files,
+    against: previous?.name ?? null,
+    ...serialized,
+    ...(deleted.length > 0 ? { deleted } : {}),
   };
   writeSnapshot(manifest, workspace);
   return {
     name: safe,
     path: join(snapshotsDir(workspace), `${safe}.json`),
     createdAt: manifest.createdAt,
-    filesChanged: Object.keys(files).length,
+    filesChanged: snapshotFileCount(manifest),
   };
 }
 
@@ -191,8 +353,6 @@ export function captureSnapshot(workspace: string, name: string): SnapshotInfo {
 export function defaultSnapshotName(): string {
   return `snap-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
 }
-
-const BASELINE_NAME = 'init';
 
 /** Path of the baseline snapshot (no extension; it's the implicit reference). */
 export function baselineSnapshotPath(workspace: string): string {
@@ -218,27 +378,28 @@ export function takeBaselineSnapshot(workspace: string): SnapshotInfo {
   const dir = snapshotsDir(workspace);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const files = snapshotTree(treePath);
+  const serialized = serializeContents(files);
   const manifest: SnapshotManifest = {
     name: BASELINE_NAME,
     createdAt: new Date().toISOString(),
     base: workspace,
     against: null,
-    files: Object.fromEntries(files),
+    ...serialized,
   };
   const file = baselineSnapshotPath(workspace);
-  writeFileSync(file, JSON.stringify(manifest, null, 2), 'utf-8');
+  writeSnapshotManifest(file, manifest);
   return {
     name: BASELINE_NAME,
     path: file,
     createdAt: manifest.createdAt,
-    filesChanged: Object.keys(files).length,
+    filesChanged: snapshotFileCount(manifest),
   };
 }
 
 /**
  * Restore the workspace to a named snapshot. Overwrites every file
- * recorded in the snapshot (chained from the baseline up to the target
- * snapshot so deletions compose correctly) and removes any file
+ * recorded in the snapshot (chained from the oldest named snapshot up to the
+ * target so deletions compose correctly) and removes any file
  * currently on disk that wasn't in the merged state.
  */
 export function restoreSnapshot(
@@ -256,31 +417,9 @@ export function restoreSnapshot(
     throw new Error(`[nanoagent] snapshot not found: ${name}`);
   }
 
-  // Walk the chain backwards to gather every file that should exist
-  // after restoring to `target`.
-  const chain: SnapshotManifest[] = [];
-  const missingIntermediate: string[] = [];
-  let cur: SnapshotManifest | null = target;
-  while (cur) {
-    chain.push(cur);
-    if (!cur.against) break;
-    const prev = readSnapshot(cur.against, workspace);
-    if (!prev) {
-      missingIntermediate.push(cur.against);
-      break;
-    }
-    cur = prev;
-  }
-
-  // Merge: start from the oldest snapshot's files, then layer each
-  // newer diff on top.
-  chain.reverse();
-  const merged = new Map<string, string>();
-  for (const snap of chain) {
-    for (const [path, content] of Object.entries(snap.files)) {
-      merged.set(path, content);
-    }
-  }
+  const snapshotChain = collectSnapshotChain(target, workspace);
+  const { missingIntermediate } = snapshotChain;
+  const merged = materializeSnapshotChain(snapshotChain.chain, workspace);
 
   // Apply: write every file in `merged` to the workspace, delete any
   // file currently on disk that isn't in `merged`.
@@ -289,18 +428,18 @@ export function restoreSnapshot(
   if (existsSync(workspace)) {
     const live = snapshotTree(workspace);
     for (const [relPath, content] of merged) {
-      const target = join(workspace, relPath);
+      const target = safeSnapshotPath(workspace, relPath);
       mkdirSync(join(target, '..'), { recursive: true });
       const current = live.get(relPath);
-      if (current !== content) {
-        writeFileSync(target, content, 'utf-8');
+      if (!contentsEqual(current, content)) {
+        writeSnapshotContent(target, content);
         applied++;
       }
     }
     for (const [relPath] of live) {
       if (!merged.has(relPath)) {
         try {
-          rmSync(join(workspace, relPath), { force: true });
+          rmSync(safeSnapshotPath(workspace, relPath), { force: true });
           removed++;
         } catch {
           /* ignore */
@@ -342,20 +481,18 @@ export function restoreBaseline(workspace: string): {
   const manifest = JSON.parse(readFileSync(file, 'utf-8')) as SnapshotManifest;
   // The recorded file contents are the live paths in the workspace —
   // baseline captures the workspace directly, not a separate tree.
+  const merged = materializeSnapshotChain([manifest], workspace);
   let applied = 0;
-  for (const [relPath, content] of Object.entries(manifest.files)) {
-    const target = join(workspace, relPath);
-    mkdirSync(join(target, '..'), { recursive: true });
-    const current = (() => {
-      try {
-        return readFileSync(target, 'utf-8');
-      } catch {
-        return undefined;
+  if (existsSync(workspace)) {
+    const live = snapshotTree(workspace);
+    for (const [relPath, content] of merged) {
+      const target = safeSnapshotPath(workspace, relPath);
+      mkdirSync(join(target, '..'), { recursive: true });
+      const current = live.get(relPath);
+      if (!contentsEqual(current, content)) {
+        writeSnapshotContent(target, content);
+        applied++;
       }
-    })();
-    if (current !== content) {
-      writeFileSync(target, content, 'utf-8');
-      applied++;
     }
   }
   // Deletions: any file currently on disk that isn't in the baseline.
@@ -363,9 +500,9 @@ export function restoreBaseline(workspace: string): {
   if (existsSync(workspace)) {
     const live = snapshotTree(workspace);
     for (const [relPath] of live) {
-      if (!(relPath in manifest.files)) {
+      if (!merged.has(relPath)) {
         try {
-          rmSync(join(workspace, relPath), { force: true });
+          rmSync(safeSnapshotPath(workspace, relPath), { force: true });
           removed++;
         } catch {
           /* ignore */

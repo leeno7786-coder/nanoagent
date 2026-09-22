@@ -114,15 +114,22 @@ export const SKIP_DIRS = new Set([
 
 // Patterns to filter from environment variables (secrets, keys, tokens)
 export const SENSITIVE_ENV_PATTERNS = [
-  /KEY/i,
-  /SECRET/i,
-  /TOKEN/i,
-  /PASSWORD/i,
-  /CREDENTIAL/i,
-  /AUTH/i,
-  /API/i,
-  /PRIVATE/i,
+  /(?:^|_)KEY(?:_|$)/i,
+  /(?:^|_)SECRET(?:_|$)/i,
+  /(?:^|_)TOKEN(?:_|$)/i,
+  /(?:^|_)PASSWORD(?:_|$)/i,
+  /(?:^|_)CREDENTIAL(?:_|$)/i,
+  /(?:^|_)AUTH(?:_|$)/i,
+  /(?:^|_)API(?:_|$)/i,
+  /(?:^|_)PRIVATE(?:_|$)/i,
 ];
+
+const EMBEDDED_CREDENTIAL_RE = /^[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i;
+const CREDENTIAL_QUERY_RE = /(?:password|passwd|secret|token|api[_-]?key)\s*=\s*[^&\s]+/i;
+
+function containsEmbeddedCredential(value: string | undefined): boolean {
+  return Boolean(value && (EMBEDDED_CREDENTIAL_RE.test(value) || CREDENTIAL_QUERY_RE.test(value)));
+}
 
 /**
  * Create a sanitized environment object for child processes.
@@ -150,6 +157,12 @@ export function getSanitizedEnv(): NodeJS.ProcessEnv {
       continue;
     }
     if (dropGitConfigFamily && GIT_CONFIG_FAMILY.test(key)) {
+      continue;
+    }
+    // Connection strings are commonly named DATABASE_URL/REDIS_URL rather
+    // than SECRET or API_KEY. Do not pass embedded credentials to a child
+    // process that can print them into model-visible output.
+    if (containsEmbeddedCredential(value)) {
       continue;
     }
     // Filter out sensitive variables
@@ -214,7 +227,7 @@ export class PathEscapesWorkspaceError extends Error {
 export function safe(p: string, ws: string, _cfg?: Config): string {
   // Reject absolute Windows paths (e.g. C:/Windows/...) even on Linux,
   // where resolve() treats them as relative segments.
-  if (/^[A-Za-z]:\//.test(p)) {
+  if (/^[A-Za-z]:[\\/]/.test(p) || /^\\\\/.test(p)) {
     throw new PathEscapesWorkspaceError();
   }
   const resolved = resolve(ws, p || '.');
@@ -234,7 +247,7 @@ export function safe(p: string, ws: string, _cfg?: Config): string {
       throw new PathEscapesWorkspaceError();
     }
 
-    return resolved;
+    return realResolved;
   } catch (e) {
     if (e instanceof PathEscapesWorkspaceError) throw e;
     // The target doesn't exist yet (new file). Resolve symlinks on the
@@ -247,11 +260,17 @@ export function safe(p: string, ws: string, _cfg?: Config): string {
         if (parent === ancestor) break;
         ancestor = parent;
       }
-      const realAncestor = realpathSync(ancestor).replace(/\\/g, '/');
+      const realAncestorRaw = realpathSync(ancestor);
+      const realAncestor = realAncestorRaw.replace(/\\/g, '/');
       const realWorkspace = realpathSync(ws).replace(/\\/g, '/');
       if (realAncestor !== realWorkspace && !realAncestor.startsWith(realWorkspace + '/')) {
         throw new PathEscapesWorkspaceError();
       }
+
+      // Rebase a not-yet-created path onto the canonical ancestor. This keeps
+      // a symlinked directory such as `secrets-link/new.txt` subject to the
+      // blocked-path matcher before the write follows the link.
+      return resolve(realAncestorRaw, relative(ancestor, resolved));
     } catch (e2) {
       if (e2 instanceof PathEscapesWorkspaceError) throw e2;
       // Fall through to string comparison if ancestors can't be resolved
@@ -340,6 +359,26 @@ const BLOCKED_BASENAMES = new Set([
   '.npmrc',
   '.yarnrc',
 ]);
+
+/** Default secret/system paths that must never enter automatic project history. */
+export function isProtectedProjectPath(relPath: string): boolean {
+  const normalized = relPath.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  const parts = normalized.split('/').filter(Boolean);
+  const base = parts[parts.length - 1] ?? '';
+  if (parts.includes('.ssh') || parts.includes('secrets') || parts.includes('credentials')) {
+    return true;
+  }
+  if (
+    base === '.env' ||
+    base.startsWith('.env.') ||
+    /^(?:id_rsa|id_ed25519|id_ecdsa|known_hosts|authorized_keys|shadow|passwd|sudoers|hosts|resolv\.conf)$/.test(
+      base
+    )
+  ) {
+    return true;
+  }
+  return /\.(?:pem|key|crt|cer|p12|pfx)$/i.test(base);
+}
 
 /**
  * Convert an exception thrown inside a tool into a clean, model-friendly

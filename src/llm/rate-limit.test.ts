@@ -49,7 +49,7 @@ describe('awaitEndpointRateLimit', () => {
     const controller = new AbortController();
     controller.abort();
     const start = Date.now();
-    await awaitEndpointRateLimit(url, controller.signal);
+    await expect(awaitEndpointRateLimit(url, controller.signal)).rejects.toThrow('Aborted');
     expect(Date.now() - start).toBeLessThan(200);
   });
 
@@ -233,5 +233,15 @@ describe('shouldRetry', () => {
 
   it('retries other 400s on early attempts', () => {
     expect(shouldRetry(400, 1, { message: 'Bad request' })).toBe(true);
+  });
+
+  it('retries recognized status-0 timeout and connection failures', () => {
+    expect(shouldRetry(0, 1, { code: 'ETIMEDOUT' })).toBe(true);
+    expect(shouldRetry(0, 1, { message: 'connect ECONNREFUSED 127.0.0.1:1234' })).toBe(true);
+  });
+
+  it('does not retry arbitrary or explicitly non-retriable status-0 errors', () => {
+    expect(shouldRetry(0, 1, { message: 'invalid request payload' })).toBe(false);
+    expect(shouldRetry(0, 1, { message: 'context_length_exceeded' })).toBe(false);
   });
 });

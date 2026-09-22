@@ -225,6 +225,8 @@ export interface Config {
    * NANOGENT_TRUST_PROJECT_MCP=1 is set in the real environment.
    */
   mcpUntrusted?: string[];
+  /** Trusted global source retained when a project MCP overlay changes configFilePath. */
+  mcpTrustedSource?: string;
 }
 
 /**

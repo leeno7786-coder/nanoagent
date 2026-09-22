@@ -94,6 +94,7 @@ describe('SecurityManager', () => {
       expect(restricted.validateCommand('git status').ok).toBe(true);
       expect(restricted.validateCommand('git status --short').ok).toBe(true);
       expect(restricted.validateCommand('npm test').ok).toBe(false);
+      expect(restricted.validateCommand('git status; cat secret.txt').ok).toBe(false);
     });
 
     it('should allow read-only commands', () => {
@@ -115,22 +116,23 @@ describe('SecurityManager', () => {
       }
     });
 
-    it('passes previously-dangerous commands (PermissionManager is the gate)', () => {
-      // The dangerous-pattern screen has been removed; the PermissionManager
-      // (ask/allow/read_only) is the policy gate, not this validator.
-      const nowAllowed = [
+    it('blocks universally destructive and common shell-loader commands', () => {
+      const blocked = [
         'rm -rf /',
         'dd if=/dev/zero of=/dev/sda',
         'mkfs.ext4 /dev/sda1',
-        'kill -9 1',
         'sudo rm -rf /',
-        'chmod 777 /etc/passwd',
         'echo hello; rm -rf /',
         'echo hello | sh',
+        'powershell -EncodedCommand abc',
+        'Invoke-Expression $x',
+        'cipher /w C:',
       ];
-      for (const cmd of nowAllowed) {
-        expect(securityManager.validateCommand(cmd).ok).toBe(true);
+      for (const cmd of blocked) {
+        expect(securityManager.validateCommand(cmd).ok).toBe(false);
       }
+      expect(securityManager.validateCommand('kill -9 1').ok).toBe(false);
+      expect(securityManager.validateCommand('chmod 777 /etc/passwd').ok).toBe(true);
     });
 
     it('should block empty commands', () => {
@@ -265,6 +267,17 @@ describe('SecurityManager', () => {
       expect(result.ok).toBe(true);
     });
 
+    it('keeps immutable secret and system paths blocked despite a broad allowlist', () => {
+      const customManager = createSecurityManager({ allowedPaths: ['**/*'] }, '/test/workspace');
+      for (const path of [
+        '/test/workspace/certs/server.pem',
+        '/test/workspace/.ssh/id_rsa',
+        '/test/workspace/etc/passwd',
+      ]) {
+        expect(customManager.validateFileAccess(path, 'read').ok).toBe(false);
+      }
+    });
+
     it('should respect custom blocked paths', () => {
       const customManager = createSecurityManager(
         {
@@ -335,6 +348,14 @@ describe('SecurityManager', () => {
       expect(sanitized).toContain('[AWS_ACCESS_KEY_REDACTED]');
     });
 
+    it('does not redact unlabeled 40-character identifiers as AWS secrets', () => {
+      const identifier = 'Abcdefghijklmnopqrstuvwxyz1234567890ABCD';
+      expect(securityManager.sanitizeOutput(identifier)).toBe(identifier);
+      expect(securityManager.sanitizeOutput(`AWS_SECRET_ACCESS_KEY=${identifier}`)).toContain(
+        '[AWS_SECRET_REDACTED]'
+      );
+    });
+
     it('should sanitize password fields', () => {
       const output = 'Config: { password: "secret123", username: "admin" }';
       const sanitized = securityManager.sanitizeOutput(output);
@@ -402,6 +423,14 @@ describe('SecurityManager', () => {
       expect(sanitized).not.toContain(apiKey);
       expect(sanitized).toContain('[REDACTED_API_KEY]');
     });
+
+    it('redacts credentials embedded in connection strings', () => {
+      const sanitized = securityManager.sanitizeOutput(
+        'DATABASE_URL=postgres://alice:super-secret@db.example/app?ssl=true'
+      );
+      expect(sanitized).not.toContain('super-secret');
+      expect(sanitized).toContain('postgres://alice:[REDACTED]@db.example');
+    });
   });
 
   describe('isSafePath', () => {
@@ -422,9 +451,9 @@ describe('SecurityManager', () => {
       expect(securityManager.isSafeCommand('git status')).toBe(true);
     });
 
-    it('returns true for previously-blocked commands (no dangerous-pattern screen)', () => {
-      expect(securityManager.isSafeCommand('rm -rf /')).toBe(true);
-      expect(securityManager.isSafeCommand('sudo rm -rf /')).toBe(true);
+    it('returns false for built-in destructive commands', () => {
+      expect(securityManager.isSafeCommand('rm -rf /')).toBe(false);
+      expect(securityManager.isSafeCommand('sudo rm -rf /')).toBe(false);
     });
   });
 
@@ -442,7 +471,7 @@ describe('SecurityManager', () => {
       expect(securityManager.isSafeCommand('rm -rf /')).toBe(true);
 
       securityManager.setEnabled(true);
-      expect(securityManager.isSafeCommand('rm -rf /')).toBe(true);
+      expect(securityManager.isSafeCommand('rm -rf /')).toBe(false);
     });
   });
 

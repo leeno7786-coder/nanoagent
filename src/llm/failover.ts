@@ -177,6 +177,16 @@ export function resolveApiKeyForTarget(
     return { apiKey: current.apiKey };
   }
 
+  // Custom OpenAI-compatible endpoints have no catalog provider id. A
+  // fallback that changes only the model must still reuse the already-authenticated
+  // client when the normalized endpoint is unchanged.
+  if (
+    normalizeEndpointKey(targetBaseURL) === normalizeEndpointKey(current.baseURL) &&
+    looksLikeRealKey(current.apiKey)
+  ) {
+    return { apiKey: current.apiKey };
+  }
+
   // H1: The current key is only reused when the target provider matches the
   // current one (same catalog id) — never copied from OpenAI to Anthropic,
   // or from a cloud endpoint to an unrelated local endpoint. A local dummy
@@ -230,6 +240,15 @@ export function resolveFallbackConfig(
   const model = target.model.trim();
   if (!model) return { error: 'Fallback is missing a model id.' };
 
+  if (!target.baseURL?.trim() && target.provider) {
+    const provider = getProvider(target.provider);
+    if (provider?.requiresCustomBaseURL) {
+      return {
+        error: `Fallback provider "${target.provider}" requires an explicit baseURL.`,
+      };
+    }
+  }
+
   const baseURL = resolveFallbackBaseURL(target, cfg.baseURL);
   try {
     new URL(baseURL);
@@ -263,7 +282,7 @@ export function resolveFallbackConfig(
 
 /**
  * Switch the live session to the next unused fallback. Each target is tried
- * at most once per `tried` set (one user turn). Does not write ~/.nanogent.json.
+ * at most once per `tried` set (one user turn). Does not write the global config.
  */
 export async function switchSessionToFallback(
   session: FailoverSession,
@@ -285,8 +304,16 @@ export async function switchSessionToFallback(
       session.addNoticeMessage(resolved.error);
       continue;
     }
-    await session.reconfigure(resolved.patch);
-    return { model: session.cfg.model, reason };
+    try {
+      await session.reconfigure(resolved.patch);
+      return { model: session.cfg.model, reason };
+    } catch (error) {
+      session.addNoticeMessage(
+        `Fallback ${fb.model} could not be activated: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
   }
   return null;
 }

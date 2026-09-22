@@ -38,21 +38,44 @@ function loadTodos(): TodoItem[] {
     if (!existsSync(path)) return [];
     const content = readFileSync(path, 'utf-8');
     if (!content.trim()) return [];
-    return JSON.parse(content);
+    const parsed: unknown = JSON.parse(content);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (todo): todo is TodoItem =>
+        !!todo &&
+        typeof todo === 'object' &&
+        typeof (todo as TodoItem).id === 'string' &&
+        typeof (todo as TodoItem).text === 'string' &&
+        typeof (todo as TodoItem).done === 'boolean' &&
+        typeof (todo as TodoItem).createdAt === 'number'
+    );
   } catch {
     return [];
   }
 }
 
-function saveTodos(todos: TodoItem[]) {
+function saveTodos(todos: TodoItem[]): boolean {
   try {
     const path = storagePath();
     const dir = nanoagentPaths().configDir;
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(path, JSON.stringify(todos, null, 2), 'utf-8');
+    return true;
   } catch {
-    /* ignore */
+    return false;
   }
+}
+
+function findTodoByPrefix(
+  todos: TodoItem[],
+  id: string
+): { todo: TodoItem } | { error: string } | undefined {
+  const matches = todos.filter((todo) => todo.id.startsWith(id));
+  if (matches.length === 0) return undefined;
+  if (matches.length > 1) {
+    return { error: `todo prefix "${id}" is ambiguous; use more characters` };
+  }
+  return { todo: matches[0]! };
 }
 
 function generateId(): string {
@@ -77,7 +100,12 @@ export async function cmdTodo(argv: string[]): Promise<number> {
         createdAt: Date.now(),
       };
       todos.unshift(newTodo);
-      saveTodos(todos);
+      if (!saveTodos(todos)) {
+        console.error(
+          'Error: could not persist todos. Check the NanoAgent config directory permissions.'
+        );
+        return 1;
+      }
       console.log(`Added: ${newTodo.id.slice(0, 8)} ${text}`);
       return 0;
     }
@@ -88,13 +116,23 @@ export async function cmdTodo(argv: string[]): Promise<number> {
         console.error('Error: todo id is required. Usage: todo done <id>');
         return 1;
       }
-      const todo = todos.find((t) => t.id.startsWith(id));
-      if (!todo) {
+      const match = findTodoByPrefix(todos, id);
+      if (!match) {
         console.error(`Error: todo "${id}" not found.`);
         return 1;
       }
+      if ('error' in match) {
+        console.error(`Error: ${match.error}`);
+        return 1;
+      }
+      const todo = match.todo;
       todo.done = true;
-      saveTodos(todos);
+      if (!saveTodos(todos)) {
+        console.error(
+          'Error: could not persist todos. Check the NanoAgent config directory permissions.'
+        );
+        return 1;
+      }
       console.log(`Done: ${todo.text}`);
       return 0;
     }
@@ -106,12 +144,23 @@ export async function cmdTodo(argv: string[]): Promise<number> {
         return 1;
       }
       const before = todos.length;
-      const filtered = todos.filter((t) => !t.id.startsWith(id));
-      if (filtered.length === before) {
+      const match = findTodoByPrefix(todos, id);
+      if (!match) {
         console.error(`Error: todo "${id}" not found.`);
         return 1;
       }
-      saveTodos(filtered);
+      if ('error' in match) {
+        console.error(`Error: ${match.error}`);
+        return 1;
+      }
+      const filtered = todos.filter((t) => t.id !== match.todo.id);
+      if (filtered.length === before) return 1;
+      if (!saveTodos(filtered)) {
+        console.error(
+          'Error: could not persist todos. Check the NanoAgent config directory permissions.'
+        );
+        return 1;
+      }
       console.log(`Deleted todo "${id}".`);
       return 0;
     }
@@ -119,13 +168,23 @@ export async function cmdTodo(argv: string[]): Promise<number> {
     case 'clear': {
       const cleared = todos.filter((t) => t.done);
       const remaining = todos.filter((t) => !t.done);
-      saveTodos(remaining);
+      if (!saveTodos(remaining)) {
+        console.error(
+          'Error: could not persist todos. Check the NanoAgent config directory permissions.'
+        );
+        return 1;
+      }
       console.log(`Cleared ${cleared.length} completed todo(s).`);
       return 0;
     }
 
     case 'clear-all': {
-      saveTodos([]);
+      if (!saveTodos([])) {
+        console.error(
+          'Error: could not persist todos. Check the NanoAgent config directory permissions.'
+        );
+        return 1;
+      }
       console.log('Cleared all todos.');
       return 0;
     }

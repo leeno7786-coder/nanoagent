@@ -51,10 +51,11 @@ export function flattenChatMessages(messages: ChatMessage[]): Array<Record<strin
  * Explicit catalog false omits the extra.
  */
 export function shouldSendThinkingExtra(
-  cfg: Pick<Config, 'model' | 'supportsThinking' | 'effort'>,
+  cfg: Pick<Config, 'model' | 'supportsThinking' | 'effort' | 'reasoningBudget'>,
   options?: ChatRequestOptions
 ): boolean {
   if (options?.enableThinking !== undefined) return options.enableThinking;
+  if (cfg.reasoningBudget === 0) return false;
   if (cfg.supportsThinking === false) return false;
   if (resolveEffort(cfg) === 'none') return false;
   return shouldEnableThinking(cfg.model) || cfg.supportsThinking === true;

@@ -58,6 +58,26 @@ describe('baseline snapshot', () => {
     expect(existsSync(join(projectDir, '.nanoagent', 'snapshots', 'init.json'))).toBe(true);
   });
 
+  it('does not persist protected secret files into the baseline', () => {
+    mkdirSync(join(projectDir, 'secrets'), { recursive: true });
+    writeFileSync(join(projectDir, '.env.production'), 'DATABASE_URL=postgres://u:p@host/db');
+    writeFileSync(join(projectDir, 'secrets', 'service.json'), '{"token":"secret"}');
+    writeFileSync(join(projectDir, 'server.pem'), 'PRIVATE KEY');
+
+    takeBaselineSnapshot(projectDir);
+    const manifest = JSON.parse(readFileSync(baselineSnapshotPath(projectDir), 'utf-8')) as {
+      files?: Record<string, string>;
+      binaryFiles?: Record<string, string>;
+    };
+    const paths = new Set([
+      ...Object.keys(manifest.files ?? {}),
+      ...Object.keys(manifest.binaryFiles ?? {}),
+    ]);
+    expect(paths.has('.env.production')).toBe(false);
+    expect(paths.has('secrets/service.json')).toBe(false);
+    expect(paths.has('server.pem')).toBe(false);
+  });
+
   it('hasBaselineSnapshot is true after takeBaselineSnapshot, false before', () => {
     expect(hasBaselineSnapshot(projectDir)).toBe(false);
     takeBaselineSnapshot(projectDir);
@@ -93,6 +113,42 @@ describe('named snapshots', () => {
     // info.filesChanged counts only what changed since the previous
     // snapshot ("baseline" in this case), so it's the 2 files we edited.
     expect(info.filesChanged).toBe(2);
+  });
+
+  it('rejects a duplicate name instead of creating a self-referencing chain', () => {
+    captureSnapshot(projectDir, 'same-name');
+    expect(() => captureSnapshot(projectDir, 'same-name')).toThrow(/already exists/);
+    const manifest = JSON.parse(
+      readFileSync(join(projectDir, '.nanoagent', 'snapshots', 'same-name.json'), 'utf-8')
+    ) as { against: string | null; name: string };
+    expect(manifest.against).not.toBe(manifest.name);
+  });
+
+  it('records deletions so restoring a later snapshot does not resurrect files', () => {
+    captureSnapshot(projectDir, 'before-delete');
+    rmSync(join(projectDir, 'src', 'util.ts'), { force: true });
+    captureSnapshot(projectDir, 'after-delete');
+
+    restoreSnapshot(projectDir, 'after-delete');
+    expect(existsSync(join(projectDir, 'src', 'util.ts'))).toBe(false);
+  });
+
+  it('materializes the prior state across multiple deletion snapshots', () => {
+    captureSnapshot(projectDir, 's1');
+    rmSync(join(projectDir, 'src', 'util.ts'), { force: true });
+    captureSnapshot(projectDir, 's2');
+    rmSync(join(projectDir, 'README.md'), { force: true });
+    const info = captureSnapshot(projectDir, 's3');
+
+    expect(info.filesChanged).toBe(1);
+    const manifest = JSON.parse(
+      readFileSync(join(projectDir, '.nanoagent', 'snapshots', 's3.json'), 'utf-8')
+    ) as { deleted?: string[] };
+    expect(manifest.deleted).toEqual(['README.md']);
+
+    restoreSnapshot(projectDir, 's3');
+    expect(existsSync(join(projectDir, 'src', 'util.ts'))).toBe(false);
+    expect(existsSync(join(projectDir, 'README.md'))).toBe(false);
   });
 
   it('defaultSnapshotName produces a unique name', () => {
@@ -150,6 +206,22 @@ describe('restoreSnapshot', () => {
     );
   });
 
+  it('restores binary content without a lossy text conversion', () => {
+    const binaryPath = join(projectDir, 'image.bin');
+    const original = Buffer.from([0, 255, 1, 128, 10, 42]);
+    writeFileSync(binaryPath, original);
+    captureSnapshot(projectDir, 'binary');
+    writeFileSync(binaryPath, Buffer.from([255, 0, 2, 127]));
+
+    restoreSnapshot(projectDir, 'binary');
+
+    expect(readFileSync(binaryPath)).toEqual(original);
+    const manifest = JSON.parse(
+      readFileSync(join(projectDir, '.nanoagent', 'snapshots', 'binary.json'), 'utf-8')
+    ) as { binaryFiles?: Record<string, string> };
+    expect(manifest.binaryFiles?.['image.bin']).toBe(original.toString('base64'));
+  });
+
   it('removes files added after the snapshot', () => {
     captureSnapshot(projectDir, 's1');
     writeFileSync(join(projectDir, 'new.ts'), 'export const y = 1;\n');
@@ -160,6 +232,15 @@ describe('restoreSnapshot', () => {
 
   it('throws on unknown snapshot name', () => {
     expect(() => restoreSnapshot(projectDir, 'ghost')).toThrow(/snapshot not found/);
+  });
+
+  it('rejects traversal paths in a tampered snapshot manifest', () => {
+    captureSnapshot(projectDir, 'tampered');
+    const path = join(projectDir, '.nanoagent', 'snapshots', 'tampered.json');
+    const manifest = JSON.parse(readFileSync(path, 'utf-8')) as { files: Record<string, string> };
+    manifest.files['../../outside.txt'] = 'must not write';
+    writeFileSync(path, JSON.stringify(manifest), 'utf-8');
+    expect(() => restoreSnapshot(projectDir, 'tampered')).toThrow(/outside|workspace/i);
   });
 
   it('does not touch the snapshot store itself', () => {

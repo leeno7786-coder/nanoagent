@@ -23,7 +23,7 @@ export async function handleMcpCommand(args: string, ctx: SlashCommandContext): 
   if (!states || states.length === 0) {
     pushAssistant(
       agent,
-      'No MCP servers configured. Add `mcp` to ~/.qwen-agent.json.\n\nExample:\n```json\n"mcp": {\n  "filesystem": {\n    "type": "local",\n    "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]\n  },\n  "remote": {\n    "type": "remote",\n    "url": "https://mcp.example.com/sse"\n  }\n}\n```\n\nYou can also ask me to add an MCP server — just describe what you need and I\'ll use manage_mcp to configure it.',
+      'No MCP servers configured. Add `mcp` to the canonical `<NANOAGENT_ROOT>/config/nanogent.json`.\n\nExample:\n```json\n"mcp": {\n  "filesystem": {\n    "type": "local",\n    "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]\n  },\n  "remote": {\n    "type": "remote",\n    "url": "https://mcp.example.com/sse"\n  }\n}\n```\n\nYou can also ask me to add an MCP server — just describe what you need and I\'ll use manage_mcp to configure it.',
       ctx.setMessages
     );
   } else {

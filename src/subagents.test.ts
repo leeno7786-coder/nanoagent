@@ -86,7 +86,7 @@ describe('subagents.ts - Sub-agent Management', () => {
     it('should format empty results as JSON', () => {
       const formatted = formatSubAgentResults([]);
       const parsed = JSON.parse(formatted);
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok).toBe(false);
       expect(parsed.summary).toContain('0/0');
       expect(parsed.agents).toBe(0);
       expect(parsed.successful).toBe(0);
@@ -160,7 +160,7 @@ describe('subagents.ts - Sub-agent Management', () => {
       ];
       const formatted = formatSubAgentResults(results);
       const parsed = JSON.parse(formatted);
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok).toBe(false);
       expect(parsed.summary).toContain('0/1');
       expect(parsed.successful).toBe(0);
       expect(parsed.results).toContain('ERROR: Test error');

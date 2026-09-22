@@ -54,7 +54,15 @@ describe('isSmallModel', () => {
     expect(isSmallModel('nvidia/nemotron-3-nano-4b')).toBe(true);
     expect(isSmallModel('qwen3-8b-instruct')).toBe(true);
     expect(isSmallModel('phi-3-mini-4k')).toBe(true);
+    expect(isSmallModel('phi-4-14b-instruct')).toBe(false);
     expect(isSmallModel('gpt-4o')).toBe(false);
+  });
+
+  it('does not classify remote URL path fragments as local runtimes', async () => {
+    const { isLocalProvider } = await import('./llm/utils.js');
+    expect(isLocalProvider('https://gateway.example/ollama/v1')).toBe(false);
+    expect(isLocalProvider('https://ollama.attacker.example/v1')).toBe(false);
+    expect(isLocalProvider('http://192.168.1.20:1234/v1')).toBe(true);
   });
 
   it('does not treat MoE architecture tags (a3b) as param size', () => {

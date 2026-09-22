@@ -10,6 +10,7 @@ import {
   sleepWithSignal,
 } from './utils.js';
 import { parseXmlToolCalls } from './tool-call-parser.js';
+import { parseToolCallArgumentsJson } from './tool-call-args.js';
 import { buildChatCompletionsParams } from './request.js';
 import {
   awaitEndpointTurn,
@@ -22,6 +23,35 @@ import {
   estimatePromptTokensForRequest,
 } from './rate-limit.js';
 
+/**
+ * Normalize provider-specific function arguments without turning malformed
+ * values into the string "[object Object]". Strings stay intact so the
+ * parent lenient parser can repair common small-model JSON mistakes.
+ */
+export function normalizeToolCallArguments(value: unknown): string | undefined {
+  if (value === undefined) return '{}';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return '{}';
+    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return undefined;
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return value;
+    } catch {
+      /* The parent parser can repair raw newlines and file payloads. */
+    }
+    const repaired = parseToolCallArgumentsJson(value);
+    return !Object.prototype.hasOwnProperty.call(repaired, 'raw_input') ? value : undefined;
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  try {
+    const encoded = JSON.stringify(value);
+    return encoded && encoded.trim().startsWith('{') ? encoded : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function chat(
   client: OpenAI,
   cfg: Config,
@@ -30,7 +60,7 @@ export async function chat(
   signal?: AbortSignal,
   options?: ChatRequestOptions
 ): Promise<ChatResponse> {
-  const baseMaxRetries = cfg.retryCount ?? 3;
+  const baseMaxRetries = Math.max(0, cfg.retryCount ?? 3);
   let attempt = 1;
 
   while (true) {
@@ -51,8 +81,8 @@ export async function chat(
         signal
       );
 
-      const reqParams = buildChatCompletionsParams(cfg, messages, tools, options);
       try {
+        const reqParams = buildChatCompletionsParams(cfg, messages, tools, options);
         const completion = (await client.chat.completions.create(
           reqParams as unknown as Parameters<typeof client.chat.completions.create>[0],
           { signal }
@@ -68,48 +98,65 @@ export async function chat(
         const choice = completionObj.choices[0] as Record<string, unknown> | undefined;
         const msg = choice?.message as Record<string, unknown> | undefined;
         const content = normalizeContent(msg?.content);
-        const xml = parseXmlToolCalls(content);
-        const explicitToolCalls = (
-          (msg?.tool_calls as Array<Record<string, unknown>> | undefined) || []
-        )
-          .map((tc: Record<string, unknown>) => {
-            if (!(tc.function as Record<string, unknown> | undefined)?.name) {
-              return null;
-            }
-            return {
-              id: (tc.id as string) || `call_${Math.random().toString(36).slice(2, 10)}`,
-              type: 'function' as const,
-              function: {
-                name: (tc.function as Record<string, unknown>).name as string,
-                arguments: ((tc.function as Record<string, unknown>).arguments as string) || '{}',
-              },
-            };
-          })
-          .filter((x): x is NonNullable<typeof x> => x !== null);
-
-        const xmlToolCalls = xml.toolCalls.length
-          ? xml.toolCalls.map((tc) => ({
-              id: `call_${Math.random().toString(36).slice(2, 10)}`,
-              type: 'function' as const,
-              function: { name: tc.name, arguments: tc.arguments },
-            }))
+        const finishReason = choice?.finish_reason as string | undefined;
+        // A length-truncated completion may contain a syntactically plausible
+        // prefix of a tool call. It is never safe to execute or persist it.
+        const allowToolCalls = finishReason !== 'length';
+        const xml = allowToolCalls ? parseXmlToolCalls(content) : { content, toolCalls: [] };
+        const explicitToolCalls = allowToolCalls
+          ? ((Array.isArray(msg?.tool_calls) ? msg.tool_calls : []) as unknown[])
+              .map((tcRaw: unknown) => {
+                if (!tcRaw || typeof tcRaw !== 'object') return null;
+                const tc = tcRaw as Record<string, unknown>;
+                const fn = tc.function;
+                if (!fn || typeof fn !== 'object') return null;
+                const functionValue = fn as Record<string, unknown>;
+                const name = functionValue.name;
+                if (typeof name !== 'string' || !name.trim()) return null;
+                const args = normalizeToolCallArguments(functionValue.arguments);
+                if (!args) return null;
+                const id = tc.id;
+                return {
+                  id:
+                    typeof id === 'string' && id.trim()
+                      ? id
+                      : `call_${Math.random().toString(36).slice(2, 10)}`,
+                  type: 'function' as const,
+                  function: { name: name.trim(), arguments: args },
+                };
+              })
+              .filter((x): x is NonNullable<typeof x> => x !== null)
           : [];
+
+        const xmlToolCalls = allowToolCalls
+          ? xml.toolCalls
+              .map((tc) => {
+                const args = normalizeToolCallArguments(tc.arguments);
+                if (!args || !tc.name.trim()) return null;
+                return {
+                  id: `call_${Math.random().toString(36).slice(2, 10)}`,
+                  type: 'function' as const,
+                  function: { name: tc.name.trim(), arguments: args },
+                };
+              })
+              .filter((x): x is NonNullable<typeof x> => x !== null)
+          : [];
+        const toolCalls = explicitToolCalls.length > 0 ? explicitToolCalls : xmlToolCalls;
 
         noteEndpointSuccess(cfg.baseURL);
         const usage = normalizeUsage(completionObj.usage);
         if (usage) noteEndpointPromptTokens(cfg.baseURL, usage.input_tokens, scope);
+        const responseMessage: ChatResponse['message'] = {
+          role: typeof msg?.role === 'string' ? msg.role : 'assistant',
+          content: xml.toolCalls.length > 0 && allowToolCalls ? xml.content : content,
+          reasoning_content:
+            normalizeContent(msg?.reasoning_content ?? choice?.reasoning_content) || undefined,
+        };
+        if (toolCalls.length > 0) responseMessage.tool_calls = toolCalls;
         return {
-          message: {
-            role: (msg?.role as string) || 'assistant',
-            content: xml.toolCalls.length > 0 ? xml.content : content,
-            reasoning_content:
-              (msg?.reasoning_content as string) ||
-              (choice?.reasoning_content as string) ||
-              undefined,
-            tool_calls: explicitToolCalls.length > 0 ? explicitToolCalls : xmlToolCalls,
-          },
+          message: responseMessage,
           usage,
-          finishReason: choice?.finish_reason as string | undefined,
+          finishReason,
         };
       } finally {
         releaseEndpointTurn(cfg.baseURL);
@@ -127,10 +174,10 @@ export async function chat(
       const errStatus = e.status || e.status_code || e.response?.status || 0;
 
       const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529;
-      const effectiveMaxRetries = isRateLimit ? Math.max(baseMaxRetries, 6) : baseMaxRetries;
+      const maxAttempts = baseMaxRetries + 1;
 
-      if (!shouldRetry(errStatus, attempt, err) || attempt >= effectiveMaxRetries) {
-        throw new ApiError(errorMessage(errStatus, attempt, err, effectiveMaxRetries), errStatus, {
+      if (!shouldRetry(errStatus, attempt, err) || attempt >= maxAttempts) {
+        throw new ApiError(errorMessage(errStatus, attempt, err, maxAttempts), errStatus, {
           ...providerErrorDetails(err),
           cause: err,
         });
@@ -141,10 +188,10 @@ export async function chat(
         noteEndpointRateLimited(cfg.baseURL, delayMs, err);
       }
 
-      const msgStr = errorMessage(errStatus, attempt, err, effectiveMaxRetries, delayMs);
+      const msgStr = errorMessage(errStatus, attempt, err, maxAttempts, delayMs);
       options?.onRetry?.({
         attempt,
-        maxAttempts: effectiveMaxRetries,
+        maxAttempts,
         delayMs,
         status: errStatus,
         message: msgStr,

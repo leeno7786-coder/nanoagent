@@ -66,7 +66,7 @@ export function validateConfig(cfg: Config): {
   if (cfg.maxRequestsPerMinute !== undefined) {
     if (cfg.maxRequestsPerMinute < 0 || cfg.maxRequestsPerMinute > 10000) {
       errors.push(
-        `maxRequestsPerMinute must be between 0 and 10000, got ${cfg.maxRequestsPerMinute}. Example: QWEN_MAX_REQUESTS_PER_MINUTE=20 or { "maxRequestsPerMinute": 20 } in ~/.nanogent.json`
+        `maxRequestsPerMinute must be between 0 and 10000, got ${cfg.maxRequestsPerMinute}. Example: QWEN_MAX_REQUESTS_PER_MINUTE=20 or { "maxRequestsPerMinute": 20 } in $NANOAGENT_ROOT/config/nanogent.json`
       );
     }
   }
@@ -74,7 +74,7 @@ export function validateConfig(cfg: Config): {
   if (cfg.maxConcurrentLlmRequests !== undefined) {
     if (cfg.maxConcurrentLlmRequests < 0 || cfg.maxConcurrentLlmRequests > 100) {
       errors.push(
-        `maxConcurrentLlmRequests must be between 0 and 100, got ${cfg.maxConcurrentLlmRequests}. Example: QWEN_MAX_CONCURRENT_LLM=2 or { "maxConcurrentLlmRequests": 2 } in ~/.nanogent.json`
+        `maxConcurrentLlmRequests must be between 0 and 100, got ${cfg.maxConcurrentLlmRequests}. Example: QWEN_MAX_CONCURRENT_LLM=2 or { "maxConcurrentLlmRequests": 2 } in $NANOAGENT_ROOT/config/nanogent.json`
       );
     }
   }
@@ -82,7 +82,7 @@ export function validateConfig(cfg: Config): {
   if (cfg.maxTokensPerMinute !== undefined) {
     if (cfg.maxTokensPerMinute < 0 || cfg.maxTokensPerMinute > 10_000_000) {
       errors.push(
-        `maxTokensPerMinute must be between 0 and 10000000, got ${cfg.maxTokensPerMinute}. Example: QWEN_MAX_TOKENS_PER_MINUTE=200000 or { "maxTokensPerMinute": 200000 } in ~/.nanogent.json`
+        `maxTokensPerMinute must be between 0 and 10000000, got ${cfg.maxTokensPerMinute}. Example: QWEN_MAX_TOKENS_PER_MINUTE=200000 or { "maxTokensPerMinute": 200000 } in $NANOAGENT_ROOT/config/nanogent.json`
       );
     }
   }
@@ -90,7 +90,7 @@ export function validateConfig(cfg: Config): {
   if (cfg.maxToolCallArgumentTokens !== undefined) {
     if (cfg.maxToolCallArgumentTokens < 0 || cfg.maxToolCallArgumentTokens > 1_000_000) {
       errors.push(
-        `maxToolCallArgumentTokens must be between 0 and 1000000, got ${cfg.maxToolCallArgumentTokens}. Example: QWEN_MAX_TOOL_CALL_ARG_TOKENS=4000 or { "maxToolCallArgumentTokens": 4000 } in ~/.nanogent.json`
+        `maxToolCallArgumentTokens must be between 0 and 1000000, got ${cfg.maxToolCallArgumentTokens}. Example: QWEN_MAX_TOOL_CALL_ARG_TOKENS=4000 or { "maxToolCallArgumentTokens": 4000 } in $NANOAGENT_ROOT/config/nanogent.json`
       );
     }
   }
@@ -98,7 +98,7 @@ export function validateConfig(cfg: Config): {
   if (cfg.reasoningBudget !== undefined) {
     if (cfg.reasoningBudget < -1 || cfg.reasoningBudget > 1_000_000) {
       errors.push(
-        `reasoningBudget must be -1 (unrestricted) or between 0 and 1000000, got ${cfg.reasoningBudget}. Example: QWEN_REASONING_BUDGET=2048 or { "reasoningBudget": 2048 } in ~/.nanogent.json`
+        `reasoningBudget must be -1 (unrestricted) or between 0 and 1000000, got ${cfg.reasoningBudget}. Example: QWEN_REASONING_BUDGET=2048 or { "reasoningBudget": 2048 } in $NANOAGENT_ROOT/config/nanogent.json`
       );
     }
   }
@@ -106,7 +106,7 @@ export function validateConfig(cfg: Config): {
   if (cfg.maxToolResultTokens !== undefined) {
     if (cfg.maxToolResultTokens < 0 || cfg.maxToolResultTokens > 1_000_000) {
       errors.push(
-        `maxToolResultTokens must be between 0 and 1000000, got ${cfg.maxToolResultTokens}. Example: QWEN_MAX_TOOL_RESULT_TOKENS=8000 or { "maxToolResultTokens": 8000 } in ~/.nanogent.json`
+        `maxToolResultTokens must be between 0 and 1000000, got ${cfg.maxToolResultTokens}. Example: QWEN_MAX_TOOL_RESULT_TOKENS=8000 or { "maxToolResultTokens": 8000 } in $NANOAGENT_ROOT/config/nanogent.json`
       );
     }
   }

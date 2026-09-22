@@ -42,7 +42,7 @@ export function workerFailureToFailoverError(opts: {
 
 /**
  * Switch this worker's in-memory model/baseURL/client. Does not mutate the
- * main session, ~/.nanogent.json, or the shared pool endpoint object.
+ * main session, global config, or the shared pool endpoint object.
  */
 export async function switchWorkerToFallback(
   wctx: WorkerContext,

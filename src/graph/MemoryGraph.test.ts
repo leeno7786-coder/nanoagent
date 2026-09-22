@@ -4,7 +4,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  appendFileSync,
+  symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemoryGraph } from './MemoryGraph.js';
@@ -271,6 +278,45 @@ describe('MemoryGraph', () => {
       expect(node).toBeDefined();
       expect(node.type).toBe('concept');
       expect(node.description).toBe('fixture-pkg');
+    });
+
+    it('skips secret files and redacts sensitive JSON keys', async () => {
+      writeFileSync(join(ws, '.env'), 'API_KEY=do-not-index\n');
+      writeFileSync(join(ws, 'credentials.json'), '{"apiKey":"do-not-index"}');
+      writeFileSync(join(ws, 'config.json'), '{"apiKey":"do-not-index","name":"safe"}');
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      expect(graph.query({ type: 'node', query: { path: '.env' } }).nodes).toHaveLength(0);
+      expect(graph.query({ type: 'node', query: { path: 'credentials.json' } }).nodes).toHaveLength(
+        0
+      );
+      const keyNode = graph.query({
+        type: 'node',
+        query: 'config:file:config.json:apiKey',
+      }).nodes[0];
+      expect(keyNode?.description).toBe('[REDACTED]');
+      expect(JSON.stringify(keyNode?.metadata)).not.toContain('do-not-index');
+    });
+
+    it('does not follow symlinked directories and rejects unsafe patterns', async () => {
+      const outside = mkdtempSync(join(tmpdir(), 'memory-graph-outside-'));
+      writeFileSync(join(outside, 'secret.ts'), 'export const outsideSecret = true;');
+      try {
+        try {
+          symlinkSync(outside, join(ws, 'linked'), 'junction');
+        } catch {
+          return;
+        }
+        const graph = new MemoryGraph(ws);
+        await graph.build();
+        expect(
+          graph.query({ type: 'node', query: { path: 'linked/secret.ts' } }).nodes
+        ).toHaveLength(0);
+        expect(await pattern_search({ workspace: ws, pattern: '(a+)+', limit: 50 })).toEqual([]);
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
     });
   });
 

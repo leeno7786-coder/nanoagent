@@ -83,7 +83,7 @@ These exist because breaking them has caused real incidents. Do not violate them
 
 1. **Never commit `dist/`.** It is gitignored and built by `prepack`. Source lives in `src/`.
 2. **Never weaken the MCP trust guard.** Project-local MCP configs must NOT auto-connect.
-   Trust = global `~/.nanogent.json`, an explicit config path, or `NANOGENT_TRUST_PROJECT_MCP=1`.
+   Trust = canonical `$NANOAGENT_ROOT/config/nanogent.json`, an explicit config path, or `NANOGENT_TRUST_PROJECT_MCP=1`.
    This is an RCE / API-key-exfiltration guard. (See `src/mcp/`.)
 3. **Never bypass the security layer.** Shell commands go through command validation;
    file tools respect workspace path sandboxing (`.env`, `.git` blocked); tool output is
@@ -178,7 +178,7 @@ These exist because breaking them has caused real incidents. Do not violate them
 
 - Primary interface is the TUI (`bun run start`), not the headless CLI.
 - Main agent orchestrates sub-agents: calls `explore_subagent` one at a time (or a few in parallel, capped at 4) with a focused, context-rich prompt for each.
-- Sub-agents default to loaded local LM Studio `qwen3.5-2b*` models (one worker each, up to 4 in parallel). Override with an explicit `subagents` block in `~/.nanogent.json` if you want a fixed cloud model.
+- Sub-agents default to loaded local LM Studio `qwen3.5-2b*` models (one worker each, up to 4 in parallel). Override with an explicit `subagents` block in `$NANOAGENT_ROOT/config/nanogent.json` if you want a fixed cloud model.
 - When improving local-model workflows, optimize for 8B-and-smaller models with 128k–400k context via LM Studio.
 - **Recommended Local Model**: `Jackrong\Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF` for optimal performance.
 - Prefers structured diff-style chat output for tool/file edits (● Update headers with line deltas).

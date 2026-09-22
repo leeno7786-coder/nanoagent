@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'bun:test';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { getApiKey, saveApiKeyToEnv, isUsableApiKey } from './api-keys.js';
@@ -83,6 +83,9 @@ describe('saveApiKeyToEnv', () => {
       expect(saveApiKeyToEnv('OPENROUTER_API_KEY', REAL, envPath)).toBe(true);
       expect(readFileSync(envPath, 'utf-8')).toContain(`OPENROUTER_API_KEY=${REAL}`);
       expect(process.env.OPENROUTER_API_KEY).toBe(REAL);
+      if (process.platform !== 'win32') {
+        expect(statSync(envPath).mode & 0o077).toBe(0);
+      }
     } finally {
       delete process.env.OPENROUTER_API_KEY;
       rmSync(dir, { recursive: true, force: true });

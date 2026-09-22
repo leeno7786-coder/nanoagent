@@ -17,6 +17,7 @@ import {
 } from './model-runtime.js';
 import { loadConfig, applySubAgentDefaults } from './config/index.js';
 import { getRealEnv } from './config/load.js';
+import { createMcpManager } from './mcp/index.js';
 import type { Config } from './types.js';
 import { autoSaveSession, setActiveSessionWorkspace } from './store.js';
 import type { AgentCore } from './agent.js';
@@ -37,11 +38,26 @@ function normPath(s: string): string {
   return process.platform === 'win32' ? fwd.toLowerCase() : fwd;
 }
 
+type LifecycleMutationOptions = { allowActiveRun?: boolean };
+
+function assertLifecycleMutationAllowed(
+  agent: AgentCore,
+  options?: LifecycleMutationOptions
+): void {
+  if (
+    agent._activeRun &&
+    !options?.allowActiveRun &&
+    agent.currentTool?.name !== 'change_workspace'
+  ) {
+    throw new Error('Cannot reconfigure the agent while a run is active.');
+  }
+}
+
 /**
  * Trust classification for MCP auto-connect. Trusted = an explicitly-passed
  * config path, or the canonical global config file under NANOAGENT_ROOT.
- * Nothing in the home directory or cwd is trusted by default — the only
- * place MCP servers auto-connect from is the install root's global config.
+ * Nothing in the project directory or cwd is trusted by default — the only
+ * place MCP servers auto-connect from is the canonical state-root config.
  */
 export function isTrustedMcpConfigSource(
   source: string | undefined,
@@ -55,14 +71,51 @@ export function isTrustedMcpConfigSource(
 /**
  * Reconfigure the agent (refreshes LM Studio model metadata when model/URL changes).
  */
-export async function reconfigureAgent(agent: AgentCore, newCfg: Partial<Config>) {
-  const modelChanged = newCfg.model !== undefined || newCfg.baseURL !== undefined;
+export async function reconfigureAgent(
+  agent: AgentCore,
+  newCfg: Partial<Config>,
+  options?: LifecycleMutationOptions
+) {
+  assertLifecycleMutationAllowed(agent, options);
+  const modelChanged =
+    newCfg.model !== undefined || newCfg.baseURL !== undefined || newCfg.provider !== undefined;
   const smallModelModeChanged = newCfg.smallModelMode !== undefined;
   const workspaceChanged = newCfg.workspace !== undefined;
+  const securityChanged =
+    newCfg.securityEnabled !== undefined ||
+    newCfg.securityValidateCommands !== undefined ||
+    newCfg.securityValidateFileAccess !== undefined ||
+    newCfg.securitySanitizeOutput !== undefined ||
+    newCfg.securityMaxFileSize !== undefined ||
+    newCfg.securityMaxBatchFiles !== undefined ||
+    newCfg.securityAllowedPaths !== undefined ||
+    newCfg.securityBlockedPaths !== undefined ||
+    newCfg.permissionMode !== undefined ||
+    newCfg.permissionRules !== undefined;
   const previousModelId = agent.cfg.model;
 
   agent.cfg = { ...agent.cfg, ...newCfg };
-  if (newCfg.model !== undefined) {
+  if (modelChanged) {
+    // Runtime metadata and capability flags belong to the old endpoint/model.
+    // Remove only fields not explicitly supplied by the caller so restored or
+    // manually configured values still remain usable when intentional.
+    for (const key of [
+      'modelContextLength',
+      'modelMaxContextLength',
+      'modelParamBillions',
+      'modelRuntimeSource',
+      'supportsTools',
+      'supportsThinking',
+      'supportsReasoningEffort',
+      'supportsPromptCache',
+      'promptPricePerMillion',
+      'completionPricePerMillion',
+    ] as const) {
+      if (newCfg[key] === undefined) delete agent.cfg[key];
+    }
+    // loadConfig stores auto-detected small-model mode in memory. Re-detect it
+    // when changing models unless the caller explicitly overrides the flag.
+    if (newCfg.smallModelMode === undefined) delete agent.cfg.smallModelMode;
     agent.cfg = resetCatalogCapabilitiesForModelChange(agent.cfg, previousModelId);
   }
   applySubAgentDefaults(agent.cfg);
@@ -89,20 +142,27 @@ export async function reconfigureAgent(agent: AgentCore, newCfg: Partial<Config>
 
   // Clear cache if workspace changed
   if (workspaceChanged) {
+    try {
+      await agent.mcpManager.disconnectAll();
+    } catch (err) {
+      logDebug('[workspace] MCP disconnect failed:', err);
+    }
+    registerExternalTools([], agent);
+    agent.mcpManager = createMcpManager(agent.cfg.mcp, agent.cfg.workspace);
+    agent.mcpStates = [];
     agent.toolCache.clear();
   }
 
   // Update context manager if model changed
   if (modelChanged) {
     agent.contextManager.updateModel(agent.cfg);
-    await agent.applyRuntimeProfile();
+    await agent.applyRuntimeProfile(options?.allowActiveRun === true);
   } else {
     agent.client = createClient(agent.cfg);
   }
 
   if (smallModelModeChanged) {
     agent._smallModel = isSmallModelFromConfig(agent.cfg);
-    rebuildSystemPrompt(agent);
   }
 
   // Update security manager if workspace changed
@@ -114,14 +174,7 @@ export async function reconfigureAgent(agent: AgentCore, newCfg: Partial<Config>
   agent.cfg.securityManager = agent.securityManager;
 
   // Update security config if relevant options changed
-  if (
-    newCfg.securityEnabled !== undefined ||
-    newCfg.securityValidateCommands !== undefined ||
-    newCfg.securityValidateFileAccess !== undefined ||
-    newCfg.securitySanitizeOutput !== undefined ||
-    newCfg.securityMaxFileSize !== undefined ||
-    newCfg.securityMaxBatchFiles !== undefined
-  ) {
+  if (securityChanged) {
     agent.securityManager.updateConfig({
       enabled: agent.cfg.securityEnabled,
       validateCommands: agent.cfg.securityValidateCommands,
@@ -131,78 +184,88 @@ export async function reconfigureAgent(agent: AgentCore, newCfg: Partial<Config>
       maxBatchFiles: agent.cfg.securityMaxBatchFiles,
       allowedPaths: agent.cfg.securityAllowedPaths,
       blockedPaths: agent.cfg.securityBlockedPaths,
+      permissionMode: agent.cfg.permissionMode,
+      permissionRules: agent.cfg.permissionRules,
     });
+    agent.toolCache.clear();
   }
 
-  // Propagate permission mode changes into the live PermissionManager
-  if (newCfg.permissionMode !== undefined) {
-    agent.securityManager.permissionManager.setMode(newCfg.permissionMode);
+  // Invalidate schemas after any live config change that affects filtering or
+  // descriptions, and refresh the prompt when its model/workspace contract
+  // changed.
+  if (modelChanged || smallModelModeChanged || workspaceChanged || securityChanged) {
+    agent.invalidateToolSchemaCache();
+    agent.contextManager.resetOverhead();
   }
+  if (modelChanged || smallModelModeChanged || workspaceChanged) rebuildSystemPrompt(agent);
 }
 
 /**
  * Query LM Studio (or other local runtime) for loaded context and parameter count.
  */
-export async function applyRuntimeProfile(agent: AgentCore) {
+export async function applyRuntimeProfile(agent: AgentCore, options?: LifecycleMutationOptions) {
+  assertLifecycleMutationAllowed(agent, options);
   agent.cfg = await enrichConfigWithRuntime(agent.cfg);
   agent._smallModel = isSmallModelFromConfig(agent.cfg);
   agent.client = createClient(agent.cfg);
+  agent.invalidateToolSchemaCache();
   // Compaction must use the runtime-reported window, not the constructor heuristic.
   agent.contextManager.updateModel(agent.cfg);
 }
 
 /**
  * Extract fields from the current config that must survive a reload-from-disk:
- * runtime-derived metadata, the workspace path, and the security manager instance.
+ * the workspace path and the live security manager instance.
  */
 function extractPreservedFields(cfg: Config) {
-  const {
-    workspace,
-    securityManager,
-    modelContextLength,
-    modelMaxContextLength,
-    modelParamBillions,
-    modelRuntimeSource,
-    supportsTools,
-    supportsThinking,
-    supportsReasoningEffort,
-    supportsPromptCache,
-  } = cfg;
-  return {
-    workspace,
-    securityManager,
-    runtimeFields: {
-      modelContextLength,
-      modelMaxContextLength,
-      modelParamBillions,
-      modelRuntimeSource,
-      supportsTools,
-      supportsThinking,
-      supportsReasoningEffort,
-      supportsPromptCache,
-    },
-  };
+  return { workspace: cfg.workspace, securityManager: cfg.securityManager };
 }
 
 /**
  * Reload config from disk and refresh LM Studio model metadata.
  * Keeps the current in-session workspace (e.g. after /cd).
  */
-export async function reloadAgentFromDisk(agent: AgentCore) {
-  const fresh = loadConfig();
+export async function reloadAgentFromDisk(agent: AgentCore, options?: LifecycleMutationOptions) {
+  assertLifecycleMutationAllowed(agent, options);
+  const fresh = loadConfig({ workspace: agent.cfg.workspace });
   // Preserve fields that must not be overwritten by the on-disk config:
   // - workspace: managed by /cd, not config file
   // - securityManager: runtime instance, not serialisable
-  // - runtime-derived fields: refreshed by applyRuntimeProfile() below
-  const { workspace, securityManager, runtimeFields } = extractPreservedFields(agent.cfg);
-  agent.cfg = { ...fresh, ...runtimeFields, workspace, securityManager };
+  // - runtime-derived fields: intentionally discarded and refreshed below
+  const { workspace } = extractPreservedFields(agent.cfg);
+  const securityManager = agent.securityManager;
+  agent.cfg = { ...fresh, workspace, securityManager };
   applySubAgentDefaults(agent.cfg);
+
+  securityManager.setWorkspace(workspace);
+  securityManager.updateConfig({
+    enabled: agent.cfg.securityEnabled,
+    validateCommands: agent.cfg.securityValidateCommands,
+    validateFileAccess: agent.cfg.securityValidateFileAccess,
+    sanitizeOutput: agent.cfg.securitySanitizeOutput,
+    maxFileSize: agent.cfg.securityMaxFileSize,
+    maxBatchFiles: agent.cfg.securityMaxBatchFiles,
+    allowedPaths: agent.cfg.securityAllowedPaths,
+    blockedPaths: agent.cfg.securityBlockedPaths,
+    permissionMode: agent.cfg.permissionMode,
+    permissionRules: agent.cfg.permissionRules,
+  });
 
   // Recreate cache manager with new config
   agent.toolCache.stopAllWatchers();
   agent.toolCache = createToolCacheManager(agent.cfg, agent.cfg.workspace);
 
-  await agent.applyRuntimeProfile();
+  // Recreate endpoint-bound managers and run the normal init path so skills,
+  // MCP trust checks, runtime metadata, and the system prompt all refresh.
+  try {
+    await agent.mcpManager.disconnectAll();
+  } catch (err) {
+    logDebug('[reload] MCP disconnect failed:', err);
+  }
+  agent.mcpManager = createMcpManager(agent.cfg.mcp, agent.cfg.workspace);
+  agent.mcpStates = [];
+  registerExternalTools([], agent);
+  await initAgent(agent);
 }
 
 /**
@@ -216,14 +279,16 @@ export async function initAgent(agent: AgentCore) {
   // SECURITY: MCP servers defined in a PROJECT-LOCAL config (a repo the user
   // just opened) are NOT auto-connected â€” a malicious repo could spawn
   // arbitrary processes or exfiltrate env vars via {env:...} headers.
-  // Trusted sources: global (home-dir) configs, an explicit config path, or
+  // Trusted sources: the canonical state-root config, an explicit config path, or
   // NANOGENT_TRUST_PROJECT_MCP=1.
   if (agent.cfg.mcp && Object.keys(agent.cfg.mcp).length > 0) {
     const source = agent.cfg.configFilePath;
     // An explicitly-passed config path is trusted regardless of location
     // (documented trust model: explicit path = trusted).
     const explicitPath = !!agent.cfg.configPathExplicit;
-    const trustedSource = isTrustedMcpConfigSource(source, explicitPath);
+    const trustedSource =
+      isTrustedMcpConfigSource(source, explicitPath) ||
+      isTrustedMcpConfigSource(agent.cfg.mcpTrustedSource, false);
     // Read the trust override from the REAL (pre-.env) environment — a
     // workspace .env must not be able to grant itself MCP trust.
     const trustOverride = getRealEnv('NANOGENT_TRUST_PROJECT_MCP') === '1';
@@ -259,7 +324,7 @@ export async function initAgent(agent: AgentCore) {
     if (allowedNames.length > 0) {
       agent.mcpStates.push(...(await agent.mcpManager.connectAll(allowedNames)));
       const mcpTools = agent.mcpManager.getTools();
-      registerExternalTools(mcpTools);
+      registerExternalTools(mcpTools, agent);
       agent.invalidateToolSchemaCache();
       if (process.env.QWEN_DEBUG_LLM) {
         logError(
@@ -270,6 +335,9 @@ export async function initAgent(agent: AgentCore) {
           'tools'
         );
       }
+      // Tool schemas changed, so provider-reported prompt overhead from the
+      // previous tool set is no longer a reliable compaction floor.
+      agent.contextManager.resetOverhead();
     }
   }
 
@@ -466,6 +534,15 @@ export async function changeAgentWorkspace(
 
 /** Graceful shutdown: cancel sub-agents, disconnect MCP, save state. */
 export async function shutdownAgent(agent: AgentCore, messageQueue?: string[]): Promise<void> {
+  // Callers abort the active controller first. Waiting here prevents a late
+  // stream/tool result from racing the autosave and process exit.
+  if (agent._activeRunPromise) {
+    try {
+      await agent._activeRunPromise;
+    } catch (err) {
+      logDebug('[shutdown] active run ended with an error:', err);
+    }
+  }
   try {
     stopWorkspaceTracker();
   } catch {
@@ -473,7 +550,11 @@ export async function shutdownAgent(agent: AgentCore, messageQueue?: string[]): 
   }
   const ws = agent.cfg.workspace;
   if (agent.messages.length > 0 && ws) {
-    autoSaveSession(agent.messages, agent.todos, ws, agent.cfg, messageQueue);
+    try {
+      autoSaveSession(agent.messages, agent.todos, ws, agent.cfg, messageQueue);
+    } catch (err) {
+      logWarn('Session autosave error during shutdown:', err);
+    }
   }
   try {
     // Await so spawned stdio MCP servers are actually killed before the
@@ -482,10 +563,12 @@ export async function shutdownAgent(agent: AgentCore, messageQueue?: string[]): 
   } catch (err) {
     logWarn('MCP disconnect error during shutdown:', err);
   }
+  registerExternalTools([], agent);
   try {
     agent.toolCache?.stopAllWatchers();
   } catch {
     // ignore watcher cleanup errors
   }
+  for (const handle of agent.backgroundSubAgents.values()) handle.controller?.abort();
   agent.backgroundSubAgents.clear();
 }

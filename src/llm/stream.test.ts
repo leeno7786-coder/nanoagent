@@ -134,4 +134,84 @@ describe('streamChat request shaping', () => {
     await awaitEndpointRateLimit(cfg.baseURL);
     expect(Date.now() - start).toBeLessThan(500);
   });
+
+  it('retries a recognized status-0 connection error', async () => {
+    let calls = 0;
+    const retries: number[] = [];
+    const client = {
+      chat: {
+        completions: {
+          create: async () => {
+            calls++;
+            if (calls === 1) throw { status: 0, code: 'ECONNRESET', message: 'connection reset' };
+            return (async function* () {
+              yield {
+                choices: [{ index: 0, delta: { content: 'recovered' }, finish_reason: 'stop' }],
+              };
+            })();
+          },
+        },
+      },
+    } as unknown as OpenAI;
+    const cfg = makeCfg(stubBaseURL);
+    cfg.retryCount = 1;
+    const generator = streamChat(
+      client,
+      cfg,
+      [{ role: 'user', content: 'hi' }],
+      undefined,
+      undefined,
+      { onRetry: (info) => retries.push(info.status) }
+    );
+    const chunks: Array<{ content: string }> = [];
+    let next = await generator.next();
+    while (!next.done) {
+      chunks.push(next.value);
+      next = await generator.next();
+    }
+
+    expect(calls).toBe(2);
+    expect(retries).toEqual([0]);
+    expect(chunks.some((chunk) => chunk.content === 'recovered')).toBe(true);
+  });
+
+  it('does not expose tool calls from a length-truncated stream', async () => {
+    const client = {
+      chat: {
+        completions: {
+          create: async () =>
+            (async function* () {
+              yield {
+                choices: [
+                  {
+                    index: 0,
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: 'partial',
+                          function: { name: 'read_file', arguments: '{}' },
+                        },
+                      ],
+                    },
+                    finish_reason: 'length',
+                  },
+                ],
+              };
+            })(),
+        },
+      },
+    } as unknown as OpenAI;
+    const generator = streamChat(client, makeCfg(stubBaseURL), [
+      { role: 'user', content: 'read a file' },
+    ]);
+    const chunks: Array<{ toolCalls?: unknown[] }> = [];
+    let next = await generator.next();
+    while (!next.done) {
+      chunks.push(next.value);
+      next = await generator.next();
+    }
+
+    expect(chunks.every((chunk) => !chunk.toolCalls?.length)).toBe(true);
+  });
 });

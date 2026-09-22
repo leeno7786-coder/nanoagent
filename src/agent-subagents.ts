@@ -41,6 +41,7 @@ export interface BackgroundSubAgent {
   promise: Promise<void>;
   resolve: (value: void) => void;
   reject: (reason?: unknown) => void;
+  controller?: AbortController;
 }
 
 /** Snapshot of a live background sub-agent handle (plain object for the TUI). */
@@ -100,6 +101,7 @@ export function spawnBackgroundSubAgent(
   }
 
   const id = `sa-${rnd()}`;
+  const controller = new AbortController();
   let resolveFn!: (value: void) => void;
   let rejectFn!: (reason?: unknown) => void;
   const promise = new Promise<void>((res, rej) => {
@@ -118,6 +120,7 @@ export function spawnBackgroundSubAgent(
     promise,
     resolve: resolveFn,
     reject: rejectFn,
+    controller,
   };
   agent.backgroundSubAgents.set(id, handle);
 
@@ -136,7 +139,7 @@ export function spawnBackgroundSubAgent(
           output: '',
           durationMs: 0,
           error:
-            'No remote sub-agent pool configured. Set subagents in ~/.nanogent.json or REMOTE_LMSTUDIO_URL.',
+            'No remote sub-agent pool configured. Set subagents in the canonical config or REMOTE_LMSTUDIO_URL.',
           toolCalls: 0,
         };
         return;
@@ -150,7 +153,7 @@ export function spawnBackgroundSubAgent(
         pool,
         undefined,
         task,
-        undefined,
+        controller.signal,
         buildSubAgentHooks(agent, id)
       );
       // Prefer a human-readable prompt label when the worker only returned an id.
@@ -227,14 +230,24 @@ export function buildSubAgentHooks(agent: AgentCore, id: string): ToolExecutionH
  */
 export async function awaitAllBackgroundSubAgents(
   agent: AgentCore,
-  _signal?: AbortSignal
+  signal?: AbortSignal
 ): Promise<void> {
   if (agent.backgroundSubAgents.size === 0) return;
 
   const handles = [...agent.backgroundSubAgents.values()];
+  const abort = () => {
+    for (const handle of handles) handle.controller?.abort();
+  };
+  if (signal?.aborted) abort();
+  signal?.addEventListener('abort', abort, { once: true });
 
   // Use Promise.allSettled to handle rejections gracefully
-  const settledResults = await Promise.allSettled(handles.map((h) => h.promise));
+  let settledResults: PromiseSettledResult<void>[];
+  try {
+    settledResults = await Promise.allSettled(handles.map((h) => h.promise));
+  } finally {
+    signal?.removeEventListener('abort', abort);
+  }
 
   // Extract results from settled promises
   const results = settledResults

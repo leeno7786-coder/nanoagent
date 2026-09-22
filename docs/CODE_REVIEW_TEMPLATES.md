@@ -64,7 +64,7 @@ Use these prefixes on every review comment:
 - [ ] No race conditions in shared state (zustand stores, agent loop state)
 
 ### Security
-- [ ] No hardcoded secrets / API keys (use env vars or `~/.nanogent.json`)
+- [ ] No hardcoded secrets / API keys (use env vars or `$NANOAGENT_ROOT/config/nanogent.json`)
 - [ ] User/LLM-supplied input validated before use in shell commands or file paths
 - [ ] No `eval` / dynamic `Function()` on untrusted input
 - [ ] Error messages don't leak keys, tokens, or full filesystem paths to the model
@@ -114,7 +114,7 @@ Use these prefixes on every review comment:
 - [ ] Diff/edit output follows the structured `● Update` format with line deltas
 
 ### ⚙️ Config / storage (`src/config*.ts`, `src/storage.ts`)
-- [ ] Config read from `~/.nanogent.json` / `.nanogent.json` with schema validation (ajv)
+- [ ] Config read from `$NANOAGENT_ROOT/config/nanogent.json` / explicit project overrides with schema validation
 - [ ] Missing/invalid config falls back to sane defaults, never crashes on startup
 - [ ] Secrets in config never logged or echoed into prompts
 

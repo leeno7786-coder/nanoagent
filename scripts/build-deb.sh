@@ -47,7 +47,7 @@ if command -v bun >/dev/null 2>&1; then
   bun install --frozen-lockfile
 else
   echo "==> bun not found; falling back to npm install"
-  npm install
+  NPM_CONFIG_ALLOW_SCRIPTS= npm install --no-package-lock
 fi
 
 echo "==> npm run build"
@@ -69,7 +69,7 @@ if command -v bun >/dev/null 2>&1; then
 else
   (
     cd "$PROD_DIR"
-    npm install --omit=dev --ignore-scripts
+    NPM_CONFIG_ALLOW_SCRIPTS= npm install --omit=dev --ignore-scripts
   )
 fi
 test -d "$PROD_DIR/node_modules"

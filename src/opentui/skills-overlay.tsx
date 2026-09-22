@@ -75,6 +75,7 @@ export function SkillsOverlay({
   const [message, setMessage] = useState<string | null>(null);
   const [installUrl, setInstallUrl] = useState('');
   const [installing, setInstalling] = useState(false);
+  const installControllerRef = useRef<AbortController | null>(null);
   /** Focus within create form: 0=name, 1=desc, 2=prompt, 3=create, 4=cancel */
   const [createFocus, setCreateFocus] = useState(0);
   /** Focus within install form: 0=url, 1=install, 2=cancel */
@@ -105,6 +106,13 @@ export function SkillsOverlay({
     }
     setSkillConfig(filteredConfig);
   }, []);
+
+  useEffect(
+    () => () => {
+      installControllerRef.current?.abort();
+    },
+    []
+  );
 
   // Use passed skills or load fresh skills. The hook must be unconditional —
   // `propSkills || useMemo(...)` violates the rules of hooks and crashes if
@@ -243,8 +251,10 @@ export function SkillsOverlay({
     }
     setInstalling(true);
     setError(null);
+    const controller = new AbortController();
+    installControllerRef.current = controller;
     try {
-      const res = await fetch(installUrl.trim());
+      const res = await fetch(installUrl.trim(), { signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const skill = (await res.json()) as Skill;
       if (!skill.name || !skill.prompt) {
@@ -260,8 +270,11 @@ export function SkillsOverlay({
       setMode('list');
       setInstallUrl('');
     } catch (e: unknown) {
-      setError(`Install failed: ${(e as Error).message}`);
+      if ((e as Error).name !== 'AbortError') {
+        setError(`Install failed: ${(e as Error).message}`);
+      }
     } finally {
+      if (installControllerRef.current === controller) installControllerRef.current = null;
       setInstalling(false);
     }
   }, [installUrl]);
@@ -345,6 +358,8 @@ export function SkillsOverlay({
     if (!selectedSkill) return;
     deleteSkill(selectedSkill.name);
     setMode('list');
+    setSelectedSkill(null);
+    setSelected(0);
     const refreshSkills = globalThis as { __refreshSkills?: () => void };
     if (typeof refreshSkills.__refreshSkills === 'function') {
       refreshSkills.__refreshSkills();
@@ -454,6 +469,7 @@ export function SkillsOverlay({
   useKeyboard(
     (keyEvent) => {
       if (keyEvent.name === 'escape' || keyEvent.name === 'Escape') {
+        if (installing) installControllerRef.current?.abort();
         if (mode === 'create' || mode === 'detail' || mode === 'commands' || mode === 'install') {
           setMode('list');
           setSelected(0);

@@ -1,5 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { formatDoctorReport, getDoctorReport, type DoctorReport } from './reports.js';
+import {
+  formatDoctorReport,
+  getDoctorReport,
+  getModelsList,
+  type DoctorReport,
+} from './reports.js';
 import { resetOpenAICompatCatalogCache, resetOpenRouterCatalogCache } from '../model-runtime.js';
 
 describe('formatDoctorReport', () => {
@@ -150,5 +155,37 @@ describe('getDoctorReport LM Studio placeholder', () => {
     expect(report.warnings.some((w) => w.includes('using loaded nvidia/nemotron-3-nano-4b'))).toBe(
       true
     );
+  });
+});
+
+describe('getModelsList endpoint overrides', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('uses an explicit local endpoint instead of the configured provider URL', async () => {
+    const requested: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return new Response(JSON.stringify({ data: [{ id: 'custom-local-model' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const models = await getModelsList('http://127.0.0.1:9876/v1', {
+      baseURL: 'http://127.0.0.1:1234/v1',
+      provider: 'lmstudio',
+      model: 'model-identifier',
+      apiKey: null,
+      maxIterations: 10,
+      workspace: process.cwd(),
+    });
+
+    expect(models[0]?.id).toBe('custom-local-model');
+    expect(requested.some((url) => url.includes('127.0.0.1:9876'))).toBe(true);
+    expect(requested.some((url) => url.includes('127.0.0.1:1234'))).toBe(false);
   });
 });
