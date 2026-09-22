@@ -134,6 +134,25 @@ describe('chat tool-call normalization', () => {
     expect(result.message.tool_calls).toBeUndefined();
     expect(result.finishReason).toBe('length');
   });
+
+  it('normalizes provider reasoning aliases into reasoning_content', async () => {
+    const result = await chat(
+      clientFrom([
+        {
+          choices: [
+            {
+              message: { role: 'assistant', content: '', reasoning: 'internal reasoning' },
+              finish_reason: 'stop',
+            },
+          ],
+        },
+      ]),
+      cfg(),
+      [{ role: 'user', content: 'review the codebase' }]
+    );
+
+    expect(result.message.reasoning_content).toBe('internal reasoning');
+  });
 });
 
 describe('chat transport retries', () => {

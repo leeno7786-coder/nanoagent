@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.11** (`@omega3_0/nanoagent`) — this patch continues open-ended review and audit requests after a model emits only a planning preamble, ensuring repository inspection actually begins. It also restores compatibility with message-shaped OpenAI-compatible streaming chunks.
+Current release: **2.7.12** (`@omega3_0/nanoagent`) — this patch recognizes OpenRouter-style `reasoning` fields so reasoning-only continuation turns are not misclassified as empty responses. It also continues open-ended review requests after planning preambles and supports message-shaped streaming chunks.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 

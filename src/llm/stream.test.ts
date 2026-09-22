@@ -216,6 +216,38 @@ describe('streamChat request shaping', () => {
     expect(content.join('')).toBe('Hello world');
   });
 
+  it('reads reasoning aliases emitted in stream deltas', async () => {
+    const client = {
+      chat: {
+        completions: {
+          create: async () =>
+            (async function* () {
+              yield {
+                choices: [
+                  {
+                    index: 0,
+                    delta: { reasoning: 'internal reasoning' },
+                    finish_reason: 'stop',
+                  },
+                ],
+              };
+            })(),
+        },
+      },
+    } as unknown as OpenAI;
+    const generator = streamChat(client, makeCfg(stubBaseURL), [
+      { role: 'user', content: 'review the codebase' },
+    ]);
+    const reasoning: string[] = [];
+    let next = await generator.next();
+    while (!next.done) {
+      if (next.value.reasoningContent) reasoning.push(next.value.reasoningContent);
+      next = await generator.next();
+    }
+
+    expect(reasoning.join('')).toBe('internal reasoning');
+  });
+
   it('does not expose tool calls from a length-truncated stream', async () => {
     const client = {
       chat: {

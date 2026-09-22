@@ -173,7 +173,9 @@ export function extractDeltaText(delta: unknown): {
     '';
 
   const reasoningContent =
-    normalizeContent(d.reasoning_content) || normalizeContent(d.reasoningContent);
+    normalizeContent(d.reasoning_content) ||
+    normalizeContent(d.reasoningContent) ||
+    normalizeContent(d.reasoning);
 
   return { content, reasoningContent };
 }

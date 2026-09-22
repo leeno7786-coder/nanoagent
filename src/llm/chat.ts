@@ -150,7 +150,12 @@ export async function chat(
           role: typeof msg?.role === 'string' ? msg.role : 'assistant',
           content: xml.toolCalls.length > 0 && allowToolCalls ? xml.content : content,
           reasoning_content:
-            normalizeContent(msg?.reasoning_content ?? choice?.reasoning_content) || undefined,
+            normalizeContent(msg?.reasoning_content) ||
+            normalizeContent(msg?.reasoningContent) ||
+            normalizeContent(msg?.reasoning) ||
+            normalizeContent(choice?.reasoning_content) ||
+            normalizeContent(choice?.reasoning) ||
+            undefined,
         };
         if (toolCalls.length > 0) responseMessage.tool_calls = toolCalls;
         return {
