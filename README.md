@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.8** (`@omega3_0/nanoagent`) — this release hardens project trust boundaries, agent lifecycle recovery, snapshots, packaging, and the Windows release path. The `/connect` provider picker includes Lemonade Server as a local OpenAI-compatible runtime, and the `question` tool TUI picker handles ambiguous requests.
+Current release: **2.7.9** (`@omega3_0/nanoagent`) — this patch stabilizes named snapshot ordering for fast CI and local captures. The release line also hardens project trust boundaries, agent lifecycle recovery, snapshots, packaging, and the Windows release path.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 

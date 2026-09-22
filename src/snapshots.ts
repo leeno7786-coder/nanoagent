@@ -26,6 +26,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
   type Dirent,
@@ -197,7 +198,15 @@ export function listSnapshots(workspace: string): SnapshotInfo[] {
       /* skip unreadable */
     }
   }
-  return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return out.sort((a, b) => {
+    const byTimestamp = b.createdAt.localeCompare(a.createdAt);
+    if (byTimestamp !== 0) return byTimestamp;
+    try {
+      return statSync(b.path).mtimeMs - statSync(a.path).mtimeMs;
+    } catch {
+      return 0;
+    }
+  });
 }
 
 function skipSnapshotEntry(name: string): boolean {
@@ -332,9 +341,13 @@ export function captureSnapshot(workspace: string, name: string): SnapshotInfo {
   }
   const serialized = serializeContents(changed);
 
+  let createdAt = new Date().toISOString();
+  if (previous?.createdAt && createdAt <= previous.createdAt) {
+    createdAt = new Date(Date.parse(previous.createdAt) + 1).toISOString();
+  }
   const manifest: SnapshotManifest = {
     name: safe,
-    createdAt: new Date().toISOString(),
+    createdAt,
     base: workspace,
     against: previous?.name ?? null,
     ...serialized,
