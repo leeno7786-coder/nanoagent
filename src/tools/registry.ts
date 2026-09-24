@@ -45,6 +45,7 @@ import {
 import { manageTodosTool, exploreSubagentTool } from './misc-tools.js';
 import { manageMcpTool } from './mcp-manage.js';
 import { questionTool } from './question-tool.js';
+import { rollbackChangesTool } from './rollback-tool.js';
 
 /** Shorter tool descriptions for ≤8B models (full params stay in JSON schema). */
 export const SMALL_TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -53,6 +54,8 @@ export const SMALL_TOOL_DESCRIPTIONS: Record<string, string> = {
   write_file: 'Create or overwrite a file.',
   edit_file: 'Replace exact old_text once (read file first).',
   edit_file_lines: 'Replace lines start_line–end_line (1-based, from read_file).',
+  rollback_changes:
+    'Undo your edits: path = one file, checkpoint = since /snapshot, none = this session.',
   list_dir: 'List directory entries.',
   stat_path: 'File exists? size, modified time.',
   find_files: 'Find paths by name substring or regex.',
@@ -85,6 +88,7 @@ export const tools: Tool[] = [
   writeFileTool,
   editFileTool,
   editFileLinesTool,
+  rollbackChangesTool,
   listDirTool,
   mapProjectTreeTool,
   statPathTool,

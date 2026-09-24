@@ -36,6 +36,7 @@ const WRITE_TOOLS = new Set([
   'write_file',
   'edit_file',
   'edit_file_lines',
+  'rollback_changes',
   'multi_replace_file_content',
   'replace_file_content',
   'create_new_skill',

@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.14** (`@omega3_0/nanoagent`) — this patch bounds read-only review exploration so models synthesize findings instead of exhausting a run by reading the entire tree.
+Current release: **2.7.15** (`@omega3_0/nanoagent`) — rollback now saves only the files the model touches, right before it changes them, so startup no longer scans or copies the workspace.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -289,45 +289,44 @@ Triggers in the frontmatter or `Use when: ...` clauses in the description auto-l
 
 ## Working tree & rollback
 
-Tools **edit the directory you pointed at directly**. `cfg.workspace` is your project; `read_file`, `write_file`, `edit_file`, etc. all read and write inside it. Rollback is the safety net:
+Tools **edit the directory you pointed at directly**. `cfg.workspace` is your project; `read_file`, `write_file`, `edit_file`, etc. all read and write inside it. Rollback is the safety net, and it costs nothing until the model actually changes something:
 
-- On first agent init we capture a baseline snapshot of project files (skipping VCS, dependency, and cache dirs such as `.git`, `node_modules`, and `.pytest_cache`).
-- A watcher plus write/shell hooks then copy **every file touched during the run** into `<workspace>/.nanoagent/worktree`, save the pre-edit original once, and append a journal. You do not need `/snapshot` for that history.
-- **`.nanoagent/` is this NanoAgent workspace's own harness state, not an outside project.** On first init NanoAgent appends `.nanoagent/` to the project's `.gitignore` (idempotent). Tools hide it from `list_dir` / search / `git_status`, block reads/writes/`change_workspace` into it, and the system prompt tells the model the tree belongs to this run (sessions/worktree/snapshots) — not a second workspace and not files to commit. Use `/changes`, `/sessions`, and `/rollback`.
-- Named `/snapshot` checkpoints are still available as extra restore points. Unreadable directories are skipped so a locked cache folder cannot abort capture. `/rollback` reverts to the baseline; `/rollback <name>` reverts to a named one. `/changes` lists files recorded this session.
+- **Nothing is captured at boot.** No baseline copy, no tree walk, no whole-workspace watcher — startup time does not depend on project size, so launching in a large repo or your home directory is as fast as in an empty folder.
+- **Write/edit tools save the file right before they change it.** `write_file`, `edit_file`, and `edit_file_lines` store the file's current content (or the fact that it did not exist yet) and append a journal line. Only files the model touches are ever stored.
+- **Reads are remembered.** When the model reads a file, its content and size/mtime are kept. After every shell command only those files are re-checked (a stat each, not a scan), so a file the model read and a command then changed is restorable — even outside git.
+- **Shell commands inside a git repo are covered by git.** Before `execute_command` / `run_command` / `install_dependencies`, `git stash create` records the working state (it touches neither your index nor your files); afterwards, whatever the command changed, created, or deleted is journaled with its pre-command content. Outside git, shell edits to files the model never read are not captured — `/changes` says so.
+- **Your own `!` commands and your own edits are never journaled** — rollback only undoes what the model did.
+- **`.nanoagent/` is this NanoAgent workspace's own harness state, not an outside project.** It is created on the first model change or read, `.nanoagent/` is appended to the project's `.gitignore` (idempotent), and tools hide it from `list_dir` / search / `git_status` and block reads/writes/`change_workspace` into it.
 
 ```text
 <workspace>/                        # your project (--workspace)
 ├── .gitignore                      # auto-gains `.nanoagent/` so git ignores harness state
 ├── .nanoagent/                     # this workspace's NanoAgent harness state (not an outside project)
-│   ├── snapshots/
-│   │   ├── init.json               # baseline (taken at agent init)
-│   │   ├── pre-refactor.json       # optional /snapshot pre-refactor
-│   │   └── ready-to-ship.json      # optional /snapshot ready-to-ship
-│   ├── worktree/                   # latest copy of every file touched this run
 │   ├── history/
-│   │   ├── originals/              # pre-edit content (from the init baseline)
-│   │   └── journal.jsonl           # create/update/delete log
+│   │   ├── journal.jsonl           # one line per change / checkpoint / rollback
+│   │   └── objects/                # pre-change file contents, content-addressed
+│   ├── worktree/                   # latest copy of every file the model touched
 │   └── sessions/                   # conversation history for this project
 └── … your files                    # tools edit these directly
 ```
 
-The first time the agent runs against a workspace, `init.json` is written automatically (project files only — caches, `node_modules`, and `.git` are skipped). While the agent runs, write/edit tools, `execute_command` / `git_commit`, and a recursive `fs.watch` (best-effort on Linux) keep `.nanoagent/worktree` in sync with files that actually changed. Subsequent `/snapshot <name>` calls capture only the diff against the previous named snapshot, so the snapshot store stays small. `/rollback <name>` walks the chain to compose deletions correctly: a file added after a snapshot and then removed after a later one reverts to "exists in the earlier, gone in the later" with the correct outcome. Rollback never deletes files inside skipped directories.
+Each session starts with an automatic checkpoint (written on the first model change). `/rollback` undoes every model change since then: edited files get their earlier content back, files the model created are deleted. Undone changes are never undone twice, so a second `/rollback` cannot clobber what you typed afterwards. The model can undo its own work too, with the `rollback_changes` tool (goes through the normal write permission).
 
 Chat sessions for the project live in `.nanoagent/sessions` as **8-hex hashes** (`a1b2c3d4.json`). Each run allocates a hash (shown in the TUI banner). Autosave and `/save` keep writing that same file. List hashes with `nanoagent --sessions` or `/sessions`; load one on boot with `nanoagent --resume HASH` (unique prefixes work, so does `/resume HASH`). Older install-global sessions under `$NANOAGENT_ROOT/sessions` that belong to this workspace are copied in once.
 
 ### Slash commands
 
-| Command                  | What it does                                                                                          |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `/changes`               | List files recorded in this run's worktree journal.                                                    |
-| `/snapshot [name]`       | Optional named checkpoint. Default name: `snap-YYYYMMDD-HHMMSS`. First snapshot is a full capture; later ones are diffs against the previous named snapshot. |
-| `/diffs`                  | List every saved snapshot for this workspace, newest first.                                            |
-| `/rollback [name]`        | No name: restore the workspace to the baseline (init.json). With name: restore that snapshot, walking the chain so deletions compose correctly. |
-| `/rollback ghost`         | Returns "snapshot not found" so the user knows.                                                        |
-| `/sessions` `/resume`     | List / resume conversation hashes in `.nanoagent/sessions`. Boot: `nanoagent --resume HASH`. |
+| Command                    | What it does                                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------------------ |
+| `/changes`                 | Files the model changed, with the recent journal (marks anything not restorable).                |
+| `/snapshot [name]`         | Save a named checkpoint (instant — it is a journal marker, not a copy).                          |
+| `/diffs`                   | List checkpoints, newest first, with how many changes follow each.                               |
+| `/rollback`                | Undo every model change this session.                                                            |
+| `/rollback <checkpoint>`   | Undo model changes made after that checkpoint.                                                   |
+| `/rollback <file>`         | Restore one file to its content before the model's first change this session.                    |
+| `/sessions` `/resume`      | List / resume conversation hashes in `.nanoagent/sessions`. Boot: `nanoagent --resume HASH`.     |
 
-The startup banner shows the baseline status plus the worktree and sessions paths, so you always know what `/rollback` will revert to and where history is stored.
+Workspaces used with earlier versions may still have `.nanoagent/snapshots/` (including a large `init.json`); nothing reads it any more and it is safe to delete.
 
 ---
 
@@ -360,7 +359,7 @@ The startup banner shows the baseline status plus the worktree and sessions path
 | `/allow [path]`                                 | Extra tool path outside the workspace                                                     |
 | `/theme [name]`                                 | Switch theme — dark, light, warmDark, coolDark, black (OLED), highContrast (F9 cycles)     |
 | `/save` `/load` `/sessions` `/resume` `/rename` | Session persistence (per-project `.nanoagent/sessions`)                                   |
-| `/changes`                                      | Files touched this session (`.nanoagent/worktree`)                                        |
+| `/changes`                                      | Files the model changed this session; `/rollback` undoes them                              |
 | `/delete-session`                               | Delete a saved session                                                                    |
 | `/export`                                       | Export chat to markdown                                                                   |
 | `/copy`                                         | Copy selected message                                                                     |
@@ -454,8 +453,7 @@ src/
 ├── skills.ts            # Skill loader (reads only $NANOAGENT_ROOT/skills/)
 ├── skill-manager.ts     # Skill lifecycle
 ├── store.ts             # Session persistence (project `.nanoagent/sessions`, global fallback)
-├── workspace-history.ts # Live worktree + journal of files touched during a run
-├── snapshots.ts         # Named checkpoints + init baseline /rollback
+├── workspace-history.ts # Touched-file history: pre-change capture, checkpoints, rollback
 ├── storage.ts           # Disk I/O for sessions
 ├── lib/                 # Shared utilities (file-diff.ts, etc.)
 ├── cli/                 # run.ts, doctor.ts, models.ts, todo.ts, help.ts, reports.ts
@@ -479,6 +477,14 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.15 — Touched-file rollback, no boot capture
+
+- **Startup no longer captures the workspace.** The `init.json` baseline, the boot-time tree walk, and the recursive watcher are gone, so launching in a large project (or `~`) no longer hangs before the TUI appears.
+- **Rollback covers exactly what the model changed.** Write/edit tools save a file right before changing it; reads are remembered so shell changes to read files are restorable; shell commands in git repos are captured through `git stash create`. `/rollback` undoes the session, `/rollback <checkpoint|file>` undoes part of it.
+- **`rollback_changes` tool** lets the model undo its own edits.
+- **`/snapshot` is now an instant checkpoint marker** instead of a full-tree copy.
+- **The `.deb` keeps its linux-x64 Bun runtime**, so the TUI starts from the Debian package (previously it could only run headless).
 
 ### 2.7.6 — Question overlay for ambiguous requests
 

@@ -564,17 +564,20 @@ describe('snapshot / rollback slash commands', () => {
   let stub: AgentStub;
   let h: CtxHarness;
 
+  // Model edits go through write_file, which saves the pre-write content;
+  // nothing is captured up front.
+  function modelWrite(path: string, content: string): void {
+    const { writeFileTool } = require('../tools/file-tools/index.js');
+    expect(JSON.parse(writeFileTool.execute({ path, content }, projectDir)).ok).toBe(true);
+  }
+
   beforeEach(() => {
-    // Tools edit the user's project directly. We seed a baseline snapshot
-    // manually so the rollback tests can run without booting the full
-    // agent lifecycle.
     ws = mkdtempSync(join(tmpdir(), 'slash-snap-'));
     projectDir = join(ws, 'project');
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(join(projectDir, 'index.ts'), 'export const x = 1;\n');
     writeFileSync(join(projectDir, 'README.md'), '# proj\n');
-    const { takeBaselineSnapshot } = require('../snapshots.js');
-    takeBaselineSnapshot(projectDir);
+    require('../workspace-history.js').resetSessionMarker();
     stub = makeAgent(projectDir);
     h = makeCtx(stub, projectDir);
   });
@@ -586,14 +589,14 @@ describe('snapshot / rollback slash commands', () => {
     rmSync(ws, { recursive: true, force: true });
   });
 
-  it('/snapshot saves the current workspace state and reports files', async () => {
+  it('/snapshot saves a named checkpoint', async () => {
     await handleSlashCommand('/snapshot baseline', h.ctx);
     const content = lastAssistantContent(h);
     expect(content).toContain('baseline');
-    expect(content).toContain('Snapshot saved');
+    expect(content).toContain('Checkpoint');
   });
 
-  it('/diffs lists saved snapshots', async () => {
+  it('/diffs lists saved checkpoints', async () => {
     await handleSlashCommand('/snapshot first', h.ctx);
     await handleSlashCommand('/snapshot second', h.ctx);
     await handleSlashCommand('/diffs', h.ctx);
@@ -602,43 +605,50 @@ describe('snapshot / rollback slash commands', () => {
     expect(content).toContain('second');
   });
 
-  it('/diffs with no snapshots shows a helpful message', async () => {
-    // Wipe the snapshots dir to simulate a brand-new workspace.
-    const { rmSync: rm } = require('fs');
-    rm(join(projectDir, '.nanoagent', 'snapshots'), { recursive: true, force: true });
+  it('/diffs with no checkpoints shows a helpful message', async () => {
     await handleSlashCommand('/diffs', h.ctx);
-    expect(lastAssistantContent(h)).toContain('No snapshots yet');
+    expect(lastAssistantContent(h)).toContain('No checkpoints yet');
   });
 
-  it('/rollback <name> restores an earlier snapshot and undoes an edit', async () => {
+  it('/rollback <name> undoes model edits made after the checkpoint', async () => {
     await handleSlashCommand('/snapshot before', h.ctx);
-    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 99;\n');
+    modelWrite('index.ts', 'export const x = 99;\n');
     await handleSlashCommand('/rollback before', h.ctx);
     expect(lastAssistantContent(h)).toContain('before');
-    const after = readFileSync(join(projectDir, 'index.ts'), 'utf-8');
-    expect(after).toBe('export const x = 1;\n');
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
   });
 
-  it('/rollback (no name) restores the baseline', async () => {
-    // Edit the source so the baseline differs.
-    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 99;\n');
-    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toContain('99');
+  it('/rollback (no name) undoes this session and deletes files the model created', async () => {
+    modelWrite('index.ts', 'export const x = 99;\n');
+    modelWrite('extra.ts', 'new\n');
     await handleSlashCommand('/rollback', h.ctx);
-    expect(lastAssistantContent(h)).toContain('rolled back to baseline');
-    const after = readFileSync(join(projectDir, 'index.ts'), 'utf-8');
-    expect(after).toBe('export const x = 1;\n');
+    expect(lastAssistantContent(h)).toContain('start of this session');
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
+    expect(existsSync(join(projectDir, 'extra.ts'))).toBe(false);
+  });
+
+  it('/rollback <file> restores just that file', async () => {
+    modelWrite('index.ts', 'export const x = 99;\n');
+    modelWrite('README.md', '# changed\n');
+    await handleSlashCommand('/rollback index.ts', h.ctx);
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
+    expect(readFileSync(join(projectDir, 'README.md'), 'utf-8')).toBe('# changed\n');
+  });
+
+  it('/rollback does not touch edits the model never made', async () => {
+    writeFileSync(join(projectDir, 'index.ts'), 'the user edited this\n');
+    await handleSlashCommand('/rollback', h.ctx);
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('the user edited this\n');
   });
 
   it('/rollback <unknown-name> reports the error', async () => {
     await handleSlashCommand('/snapshot known', h.ctx);
     await handleSlashCommand('/rollback ghost', h.ctx);
-    expect(lastAssistantContent(h)).toMatch(/snapshot not found|Failed to rollback/);
+    expect(lastAssistantContent(h)).toMatch(/checkpoint not found|Failed to rollback/);
   });
 
-  it('/changes lists files recorded in the worktree journal', async () => {
-    const { recordFileChange } = require('../workspace-history.js');
-    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 99;\n');
-    recordFileChange(projectDir, 'index.ts', 'update', 'write');
+  it('/changes lists files the model changed', async () => {
+    modelWrite('index.ts', 'export const x = 99;\n');
     await handleSlashCommand('/changes', h.ctx);
     const content = lastAssistantContent(h);
     expect(content).toContain('index.ts');
@@ -647,6 +657,6 @@ describe('snapshot / rollback slash commands', () => {
 
   it('/changes with no journal reports that nothing was recorded', async () => {
     await handleSlashCommand('/changes', h.ctx);
-    expect(lastAssistantContent(h)).toContain('No file changes recorded');
+    expect(lastAssistantContent(h)).toContain('No model changes recorded');
   });
 });

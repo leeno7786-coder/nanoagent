@@ -74,10 +74,16 @@ else
 fi
 test -d "$PROD_DIR/node_modules"
 
-# Drop bun platform optionalDependencies — the .deb runs on bundled Node, not bun.
-rm -rf \
-  "${PROD_DIR}/node_modules/@oven" \
-  "${PROD_DIR}/node_modules/bun"
+# Keep the linux-x64 bun runtime: the launcher runs the TUI on it (findBundledBun) and
+# falls back to the bundled Node only for headless mode. Drop the other platforms.
+find "${PROD_DIR}/node_modules/@oven" -mindepth 1 -maxdepth 1 -type d \
+  ! -name 'bun-linux-x64' ! -name 'bun-linux-x64-baseline' -exec rm -rf {} + 2>/dev/null || true
+rm -rf "${PROD_DIR}/node_modules/bun"
+if [[ ! -x "${PROD_DIR}/node_modules/@oven/bun-linux-x64/bin/bun" \
+   && ! -x "${PROD_DIR}/node_modules/@oven/bun-linux-x64-baseline/bin/bun" ]]; then
+  echo "error: no linux-x64 bun runtime in production node_modules; the TUI cannot start" >&2
+  exit 1
+fi
 
 # --- Node runtime -------------------------------------------------------------
 mkdir -p "$CACHE_DIR"

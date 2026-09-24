@@ -5,6 +5,7 @@ import { fileChangeDiff } from '../../lib/file-diff.js';
 
 import type { Tool } from '../shared.js';
 import { rel, safe, sandboxErrorMessage } from '../shared.js';
+import { recordModelWrite } from '../../workspace-history.js';
 
 /**
  * Match an inserted block's line endings to the host file. A CRLF file that
@@ -115,6 +116,7 @@ export const writeFileTool: Tool = {
       const writtenText = existed ? matchEol(oldText, newText) : newText;
       const rewroteEol = writtenText !== newText;
       mkdirSync(dirname(p), { recursive: true });
+      recordModelWrite(ws, p, 'write');
       writeFileSync(p, writtenText, 'utf-8');
       const { added, removed, diff } = fileChangeDiff(relPath, oldText, writtenText);
       return JSON.stringify({
@@ -242,6 +244,7 @@ export const editFileTool: Tool = {
           // CR, so joining with '\n' would rewrite CRLF files as LF.
           const eol = text.includes('\r\n') ? '\r\n' : '\n';
           const next = nextLines.join(eol);
+          recordModelWrite(ws, p, 'edit');
           writeFileSync(p, next, 'utf-8');
           const relPath = rel(p, ws);
           const { added, removed, diff } = fileChangeDiff(relPath, text, next);
@@ -269,6 +272,7 @@ export const editFileTool: Tool = {
       const next = args.replace_all
         ? text.split(oldText).join(replacementText)
         : text.replace(oldText, replacementText);
+      recordModelWrite(ws, p, 'edit');
       writeFileSync(p, next, 'utf-8');
       const relPath = rel(p, ws);
       const { added, removed, diff } = fileChangeDiff(relPath, text, next);
@@ -385,6 +389,7 @@ export const editFileLinesTool: Tool = {
       // so joining with '\n' would rewrite CRLF files as LF.
       const eol = text.includes('\r\n') ? '\r\n' : '\n';
       const next = [...before, newText, ...after].join(eol);
+      recordModelWrite(ws, p, 'edit');
       writeFileSync(p, next, 'utf-8');
       const relPath = rel(p, ws);
       const { added, removed, diff } = fileChangeDiff(relPath, text, next);

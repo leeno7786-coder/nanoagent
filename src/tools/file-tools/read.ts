@@ -2,6 +2,7 @@ import { statSync, readFileSync, readdirSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 
 import type { Tool } from '../shared.js';
+import { noteModelRead } from '../../workspace-history.js';
 import {
   LARGE_MODEL_READ_LIMIT,
   MAX_READ_CHARS,
@@ -66,6 +67,7 @@ export const batchReadFilesTool: Tool = {
           }
           const isSmall = checkSmallModel(cfg);
           const text = readFileSync(p, 'utf-8');
+          noteModelRead(ws, p);
           const sliced = truncate(text, isSmall ? SMALL_MODEL_READ_LIMIT : LARGE_MODEL_READ_LIMIT);
           const charCut = sliced.content.length > MAX_READ_CHARS;
           const finalContent = charCut
@@ -132,6 +134,7 @@ export const readFileTool: Tool = {
       const st = statSync(p);
       if (!st.isFile()) return JSON.stringify({ ok: false, error: `Not a file: ${args.path}` });
       const text = readFileSync(p, 'utf-8');
+      noteModelRead(ws, p);
       const lines = text.split('\n');
       const isSmall = checkSmallModel(cfg);
       const defaultLines = isSmall ? SMALL_MODEL_READ_LIMIT : LARGE_MODEL_READ_LIMIT;

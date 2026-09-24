@@ -1,37 +1,49 @@
 /**
- * Automatic per-workspace file history: every file the agent touches is
- * mirrored under <workspace>/.nanoagent/worktree, with the pre-edit
- * original saved once and a journal of changes for rollback.
+ * Touched-file history: nothing is captured at boot. The pre-write content of
+ * a file is saved only when the model is about to change it, so rollback costs
+ * nothing until the model edits, and scales with what it touched, not the tree.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { spawnSync } from 'child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { takeBaselineSnapshot } from './snapshots.js';
 import {
+  addCheckpoint,
+  beginShellCapture,
+  endShellCapture,
   ensureWorkspaceGitignore,
+  listCheckpoints,
   listHistory,
   listTouchedFiles,
-  recordFileChange,
-  restoreOriginal,
+  mirrorToWorktree,
+  noteModelRead,
+  recordModelWrite,
+  resetSessionMarker,
+  rollbackChanges,
   startWorkspaceTracker,
   stopWorkspaceTracker,
-  syncWorkspaceFromDisk,
   workspaceGitignoreHasNanoagent,
 } from './workspace-history.js';
 
 let tmpRoot: string;
 let projectDir: string;
 
+function edit(rel: string, content: string, source: 'write' | 'edit' = 'edit'): void {
+  recordModelWrite(projectDir, rel, source);
+  mkdirSync(join(projectDir, rel, '..'), { recursive: true });
+  writeFileSync(join(projectDir, rel), content);
+  mirrorToWorktree(projectDir, rel);
+}
+
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), 'nanoagent-hist-'));
   projectDir = join(tmpRoot, 'project');
-  mkdirSync(projectDir, { recursive: true });
-  writeFileSync(join(projectDir, 'index.ts'), 'export const x = 1;\n');
   mkdirSync(join(projectDir, 'src'), { recursive: true });
+  writeFileSync(join(projectDir, 'index.ts'), 'export const x = 1;\n');
   writeFileSync(join(projectDir, 'src', 'util.ts'), 'export const util = "u";\n');
-  takeBaselineSnapshot(projectDir);
+  resetSessionMarker();
 });
 
 afterEach(() => {
@@ -39,151 +51,235 @@ afterEach(() => {
   if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-describe('recordFileChange', () => {
-  it('copies the live file into .nanoagent/worktree and saves the baseline original', () => {
-    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 99;\n');
-    recordFileChange(projectDir, 'index.ts', 'update', 'write');
-
-    const worktreeCopy = join(projectDir, '.nanoagent', 'worktree', 'index.ts');
-    const original = join(projectDir, '.nanoagent', 'history', 'originals', 'index.ts');
-    expect(readFileSync(worktreeCopy, 'utf-8')).toBe('export const x = 99;\n');
-    expect(readFileSync(original, 'utf-8')).toBe('export const x = 1;\n');
-    expect(listTouchedFiles(projectDir)).toContain('index.ts');
-    const journal = listHistory(projectDir);
-    expect(journal.some((e) => e.path === 'index.ts' && e.action === 'update')).toBe(true);
+describe('boot cost', () => {
+  it('starting the tracker writes nothing and scans nothing', () => {
+    startWorkspaceTracker(projectDir);
+    expect(existsSync(join(projectDir, '.nanoagent'))).toBe(false);
+    expect(existsSync(join(projectDir, '.gitignore'))).toBe(false);
   });
+});
 
-  it('journals create for a new file and does not invent an original', () => {
-    writeFileSync(join(projectDir, 'new.ts'), 'export const n = 1;\n');
-    recordFileChange(projectDir, 'new.ts', 'create', 'write');
+describe('recordModelWrite', () => {
+  it('saves the pre-write content and journals the change', () => {
+    edit('index.ts', 'export const x = 99;\n');
 
-    expect(readFileSync(join(projectDir, '.nanoagent', 'worktree', 'new.ts'), 'utf-8')).toBe(
-      'export const n = 1;\n'
-    );
-    expect(existsSync(join(projectDir, '.nanoagent', 'history', 'originals', 'new.ts'))).toBe(
-      false
-    );
-    expect(listHistory(projectDir).some((e) => e.path === 'new.ts' && e.action === 'create')).toBe(
-      true
-    );
-  });
-
-  it('ignores paths inside .nanoagent and skipped directories', () => {
-    mkdirSync(join(projectDir, 'node_modules', 'pkg'), { recursive: true });
-    writeFileSync(join(projectDir, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;\n');
-    recordFileChange(projectDir, 'node_modules/pkg/index.js', 'update', 'write');
-    recordFileChange(projectDir, '.nanoagent/snapshots/init.json', 'update', 'write');
-
-    expect(listTouchedFiles(projectDir)).toEqual([]);
-    expect(listHistory(projectDir)).toEqual([]);
-  });
-
-  it('keeps the first original across later edits', () => {
-    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 2;\n');
-    recordFileChange(projectDir, 'index.ts', 'update', 'edit');
-    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 3;\n');
-    recordFileChange(projectDir, 'index.ts', 'update', 'edit');
-
-    expect(
-      readFileSync(join(projectDir, '.nanoagent', 'history', 'originals', 'index.ts'), 'utf-8')
-    ).toBe('export const x = 1;\n');
+    expect(listTouchedFiles(projectDir)).toEqual(['index.ts']);
+    const change = listHistory(projectDir).find((e) => e.path === 'index.ts');
+    expect(change?.action).toBe('update');
+    expect(change?.restorable).toBe(true);
     expect(readFileSync(join(projectDir, '.nanoagent', 'worktree', 'index.ts'), 'utf-8')).toBe(
-      'export const x = 3;\n'
+      'export const x = 99;\n'
     );
-    expect(listHistory(projectDir).filter((e) => e.path === 'index.ts')).toHaveLength(2);
-  });
-});
-
-describe('syncWorkspaceFromDisk', () => {
-  it('records files written without going through recordFileChange', () => {
-    startWorkspaceTracker(projectDir);
-    writeFileSync(join(projectDir, 'src', 'util.ts'), 'export const util = "changed";\n');
-    const result = syncWorkspaceFromDisk(projectDir);
-    expect(result.recorded).toBeGreaterThanOrEqual(1);
-    expect(
-      readFileSync(join(projectDir, '.nanoagent', 'worktree', 'src', 'util.ts'), 'utf-8')
-    ).toBe('export const util = "changed";\n');
-    expect(
-      readFileSync(
-        join(projectDir, '.nanoagent', 'history', 'originals', 'src', 'util.ts'),
-        'utf-8'
-      )
-    ).toBe('export const util = "u";\n');
-  });
-
-  it('records a newly created file as create', () => {
-    startWorkspaceTracker(projectDir);
-    writeFileSync(join(projectDir, 'added.ts'), 'export const a = 1;\n');
-    syncWorkspaceFromDisk(projectDir);
-    expect(listTouchedFiles(projectDir)).toContain('added.ts');
-    expect(
-      listHistory(projectDir).some((e) => e.path === 'added.ts' && e.action === 'create')
-    ).toBe(true);
-  });
-
-  it('records a deleted file as delete', () => {
-    startWorkspaceTracker(projectDir);
-    rmSync(join(projectDir, 'src', 'util.ts'));
-    syncWorkspaceFromDisk(projectDir);
-    expect(
-      listHistory(projectDir).some((e) => e.path === 'src/util.ts' && e.action === 'delete')
-    ).toBe(true);
-    expect(
-      existsSync(join(projectDir, '.nanoagent', 'history', 'originals', 'src', 'util.ts'))
-    ).toBe(true);
-  });
-});
-
-describe('restoreOriginal', () => {
-  it('writes the saved original back onto the live file', () => {
-    writeFileSync(join(projectDir, 'index.ts'), 'export const x = 99;\n');
-    recordFileChange(projectDir, 'index.ts', 'update', 'write');
-    expect(restoreOriginal(projectDir, 'index.ts')).toBe(true);
-    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
-  });
-
-  it('returns false when no original was saved', () => {
-    expect(restoreOriginal(projectDir, 'missing.ts')).toBe(false);
-  });
-});
-
-describe('ensureWorkspaceGitignore', () => {
-  it('is written when the baseline snapshot is taken', () => {
-    const text = readFileSync(join(projectDir, '.gitignore'), 'utf-8');
-    expect(workspaceGitignoreHasNanoagent(text)).toBe(true);
-    expect(text).toContain('.nanoagent/');
-  });
-
-  it('appends to an existing .gitignore without duplicating', () => {
-    writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\n', 'utf-8');
-    expect(ensureWorkspaceGitignore(projectDir)).toBe(true);
-    expect(ensureWorkspaceGitignore(projectDir)).toBe(false);
-    const text = readFileSync(join(projectDir, '.gitignore'), 'utf-8');
-    expect(text.startsWith('node_modules/\n')).toBe(true);
-    expect(text.match(/\.nanoagent\//g)?.length).toBe(1);
-  });
-
-  it('leaves an explicit !.nanoagent/ rule alone', () => {
-    writeFileSync(join(projectDir, '.gitignore'), '!.nanoagent/\n', 'utf-8');
-    expect(ensureWorkspaceGitignore(projectDir)).toBe(false);
-    expect(readFileSync(join(projectDir, '.gitignore'), 'utf-8')).toBe('!.nanoagent/\n');
-  });
-});
-
-describe('startWorkspaceTracker', () => {
-  it('creates the worktree and history directories', () => {
-    startWorkspaceTracker(projectDir);
-    expect(existsSync(join(projectDir, '.nanoagent', 'worktree'))).toBe(true);
-    expect(existsSync(join(projectDir, '.nanoagent', 'history'))).toBe(true);
-    expect(existsSync(join(projectDir, '.nanoagent', 'sessions'))).toBe(true);
     expect(
       workspaceGitignoreHasNanoagent(readFileSync(join(projectDir, '.gitignore'), 'utf-8'))
     ).toBe(true);
   });
 
-  it('stopWorkspaceTracker is safe to call twice', () => {
-    startWorkspaceTracker(projectDir);
-    stopWorkspaceTracker();
-    stopWorkspaceTracker();
+  it('only stores files the model touched', () => {
+    edit('index.ts', 'changed\n');
+    expect(listTouchedFiles(projectDir)).not.toContain('src/util.ts');
+  });
+
+  it('ignores paths inside .nanoagent and outside the workspace', () => {
+    recordModelWrite(projectDir, '.nanoagent/sessions/x.json', 'write');
+    recordModelWrite(projectDir, '../escape.txt', 'write');
+    expect(listTouchedFiles(projectDir)).toEqual([]);
+  });
+});
+
+describe('rollbackChanges', () => {
+  it('restores edited files and deletes files the model created', () => {
+    edit('index.ts', 'broken\n');
+    edit('src/new.ts', 'new file\n', 'write');
+
+    const result = rollbackChanges(projectDir);
+
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
+    expect(existsSync(join(projectDir, 'src', 'new.ts'))).toBe(false);
+    expect(result.restored).toEqual(['index.ts']);
+    expect(result.removed).toEqual(['src/new.ts']);
+  });
+
+  it('restores the state before the first of several edits to one file', () => {
+    edit('index.ts', 'one\n');
+    edit('index.ts', 'two\n');
+    rollbackChanges(projectDir);
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
+  });
+
+  it('rolls back only changes after a checkpoint', () => {
+    edit('index.ts', 'kept\n');
+    addCheckpoint(projectDir, 'good');
+    edit('index.ts', 'bad\n');
+    edit('src/util.ts', 'bad\n');
+
+    rollbackChanges(projectDir, { checkpoint: 'good' });
+
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('kept\n');
+    expect(readFileSync(join(projectDir, 'src', 'util.ts'), 'utf-8')).toBe(
+      'export const util = "u";\n'
+    );
+  });
+
+  it('rolls back a single file and leaves the rest', () => {
+    edit('index.ts', 'bad\n');
+    edit('src/util.ts', 'keep\n');
+
+    rollbackChanges(projectDir, { path: 'index.ts' });
+
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
+    expect(readFileSync(join(projectDir, 'src', 'util.ts'), 'utf-8')).toBe('keep\n');
+  });
+
+  it('does not undo the same change twice', () => {
+    edit('index.ts', 'first\n');
+    rollbackChanges(projectDir);
+    writeFileSync(join(projectDir, 'index.ts'), 'user typed this\n');
+
+    const again = rollbackChanges(projectDir);
+
+    expect(again.restored).toEqual([]);
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('user typed this\n');
+  });
+
+  it('reports an unknown checkpoint instead of rolling back everything', () => {
+    edit('index.ts', 'bad\n');
+    expect(() => rollbackChanges(projectDir, { checkpoint: 'ghost' })).toThrow(
+      /checkpoint not found/
+    );
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('bad\n');
+  });
+
+  it('defaults to the start of the current session, not older sessions', () => {
+    edit('index.ts', 'yesterday\n');
+    resetSessionMarker();
+    edit('index.ts', 'today\n');
+
+    rollbackChanges(projectDir);
+
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('yesterday\n');
+  });
+});
+
+describe('checkpoints', () => {
+  it('lists named checkpoints with the number of changes after each', () => {
+    addCheckpoint(projectDir, 'a');
+    edit('index.ts', 'x\n');
+    const names = listCheckpoints(projectDir).map((c) => [c.name, c.changesAfter]);
+    expect(names).toContainEqual(['a', 1]);
+  });
+
+  it('rejects a duplicate checkpoint name', () => {
+    addCheckpoint(projectDir, 'dup');
+    expect(() => addCheckpoint(projectDir, 'dup')).toThrow(/already exists/);
+  });
+});
+
+const hasGit = spawnSync('git', ['--version']).status === 0;
+
+describe.if(hasGit)('shell capture (git)', () => {
+  function git(...args: string[]): void {
+    const r = spawnSync('git', args, { cwd: projectDir, encoding: 'utf-8' });
+    if (r.status !== 0) throw new Error(r.stderr);
+  }
+
+  beforeEach(() => {
+    git('init', '-q');
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A');
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init');
+    writeFileSync(join(projectDir, 'index.ts'), 'dirty before command\n');
+  });
+
+  it('makes files a shell command changed or created restorable', async () => {
+    const cap = await beginShellCapture(projectDir);
+    expect(cap).not.toBeNull();
+    writeFileSync(join(projectDir, 'index.ts'), 'shell rewrote it\n');
+    writeFileSync(join(projectDir, 'generated.txt'), 'made by shell\n');
+    rmSync(join(projectDir, 'src', 'util.ts'));
+    await endShellCapture(projectDir, cap);
+
+    rollbackChanges(projectDir);
+
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('dirty before command\n');
+    expect(existsSync(join(projectDir, 'generated.txt'))).toBe(false);
+    expect(readFileSync(join(projectDir, 'src', 'util.ts'), 'utf-8')).toBe(
+      'export const util = "u";\n'
+    );
+  });
+
+  it('covers an untracked file the model read, without double-journaling tracked files', async () => {
+    writeFileSync(join(projectDir, 'notes.txt'), 'untracked original\n');
+    noteModelRead(projectDir, 'notes.txt');
+    noteModelRead(projectDir, 'index.ts');
+    const cap = await beginShellCapture(projectDir);
+    writeFileSync(join(projectDir, 'notes.txt'), 'changed\n');
+    writeFileSync(join(projectDir, 'index.ts'), 'changed\n');
+    await endShellCapture(projectDir, cap);
+
+    expect(listHistory(projectDir).filter((e) => e.path === 'index.ts')).toHaveLength(1);
+    rollbackChanges(projectDir);
+    expect(readFileSync(join(projectDir, 'notes.txt'), 'utf-8')).toBe('untracked original\n');
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('dirty before command\n');
+  });
+
+  it('leaves the git history and index untouched', async () => {
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: projectDir,
+      encoding: 'utf-8',
+    }).stdout;
+    const cap = await beginShellCapture(projectDir);
+    await endShellCapture(projectDir, cap);
+    const after = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: projectDir,
+      encoding: 'utf-8',
+    }).stdout;
+    const status = spawnSync('git', ['status', '--porcelain'], {
+      cwd: projectDir,
+      encoding: 'utf-8',
+    }).stdout;
+    expect(after).toBe(head);
+    expect(status.trim()).toBe('M index.ts');
+  });
+});
+
+describe('shell capture outside git', () => {
+  it('has no git capture', async () => {
+    expect(await beginShellCapture(projectDir)).toBeNull();
+  });
+
+  it('restores a file the model read before a shell command changed it', async () => {
+    noteModelRead(projectDir, 'index.ts');
+    const cap = await beginShellCapture(projectDir);
+    writeFileSync(join(projectDir, 'index.ts'), 'sed -i did this\n');
+    await endShellCapture(projectDir, cap);
+
+    rollbackChanges(projectDir);
+
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('export const x = 1;\n');
+  });
+
+  it('journals nothing for read files the command left alone', async () => {
+    noteModelRead(projectDir, 'index.ts');
+    await endShellCapture(projectDir, await beginShellCapture(projectDir));
+    expect(listHistory(projectDir)).toEqual([]);
+  });
+
+  it("tracks the model's own edit so a later shell change rolls back to it", async () => {
+    noteModelRead(projectDir, 'index.ts');
+    edit('index.ts', 'model version\n');
+    addCheckpoint(projectDir, 'after-edit');
+    writeFileSync(join(projectDir, 'index.ts'), 'shell clobbered\n');
+    await endShellCapture(projectDir, await beginShellCapture(projectDir));
+
+    rollbackChanges(projectDir, { checkpoint: 'after-edit' });
+
+    expect(readFileSync(join(projectDir, 'index.ts'), 'utf-8')).toBe('model version\n');
+  });
+});
+
+describe('ensureWorkspaceGitignore', () => {
+  it('is idempotent', () => {
+    expect(ensureWorkspaceGitignore(projectDir)).toBe(true);
+    expect(ensureWorkspaceGitignore(projectDir)).toBe(false);
   });
 });

@@ -9,8 +9,7 @@ import { join } from 'path';
 
 import type { AgentCore } from '../agent.js';
 import { handleSpecialToolResults, parseToolArgs } from './utils.js';
-import { takeBaselineSnapshot } from '../snapshots.js';
-import { listHistory, startWorkspaceTracker, stopWorkspaceTracker } from '../workspace-history.js';
+import { listHistory, stopWorkspaceTracker } from '../workspace-history.js';
 
 function makeAgent(todos: Array<{ id: string; text: string; done: boolean }>, workspace = '') {
   return {
@@ -127,11 +126,10 @@ describe('handleSpecialToolResults file history', () => {
   function seedProject(): string {
     projectDir = mkdtempSync(join(tmpdir(), 'nanoagent-utils-hist-'));
     writeFileSync(join(projectDir, 'index.ts'), 'export const x = 1;\n');
-    takeBaselineSnapshot(projectDir);
     return projectDir;
   }
 
-  it('records a successful write_file into the worktree', async () => {
+  it('mirrors a successful write_file into the worktree (the tool itself journals it)', async () => {
     const ws = seedProject();
     writeFileSync(join(ws, 'index.ts'), 'export const x = 2;\n');
     const agent = makeAgent([], ws);
@@ -144,7 +142,6 @@ describe('handleSpecialToolResults file history', () => {
     expect(readFileSync(join(ws, '.nanoagent', 'worktree', 'index.ts'), 'utf-8')).toBe(
       'export const x = 2;\n'
     );
-    expect(listHistory(ws).some((e) => e.path === 'index.ts' && e.source === 'write')).toBe(true);
   });
 
   it('does not record a failed write_file', async () => {
@@ -160,9 +157,8 @@ describe('handleSpecialToolResults file history', () => {
     expect(listHistory(ws)).toEqual([]);
   });
 
-  it('syncs disk changes after execute_command', async () => {
+  it('does not scan the workspace after execute_command (the tool captures its own changes)', async () => {
     const ws = seedProject();
-    startWorkspaceTracker(ws);
     writeFileSync(join(ws, 'index.ts'), 'export const x = 77;\n');
     const agent = makeAgent([], ws);
     await handleSpecialToolResults(
@@ -171,10 +167,8 @@ describe('handleSpecialToolResults file history', () => {
       JSON.stringify({ ok: true, code: 0 }),
       'tc1'
     );
-    expect(readFileSync(join(ws, '.nanoagent', 'worktree', 'index.ts'), 'utf-8')).toBe(
-      'export const x = 77;\n'
-    );
-    expect(listHistory(ws).some((e) => e.path === 'index.ts')).toBe(true);
+    expect(listHistory(ws)).toEqual([]);
+    expect(existsSync(join(ws, '.nanoagent'))).toBe(false);
   });
 });
 

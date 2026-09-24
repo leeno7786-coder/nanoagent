@@ -132,6 +132,8 @@ export async function runBangCommand(
       command,
       timeout: options.timeoutSeconds,
       mirrorOutput: false,
+      // The user's own command, not a model edit: keep it out of rollback history.
+      captureHistory: false,
       onOutput: options.onOutput,
     },
     options.workspace,

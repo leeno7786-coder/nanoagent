@@ -26,11 +26,7 @@ import { syncTodoMessage } from './agent-todos.js';
 import { refreshSystemPrompt, syncContextManagerMessages } from './agent-messages.js';
 import { logDebug, logError, logWarn } from './log.js';
 import { GLOBAL_CONFIG_FILE } from './config/paths.js';
-import {
-  ensureWorkspaceGitignore,
-  startWorkspaceTracker,
-  stopWorkspaceTracker,
-} from './workspace-history.js';
+import { startWorkspaceTracker, stopWorkspaceTracker } from './workspace-history.js';
 
 /** Normalize a path for comparison (forward slashes, lowercase on Windows). */
 function normPath(s: string): string {
@@ -348,24 +344,9 @@ export async function initAgent(agent: AgentCore) {
     agent._systemPromptContent = content;
   };
 
-  // Capture a baseline snapshot of the workspace at agent-init time. The
-  // baseline lives at <workspace>/.nanoagent/snapshots/init.json and is
-  // what /rollback (no name) restores. Tools edit the workspace directly;
-  // the snapshot is the rollback machinery.
-  const { takeBaselineSnapshot, hasBaselineSnapshot } = await import('./snapshots.js');
-  try {
-    ensureWorkspaceGitignore(agent.cfg.workspace);
-    if (hasBaselineSnapshot(agent.cfg.workspace)) {
-      logDebug('[init] baseline snapshot already present, not overwriting');
-    } else {
-      takeBaselineSnapshot(agent.cfg.workspace);
-    }
-  } catch (err) {
-    // The workspace path may not exist yet (e.g. first-run against an
-    // empty cwd). That's fine — /rollback will just report no baseline.
-    logWarn('[init] baseline snapshot not taken:', (err as Error).message);
-  }
-
+  // No boot-time capture: rollback history is recorded per file, right before
+  // the model changes it (see workspace-history.ts), so init cost does not
+  // grow with the size of the workspace.
   try {
     setActiveSessionWorkspace(agent.cfg.workspace);
     startWorkspaceTracker(agent.cfg.workspace);
@@ -500,16 +481,6 @@ export async function changeAgentWorkspace(
 
   // Update cfg (also clears cache, recreates security manager, etc).
   await agent.reconfigure({ workspace: nextWorkspace });
-
-  // Baseline snapshot. Take one if missing, leave existing ones alone.
-  const { takeBaselineSnapshot, hasBaselineSnapshot } = await import('./snapshots.js');
-  try {
-    if (!hasBaselineSnapshot(nextWorkspace)) {
-      takeBaselineSnapshot(nextWorkspace);
-    }
-  } catch (err) {
-    logWarn('[cd] baseline snapshot not taken:', (err as Error).message);
-  }
 
   try {
     setActiveSessionWorkspace(nextWorkspace);

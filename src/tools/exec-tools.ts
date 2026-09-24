@@ -10,6 +10,7 @@ import {
   commandValidationError,
 } from './shared.js';
 import { isTuiActive } from '../log.js';
+import { beginShellCapture, endShellCapture } from '../workspace-history.js';
 
 interface ShellInfo {
   executable: string;
@@ -469,6 +470,25 @@ function execCmdAsync(
 }
 
 // Command Execution and Build Tools
+/**
+ * Run a shell command with its file changes journaled for rollback. Inside a
+ * git repo the pre-command state is taken from git (no tree scan); outside
+ * git this is a plain run. History failures never fail the command.
+ */
+async function withShellHistory(
+  ws: string,
+  capture: boolean,
+  run: () => Promise<string>
+): Promise<string> {
+  if (!capture) return run();
+  const cap = await beginShellCapture(ws).catch(() => null);
+  try {
+    return await run();
+  } finally {
+    await endShellCapture(ws, cap).catch(() => 0);
+  }
+}
+
 export const executeCommandTool: Tool = {
   name: 'execute_command',
   description:
@@ -543,15 +563,19 @@ export const executeCommandTool: Tool = {
         ? Math.min(args.timeout, isDownloadOrBuild ? 600 : 300)
         : defaultTimeout;
 
-    return execCmdAsync(cmd, ws, userTimeout, signal, {
-      // Internal callers (e.g. the `!` bang command) pass mirrorOutput:false so
-      // raw child output never corrupts the TUI frame, and onOutput to stream
-      // chunks into the live terminal block. Neither is part of the LLM-facing
-      // schema — the model can't toggle them accidentally.
-      mirrorOutput: (args as { mirrorOutput?: boolean }).mirrorOutput !== false,
-      onOutput: (args as { onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void })
-        .onOutput,
-    });
+    // Internal callers (e.g. the `!` bang command) pass mirrorOutput:false so
+    // raw child output never corrupts the TUI frame, onOutput to stream chunks
+    // into the live terminal block, and captureHistory:false because the user's
+    // own commands are not the model's edits. None is part of the LLM-facing
+    // schema — the model can't toggle them accidentally.
+    const capture = (args as { captureHistory?: boolean }).captureHistory !== false;
+    return withShellHistory(ws, capture, () =>
+      execCmdAsync(cmd, ws, userTimeout, signal, {
+        mirrorOutput: (args as { mirrorOutput?: boolean }).mirrorOutput !== false,
+        onOutput: (args as { onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void })
+          .onOutput,
+      })
+    );
   },
 };
 
@@ -579,7 +603,7 @@ export const installDependenciesTool: Tool = {
     const cmd = hasBun ? 'bun install' : 'npm install';
     const blocked = commandValidationError(cfg, cmd);
     if (blocked) return JSON.stringify({ ok: false, error: blocked });
-    return execCmdAsync(cmd, ws, 600, signal);
+    return withShellHistory(ws, true, () => execCmdAsync(cmd, ws, 600, signal));
   },
 };
 
@@ -612,7 +636,7 @@ export const runCommandTool: Tool = {
     const cmd = `${runner} ${sub}`;
     const blocked = commandValidationError(cfg, cmd);
     if (blocked) return JSON.stringify({ ok: false, error: blocked });
-    return execCmdAsync(cmd, ws, 300, signal);
+    return withShellHistory(ws, true, () => execCmdAsync(cmd, ws, 300, signal));
   },
 };
 

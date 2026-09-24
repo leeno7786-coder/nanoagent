@@ -28,7 +28,6 @@ import { StatusBar } from './status-bar.js';
 import { TodoSidebar } from './todo-sidebar.js';
 import { THEMES, DEFAULT_THEME } from './theme.js';
 import { loadSkills, getSkillCommands, getSkill } from '../skills.js';
-import { hasBaselineSnapshot } from '../snapshots.js';
 import { getProviderBaseURL, invalidateModelCatalog } from '../providers/index.js';
 import { handleSlashCommand, checkAndAutoCompact } from './slash-commands/index.js';
 import { parseBangCommand, runBangCommand, recordBangExchange } from './bang-command.js';
@@ -38,7 +37,6 @@ import { copyToClipboard } from '../clipboard.js';
 import { addNoticeMessage } from '../agent-messages.js';
 import { logWarn, logCrash, beginRunMarker, crashLogPath } from '../log.js';
 import { registerCleanup } from '../process-lifecycle.js';
-import { syncWorkspaceFromDisk } from '../workspace-history.js';
 
 /**
  * Messages the user can select/copy — shares ChatScreen's visibility filter
@@ -218,9 +216,6 @@ export function App({
     (globalThis as Record<string, unknown>)['__refreshSkills'] = handleSkillRefresh;
 
     if (!initialSession && agent.messages.length === 0) {
-      // Baseline status: was a snapshot of the workspace taken at
-      // agent-init time? /rollback (no name) uses it.
-      const hasBaseline = hasBaselineSnapshot(agent.cfg.workspace);
       const hash = ensureLiveSessionId();
       setCurrentSessionId(hash);
       agent.messages.push({
@@ -228,7 +223,7 @@ export function App({
         role: 'assistant',
         content:
           `⚡ **NanoAgent** — Tiny Models, Scalable Intelligence\n\n` +
-          `workspace: \`${agent.cfg.workspace}\` · ${hasBaseline ? 'baseline snapshot ready (`/rollback` to revert)' : 'no baseline snapshot yet (`/snapshot` to start)'}\n` +
+          `workspace: \`${agent.cfg.workspace}\` · model edits are saved as they happen (\`/rollback\` undoes this session)\n` +
           `history: \`.nanoagent/worktree\` (\`/changes\`) · sessions: \`.nanoagent/sessions\`\n` +
           `this chat: \`${hash}\` — resume with \`nanoagent --resume ${hash}\`\n\n` +
           `Tools edit the workspace directly. Type \`/help\` for commands or \`/config\` for settings.`,
@@ -659,11 +654,6 @@ export function App({
           );
         } finally {
           store.getState().endBangRun();
-          try {
-            syncWorkspaceFromDisk(workspace, 'shell');
-          } catch {
-            /* history tracking is best-effort */
-          }
         }
         agent.setState('idle');
         store.getState().syncFromAgent(agent);

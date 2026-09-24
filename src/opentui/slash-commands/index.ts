@@ -660,89 +660,98 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
       if (files.length === 0) {
         pushAssistant(
           agent,
-          'No file changes recorded this session. Touched files are copied to `.nanoagent/worktree` automatically.',
+          'No model changes recorded yet. Files are saved right before the model edits them, so `/rollback` can undo them.',
           setMessages
         );
         return;
       }
       const recent = listHistory(agent.cfg.workspace)
         .slice(-40)
-        .map((e) => `${e.action.padEnd(6)} ${e.path} (${e.source})`);
+        .map(
+          (e) =>
+            `${e.action.padEnd(6)} ${e.path} (${e.source})${e.restorable ? '' : ' — not restorable'}`
+        );
       pushAssistant(
         agent,
         `**Touched files (${files.length}):**\n${files.map((f) => `- ${f}`).join('\n')}\n\n` +
           `**Journal (recent):**\n${recent.join('\n')}\n\n` +
-          `Originals: \`.nanoagent/history/originals\`. \`/rollback\` restores the init baseline.`,
+          '`/rollback` undoes this session · `/rollback <checkpoint|file>` undoes part of it. ' +
+          'Shell edits outside git are covered only for files the model read first.',
         setMessages
       );
       return;
     }
     case 'snapshot': {
-      const name = args.trim() || undefined;
-      const { defaultSnapshotName, captureSnapshot } = await import('../../snapshots.js');
+      const { addCheckpoint } = await import('../../workspace-history.js');
+      const name =
+        args.trim() || `cp-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
       try {
-        const info = captureSnapshot(agent.cfg.workspace, name ?? defaultSnapshotName());
+        const info = addCheckpoint(agent.cfg.workspace, name);
         pushAssistant(
           agent,
-          `📸 Snapshot saved: \`${info.name}\`\n  files: ${info.filesChanged}\n  path: \`${info.path}\``,
+          `📍 Checkpoint \`${info.name}\` saved. \`/rollback ${info.name}\` undoes every model change after this point.`,
           setMessages
         );
       } catch (err) {
         pushAssistant(
           agent,
-          `Failed to capture snapshot: ${err instanceof Error ? err.message : String(err)}`,
+          `Failed to save checkpoint: ${err instanceof Error ? err.message : String(err)}`,
           setMessages
         );
       }
       return;
     }
     case 'diffs': {
-      const { listSnapshots } = await import('../../snapshots.js');
-      const snaps = listSnapshots(agent.cfg.workspace);
-      if (snaps.length === 0) {
+      const { listCheckpoints } = await import('../../workspace-history.js');
+      const cps = listCheckpoints(agent.cfg.workspace);
+      if (cps.length === 0) {
         pushAssistant(
           agent,
-          'No snapshots yet. Run `/snapshot [name]` to capture the current workspace state.',
+          'No checkpoints yet. `/snapshot [name]` marks one; a session start is marked automatically on the first model edit.',
           setMessages
         );
         return;
       }
-      const lines = snaps.map(
-        (s) => `  • \`${s.name}\`  ·  ${s.filesChanged} files  ·  ${s.createdAt}`
+      const lines = cps.map(
+        (c) =>
+          `  • \`${c.name}\`${c.session ? ' (session start)' : ''}  ·  ${c.changesAfter} changes after  ·  ${c.t}`
       );
       pushAssistant(
         agent,
-        `**Snapshots (newest first):**\n${lines.join('\n')}\n\nRestore with \`/rollback <name>\` or wipe the working tree back to source with \`/rollback\`.`,
+        `**Checkpoints (newest first):**\n${lines.join('\n')}\n\nUndo back to one with \`/rollback <name>\`.`,
         setMessages
       );
       return;
     }
     case 'rollback': {
-      const { restoreSnapshot, restoreBaseline } = await import('../../snapshots.js');
+      const { rollbackChanges, listCheckpoints, listTouchedFiles } =
+        await import('../../workspace-history.js');
       const target = args.trim();
       try {
-        if (!target) {
-          // No name: revert the workspace to the baseline captured at
-          // agent-init time. The user's edits are lost unless they were
-          // /snapshotted first.
-          const result = restoreBaseline(agent.cfg.workspace);
-          pushAssistant(
-            agent,
-            `↺ Workspace rolled back to baseline (${result.applied} restored, ${result.removed} removed).\n  baseline: \`${result.baselinePath}\``,
-            setMessages
-          );
-        } else {
-          const result = restoreSnapshot(agent.cfg.workspace, target);
-          let warn = '';
-          if (result.missingIntermediate.length > 0) {
-            warn = `\n\n⚠ Some intermediate snapshots in the chain were missing: ${result.missingIntermediate.join(', ')}. The restore applied what was available.`;
-          }
-          pushAssistant(
-            agent,
-            `↺ Rolled back to snapshot \`${target}\` (${result.applied} restored, ${result.removed} removed)${warn}`,
-            setMessages
-          );
-        }
+        const ws = agent.cfg.workspace;
+        const isCheckpoint = target !== '' && listCheckpoints(ws).some((c) => c.name === target);
+        const isFile =
+          target !== '' &&
+          !isCheckpoint &&
+          listTouchedFiles(ws).includes(target.replace(/\\/g, '/'));
+        const result = rollbackChanges(
+          ws,
+          isFile ? { path: target } : target ? { checkpoint: target } : {}
+        );
+        const scope = isFile
+          ? `\`${target}\``
+          : target
+            ? `checkpoint \`${target}\``
+            : 'the start of this session';
+        const skipped =
+          result.skipped.length > 0
+            ? `\n  ⚠ not restorable (never captured): ${result.skipped.join(', ')}`
+            : '';
+        pushAssistant(
+          agent,
+          `↺ Rolled back to ${scope} (${result.restored.length} restored, ${result.removed.length} removed).${skipped}`,
+          setMessages
+        );
       } catch (err) {
         pushAssistant(
           agent,
