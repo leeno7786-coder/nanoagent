@@ -1,5 +1,6 @@
 import { streamChat } from '../../llm/index.js';
 import type { ChatMessage } from '../../llm/index.js';
+import { normalizeStrictChatTemplate } from '../../llm/chat-template.js';
 import { tools, toOpenAI } from '../../tools/index.js';
 import type { ToolExecutionHooks, SubAgentProgressEvent } from '../../tools/index.js';
 import type { SubAgentPoolConfig } from '../../types.js';
@@ -176,21 +177,31 @@ async function runSingleSubAgent(
     let streamErr: unknown;
     let turnTimedOut = false;
     try {
-      const stream = streamChat(wctx.client, wctx.cfg, messages, toolDefs, turnController.signal, {
-        enableThinking: false,
-        onRetry: (info) => {
-          resetTurnTimer();
-          accumulatedContent = '';
-          streamedToolCalls = [];
-          streamFinishReason = undefined;
-          emit({
-            type: 'subagent_chunk',
-            agent: wctx.endpoint.name,
-            model: wctx.cfg.model,
-            text: `\n[Rate limit retry (${info.status}): waiting ${(info.delayMs / 1000).toFixed(1)}s (attempt ${info.attempt}/${info.maxAttempts})]\n`,
-          });
-        },
-      });
+      // A batched worker round appends assistant(tool_calls=[a,b]) then
+      // tool(a) tool(b). Qwen2.5/3.x Jinja only accepts a `tool` message whose
+      // immediate predecessor is an assistant, so re-interleave before sending.
+      const stream = streamChat(
+        wctx.client,
+        wctx.cfg,
+        normalizeStrictChatTemplate(messages),
+        toolDefs,
+        turnController.signal,
+        {
+          enableThinking: false,
+          onRetry: (info) => {
+            resetTurnTimer();
+            accumulatedContent = '';
+            streamedToolCalls = [];
+            streamFinishReason = undefined;
+            emit({
+              type: 'subagent_chunk',
+              agent: wctx.endpoint.name,
+              model: wctx.cfg.model,
+              text: `\n[Rate limit retry (${info.status}): waiting ${(info.delayMs / 1000).toFixed(1)}s (attempt ${info.attempt}/${info.maxAttempts})]\n`,
+            });
+          },
+        }
+      );
 
       for await (const chunk of stream) {
         resetTurnTimer();

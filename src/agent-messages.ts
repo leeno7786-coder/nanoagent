@@ -4,6 +4,7 @@
  * instance as its first parameter.
  */
 import type { ChatMessage } from './llm/index.js';
+import { normalizeStrictChatTemplate } from './llm/chat-template.js';
 import type { Message } from './types.js';
 import type { AgentCore } from './agent.js';
 import { rnd, now } from './agent-utils.js';
@@ -157,20 +158,29 @@ export function toChatMessages(agent: AgentCore, includeTrailingAssistant = fals
     out.push(toChatMessage(m, agent));
   }
 
+  // Qwen2.5/3.x and Bonsai Jinja only accept a `tool` message when the message
+  // directly before it is an assistant. A batched round renders as
+  // assistant(tool_calls=[a,b]) tool(a) tool(b), which those templates reject
+  // outright ("Tool message must be responding to a previous tool call."), so
+  // re-interleave each result behind its own assistant turn. This also drops
+  // tool results orphaned by compaction/session edits and strips tool calls a
+  // stopped run never answered.
+  const normalized = normalizeStrictChatTemplate(out);
+
   // Safety net for Bonsai/Qwen multi-step templates: a trailing assistant with
   // no tool_calls looks like a completed turn. The generation prompt then opens
   // a second assistant block and the model often stops immediately.
   if (!includeTrailingAssistant) {
     while (
-      out.length > 0 &&
-      out[out.length - 1]!.role === 'assistant' &&
-      !out[out.length - 1]!.tool_calls?.length
+      normalized.length > 0 &&
+      normalized[normalized.length - 1]!.role === 'assistant' &&
+      !normalized[normalized.length - 1]!.tool_calls?.length
     ) {
-      out.pop();
+      normalized.pop();
     }
   }
 
-  return out;
+  return normalized;
 }
 
 /** Append an assistant message and trigger an update. */

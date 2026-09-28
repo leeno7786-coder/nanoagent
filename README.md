@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.15** (`@omega3_0/nanoagent`) — rollback now saves only the files the model touches, right before it changes them, so startup no longer scans or copies the workspace.
+Current release: **2.7.16** (`@omega3_0/nanoagent`) — batched tool rounds are re-interleaved so each result follows its own assistant turn, which is what Qwen's Jinja template requires.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -477,6 +477,12 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.16 — Qwen tool-call template fix
+
+- **Batched tool rounds no longer break Qwen's Jinja template.** Qwen 2.5/3.x and Bonsai raise `Tool message must be responding to a previous tool call.` unless a `tool` message is *immediately* preceded by an assistant. The batched shape `assistant(tool_calls=[a,b]) tool(a) tool(b)` is rejected on the second result, so a single multi-tool round failed the whole request — and the system prompt tells the model to batch independent tools every turn. Each result is now re-interleaved behind its own single-call assistant turn, which renders identically and satisfies the template.
+- **Applies to sub-agents too.** The worker history is normalized before every `streamChat`, so `explore_subagent` against local Qwen 2B models gets the same fix.
+- **Self-healing history.** Tool results orphaned by compaction or session edits are dropped, and tool calls a stopped run never answered are stripped, so neither can poison the next request. Internal history is untouched — only the payload sent to the model changes.
 
 ### 2.7.15 — Touched-file rollback, no boot capture
 
