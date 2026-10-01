@@ -69,21 +69,30 @@ export const batchReadFilesTool: Tool = {
           const text = readFileSync(p, 'utf-8');
           noteModelRead(ws, p);
           const sliced = truncate(text, isSmall ? SMALL_MODEL_READ_LIMIT : LARGE_MODEL_READ_LIMIT);
-          const charCut = sliced.content.length > MAX_READ_CHARS;
-          const finalContent = charCut
-            ? sliced.content.slice(0, MAX_READ_CHARS) +
-              `\n... [truncated: ${sliced.content.length - MAX_READ_CHARS} characters omitted]`
-            : sliced.content;
+          // Keep only whole lines that fit the char budget so the reported
+          // cursor never skips past lines the cut dropped.
+          const bodyLines = sliced.content.length > 0 ? sliced.content.split('\n') : [];
+          const kept: string[] = [];
+          let used = 0;
+          for (const line of bodyLines) {
+            if (used + line.length + 1 > MAX_READ_CHARS) break;
+            used += line.length + 1;
+            kept.push(line);
+          }
+          if (kept.length === 0 && bodyLines.length > 0)
+            kept.push(bodyLines[0]!.slice(0, MAX_READ_CHARS));
+          const charCut = kept.length < bodyLines.length;
+          const finalContent = kept.join('\n');
           const truncated = sliced.truncated || charCut;
           results[rawPath] = {
             ok: true,
-            content: finalContent,
+            content: charCut ? `${finalContent}\n... [truncated]` : finalContent,
             truncated,
             originalLength: sliced.originalLength,
             ...(truncated
               ? {
-                  next_start_line: (isSmall ? SMALL_MODEL_READ_LIMIT : LARGE_MODEL_READ_LIMIT) + 1,
-                  hint: `File continues. Call read_file with start_line — do not repeat this exact call.`,
+                  next_start_line: kept.length + 1,
+                  hint: `File continues. Call read_file with start_line=${kept.length + 1} — do not repeat this exact call.`,
                 }
               : {}),
           };
@@ -144,21 +153,31 @@ export const readFileTool: Tool = {
       const offset = startLine - 1;
       const sliced = lines.slice(offset, offset + limit);
       const numbered = isSmall && args.numbered !== false;
-      const content = numbered
-        ? sliced
-            .map((line, i) => {
-              const n = offset + i + 1;
-              return `${String(n).padStart(5)}| ${line}`;
-            })
-            .join('\n')
-        : sliced.join('\n');
-      const charCut = content.length > MAX_READ_CHARS;
+      const rendered = sliced.map((line, i) => {
+        const n = offset + i + 1;
+        return numbered ? `${String(n).padStart(5)}| ${line}` : line;
+      });
+      // Cap by characters as well as lines, keeping only whole lines. When the
+      // char budget cuts mid-window the reported end_line must be the last line
+      // that actually reached `content` — otherwise the advertised
+      // next_start_line skips every line the cut dropped and the model never
+      // sees them.
+      const kept: string[] = [];
+      let used = 0;
+      for (const line of rendered) {
+        if (used + line.length + 1 > MAX_READ_CHARS) break;
+        used += line.length + 1;
+        kept.push(line);
+      }
+      const charCut = kept.length < rendered.length;
+      if (kept.length === 0 && rendered.length > 0) {
+        kept.push(rendered[0]!.slice(0, MAX_READ_CHARS));
+      }
       const safeContent = charCut
-        ? content.slice(0, MAX_READ_CHARS) +
-          `\n... [truncated: ${content.length - MAX_READ_CHARS} characters omitted]`
-        : content;
+        ? `${kept.join('\n')}\n... [truncated: reached the ${MAX_READ_CHARS}-character read limit on line ${startLine + kept.length - 1}]`
+        : kept.join('\n');
       const truncated = offset + limit < lines.length || charCut;
-      const endReturned = startLine + sliced.length - 1;
+      const endReturned = startLine + kept.length - 1;
       return JSON.stringify({
         ok: true,
         path: rel(p, ws),
@@ -180,19 +199,28 @@ export const readFileTool: Tool = {
       if (err.code === 'ENOENT') {
         try {
           const dir = dirname(safe(args.path, ws, cfg));
+          // Never name a file the security layer blocks: the hint reaches the
+          // model, and listing `id_rsa` / `*.pem` here discloses exactly the
+          // paths validateFileAccess refuses to read.
           const dirFiles = readdirSync(dir).filter((f) => {
-            const st = statSync(resolve(dir, f));
-            return st.isFile() && !f.startsWith('.');
+            try {
+              const full = resolve(dir, f);
+              if (!statSync(full).isFile() || f.startsWith('.')) return false;
+              return !isAccessBlocked(full, cfg);
+            } catch {
+              return false;
+            }
           });
           const fname = basename(safe(args.path, ws, cfg));
           const stem = fname.replace(/\.[^/.]+$/, '');
           const similar = dirFiles.filter(
             (f) => f.includes(stem) || stem.includes(f.replace(/\.[^/.]+$/, ''))
           );
+          const dirLabel = dir === ws ? 'workspace root' : rel(dir, ws);
           const hint =
             similar.length > 0
               ? ` Did you mean one of these? ${similar.map((f) => rel(resolve(dir, f), ws)).join(', ')}`
-              : ` Files in ${rel(dir, ws)}: ${dirFiles.join(', ')}`;
+              : ` Files in ${dirLabel}: ${dirFiles.join(', ')}`;
           return JSON.stringify({
             ok: false,
             error: `File not found: ${rel(safe(args.path, ws, cfg), ws)}.${hint}`,

@@ -270,9 +270,17 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
     // features (pipes, redirects) — those must go through cmd.exe /c,
     // not be spawned as a literal executable name.
     const parsed = parseCommand(cmd);
-    const needsShell = !parsed || parsed.useShell;
-    const exe = needsShell ? 'cmd.exe' : parsed.command;
-    const args = needsShell ? ['/c', cmd] : parsed.args;
+    // The bare `parseCommand` path assumes a POSIX shell and spawns builtins
+    // like `dir`/`echo` directly, which only resolves under a POSIX shell. This
+    // branch is the `cmd.exe` fallback (no Git Bash, no PowerShell), so those
+    // builtins must go through `cmd.exe /c` instead of being spawned as literal
+    // executable names.
+    const needsShell =
+      !parsed ||
+      parsed.useShell ||
+      (shell.type === 'cmd' && !/\.(exe|com|bat|cmd)$/i.test(parsed.command));
+    const exe = needsShell ? shell.executable : parsed.command;
+    const args = needsShell ? shell.args(cmd) : parsed.args;
     const result = spawnSync(exe, args, {
       cwd: ws,
       timeout: timeoutMs,
@@ -305,6 +313,38 @@ function execCmd(cmd: string, ws: string, timeoutSeconds = 60): string {
       (e as { message?: string }).message,
       (e as { status?: number | null }).status ?? null
     );
+  }
+}
+
+/**
+ * Kill a child and everything it spawned.
+ *
+ * `child.kill()` only signals the direct process. On timeout/abort that left
+ * grandchildren running — `sleep 120 & sleep 120` returned a failure while two
+ * orphans kept mutating the workspace, so the tool reported failure for work
+ * that was still in flight. On Windows `taskkill /T` walks the tree. On POSIX
+ * the negative-pid group kill needs the child spawned `detached`, which we
+ * deliberately do not do (an agent crash would then orphan the group), so it
+ * falls back to the direct kill exactly as before.
+ */
+function killTree(child: ChildProcess): void {
+  if (child.pid == null) return;
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } else {
+      process.kill(-child.pid, 'SIGKILL');
+    }
+  } catch {
+    // Already gone, or the group is unavailable — fall back to the direct kill.
+  }
+  try {
+    child.kill();
+  } catch {
+    /* already exited */
   }
 }
 
@@ -402,7 +442,8 @@ function execCmdAsync(
     const timeoutId = setTimeout(() => {
       if (!resolved) {
         resolved = true;
-        child.kill();
+        cleanup();
+        killTree(child);
         resolvePromise(
           JSON.stringify({
             ...JSON.parse(formatExecResult(false, stdoutBuffer, stderrBuffer, null)),
@@ -413,33 +454,55 @@ function execCmdAsync(
       }
     }, timeoutMs);
 
-    const clearTimeoutFn = () => clearTimeout(timeoutId);
+    let exitCode: number | null = null;
+    let exitTimer: ReturnType<typeof setTimeout> | null = null;
+    let abortHandler: (() => void) | undefined;
 
-    child.on('close', (code, _signal) => {
-      clearTimeoutFn();
-      if (!resolved) {
-        resolved = true;
-        if (code === 0) {
-          resolvePromise(formatExecResult(true, stdoutBuffer, stderrBuffer, code));
-        } else {
-          resolvePromise(formatExecResult(false, stdoutBuffer, stderrBuffer, code));
-        }
-      }
+    // `close` only fires once the stdio pipes are closed, and a background
+    // grandchild that inherited them keeps them open — so `npm run dev &`
+    // blocked for the entire timeout and reported a fake failure. `exit` fires
+    // when the process itself is done; give the streams a brief moment to flush
+    // and then settle regardless.
+    const EXIT_FLUSH_GRACE_MS = 250;
+
+    function cleanup(): void {
+      clearTimeout(timeoutId);
+      if (exitTimer) clearTimeout(exitTimer);
+      // `once: true` only removes the listener after it FIRES, so a command
+      // that completed normally leaked its ChildProcess and output buffers for
+      // the life of the session-wide signal (~0.5MB per call).
+      if (abortHandler) signal?.removeEventListener('abort', abortHandler);
+    }
+
+    function settle(ok: boolean, code: number | null): void {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolvePromise(formatExecResult(ok, stdoutBuffer, stderrBuffer, code));
+    }
+
+    child.on('exit', (code) => {
+      exitCode = code;
+      if (exitTimer || resolved) return;
+      exitTimer = setTimeout(() => settle(exitCode === 0, exitCode), EXIT_FLUSH_GRACE_MS);
+    });
+
+    child.on('close', (code) => {
+      settle(code === 0, code);
     });
 
     child.on('error', (error) => {
-      clearTimeoutFn();
-      if (!resolved) {
-        resolved = true;
-        resolvePromise(formatExecResult(false, stdoutBuffer, stderrBuffer || error.message, null));
-      }
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolvePromise(formatExecResult(false, stdoutBuffer, stderrBuffer || error.message, null));
     });
 
     if (signal) {
       if (signal.aborted) {
-        clearTimeoutFn();
-        child.kill();
         resolved = true;
+        cleanup();
+        killTree(child);
         resolvePromise(
           JSON.stringify({
             ...JSON.parse(formatExecResult(false, '', 'Command cancelled', null)),
@@ -448,23 +511,20 @@ function execCmdAsync(
         );
         return;
       }
-      signal.addEventListener(
-        'abort',
-        () => {
-          if (!resolved) {
-            resolved = true;
-            clearTimeoutFn();
-            child.kill();
-            resolvePromise(
-              JSON.stringify({
-                ...JSON.parse(formatExecResult(false, '', 'Command cancelled', null)),
-                error: 'Command cancelled',
-              })
-            );
-          }
-        },
-        { once: true }
-      );
+      abortHandler = () => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          killTree(child);
+          resolvePromise(
+            JSON.stringify({
+              ...JSON.parse(formatExecResult(false, '', 'Command cancelled', null)),
+              error: 'Command cancelled',
+            })
+          );
+        }
+      };
+      signal.addEventListener('abort', abortHandler, { once: true });
     }
   });
 }
@@ -646,7 +706,20 @@ export const typecheckTool: Tool = {
   parameters: { type: 'object', properties: {} },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
   executeAsync: async (_args, ws, cfg, signal) => {
-    const cmd = 'tsc --noEmit';
+    // `tsc` only exists in node_modules/.bin, which is not on the sanitized
+    // child PATH, so a bare `tsc` exited 127 in every project with TypeScript
+    // as a devDependency. Resolve the installed compiler directly rather than
+    // going through npx: with no local typescript, `npx tsc` happily resolves
+    // the unrelated `tsc@2.0.4` package off the registry and runs it.
+    const tscBin = join(ws, 'node_modules', 'typescript', 'bin', 'tsc');
+    if (!existsSync(tscBin)) {
+      return JSON.stringify({
+        ok: false,
+        error:
+          'TypeScript is not installed in this project (no node_modules/typescript). Run install_dependencies first.',
+      });
+    }
+    const cmd = `"${process.execPath}" "${tscBin}" --noEmit`;
     const blocked = commandValidationError(cfg, cmd);
     if (blocked) return JSON.stringify({ ok: false, error: blocked });
     return execCmdAsync(cmd, ws, 180, signal);

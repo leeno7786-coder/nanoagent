@@ -433,6 +433,124 @@ describe('SecurityManager', () => {
     });
   });
 
+  describe('sanitizeToolOutput', () => {
+    const diffResult = (added: string, removed: string, extra: string = '') =>
+      JSON.stringify({
+        ok: true,
+        path: 'src/model/client.ts',
+        action: 'update',
+        added: 1,
+        removed: 1,
+        diff: [
+          'Index: src/model/client.ts',
+          '--- src/model/client.ts',
+          '+++ src/model/client.ts',
+          '@@ -62,1 +62,1 @@',
+          `-${removed}`,
+          `+${added}`,
+          ...(extra ? [extra] : []),
+        ].join('\n'),
+      });
+
+    it('shows the model its own new_text instead of "[REDACTED]"', () => {
+      // The exact case that wedged the agent: the model wrote a Bearer header,
+      // the diff came back redacted, and it retried the same edit forever.
+      const result = JSON.parse(
+        securityManager.sanitizeToolOutput(
+          diffResult(
+            '            authorization: `Bearer ${profile.apiKey}`,',
+            '            authorization: "Bearer abc123",'
+          )
+        )
+      ) as { diff: string };
+      const added = result.diff
+        .split('\n')
+        .filter((l) => l.startsWith('+') && !l.startsWith('+++'));
+      expect(added).toHaveLength(1);
+      expect(added[0]).toBe('+            authorization: `Bearer ${profile.apiKey}`,');
+      expect(added[0]).not.toContain('[REDACTED]');
+    });
+
+    it('still redacts the disk side of the diff', () => {
+      const result = JSON.parse(
+        securityManager.sanitizeToolOutput(
+          diffResult('  const a = 1;', '  const auth = "AKIAIOSFODNN7EXAMPLEKEY1234";')
+        )
+      ) as { diff: string };
+      const removed = result.diff
+        .split('\n')
+        .filter((l) => l.startsWith('-') && !l.startsWith('---'));
+      expect(removed.join('\n')).not.toContain('AKIAIOSFODNN7EXAMPLEKEY1234');
+      // ...while the model-authored side survives intact.
+      expect(result.diff).toContain('+  const a = 1;');
+    });
+
+    it('redacts secrets in context lines, which come from disk', () => {
+      const result = JSON.parse(
+        securityManager.sanitizeToolOutput(
+          diffResult(
+            '+  const a = 1;',
+            '-  const a = 0;',
+            '  const bearer = "sk-abcdefghij0123456789ABCD";'
+          )
+        )
+      ) as { diff: string };
+      expect(result.diff).not.toContain('sk-abcdefghij0123456789ABCD');
+    });
+
+    it('preserves non-diff fields, headers and context lines', () => {
+      const result = JSON.parse(
+        securityManager.sanitizeToolOutput(
+          diffResult('+  const a = 1;', '-  const a = 0;', '   const ctx = 2;')
+        )
+      ) as { path: string; action: string; diff: string };
+      expect(result.path).toBe('src/model/client.ts');
+      expect(result.action).toBe('update');
+      expect(result.diff).toContain('+++ src/model/client.ts');
+      expect(result.diff).toContain('@@ -62,1 +62,1 @@');
+      expect(result.diff).toContain('   const ctx = 2;');
+    });
+
+    it('leaves a file-content secret in the error field redacted', () => {
+      const output = JSON.stringify({
+        ok: false,
+        error: 'old_text not found. First 500 chars:\ntoken=abcdef123456789',
+      });
+      expect(securityManager.sanitizeToolOutput(output)).not.toContain('abcdef123456789');
+    });
+
+    it('falls back to plain sanitization for non-JSON and non-object output', () => {
+      expect(securityManager.sanitizeToolOutput('token=abcdef123')).toBe('token=[REDACTED]');
+      expect(securityManager.sanitizeToolOutput('[1,2,3]')).toBe('[1,2,3]');
+      expect(securityManager.sanitizeToolOutput('not json {')).toBe('not json {');
+    });
+
+    it('respects sanitizeOutput: false', () => {
+      const disabled = createSecurityManager({ sanitizeOutput: false }, '/test/workspace');
+      const output = diffResult('+  const a = 1;', '-  const a = 0;');
+      expect(disabled.sanitizeToolOutput(output)).toBe(output);
+    });
+
+    it('never restores a diff line onto the wrong position', () => {
+      // An earlier disk-side secret can make a redaction rule swallow the line
+      // break. The result must degrade to plain sanitization, never splice an
+      // authored line onto a context line.
+      const result = securityManager.sanitizeToolOutput(
+        diffResult(
+          '+  const a = 1;',
+          '-  const token = "value with sk-averylongsecretkey1234567890";'
+        )
+      );
+      const parsed = JSON.parse(result) as { diff: string };
+      expect(
+        parsed.diff
+          .split('\n')
+          .filter((l) => l.startsWith('+'))
+          .join('\n')
+      ).not.toContain('sk-averylongsecretkey1234567890');
+    });
+  });
+
   describe('isSafePath', () => {
     it('should return true for safe paths', () => {
       expect(securityManager.isSafePath('/test/workspace/file.txt')).toBe(true);

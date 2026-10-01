@@ -1285,11 +1285,22 @@ export class MemoryGraph {
         result.paths = this.queryPaths(query.query);
         break;
       case 'pattern':
-        result.nodes = typeof query.query === 'string' ? this.queryByPattern(query.query) : [];
+        result.nodes =
+          typeof query.query === 'string' ? this.queryByPattern(query.query, query.limit) : [];
         break;
       case 'semantic':
         result.nodes = this.querySemantic(query.query);
         break;
+    }
+
+    // The per-type helpers only ever see `query.query`, so a `limit` set on the
+    // GraphQuery — which is how every caller passes it — was silently dropped and
+    // the model got up to 100 nodes regardless of what it asked for. Apply it
+    // uniformly here instead.
+    const limit = Number(query.limit);
+    if (Number.isFinite(limit) && limit > 0) {
+      result.nodes = result.nodes.slice(0, limit);
+      result.edges = result.edges.slice(0, limit);
     }
 
     result.stats.queryTime = Date.now() - startTime;
@@ -1439,10 +1450,13 @@ export class MemoryGraph {
   /**
    * Query by pattern (simple text search)
    */
-  private queryByPattern(pattern: string): GraphNode[] {
+  private queryByPattern(pattern: string, limit?: number): GraphNode[] {
     const results: GraphNode[] = [];
     if (validateSearchPattern(pattern)) return results;
     const regex = new RegExp(pattern, 'i');
+    // The internal cap is a default, not a ceiling: a caller asking for more
+    // than 50 previously got exactly 50 regardless.
+    const cap = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : 50;
 
     for (const [, node] of this.nodes) {
       if (
@@ -1452,7 +1466,7 @@ export class MemoryGraph {
         (node.code && regex.test(node.code))
       ) {
         results.push(node);
-        if (results.length >= 50) break; // Limit results
+        if (results.length >= cap) break;
       }
     }
 
@@ -1468,24 +1482,34 @@ export class MemoryGraph {
     if (typeof criteria === 'string') return results;
     const relatedTo = criteria.relatedTo as string | undefined;
     if (relatedTo) {
-      const relatedNodes = new Set<string>();
-
-      for (const [, edge] of this.edges) {
-        if (edge.source === relatedTo) {
-          relatedNodes.add(edge.target);
+      const limit = Math.max(1, Math.min(Number(criteria.limit) || 50, 500));
+      const maxDepth = Math.max(1, Math.min(Number(criteria.maxDepth) || 1, 10));
+      // Breadth-first so `maxDepth` means something. This used to be a single
+      // hop no matter what depth was asked for, so `find_dependencies` with
+      // maxDepth 1/2/5 returned identical output.
+      const seen = new Set<string>([relatedTo]);
+      let frontier = [relatedTo];
+      for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
+        const next: string[] = [];
+        for (const id of frontier) {
+          for (const [, edge] of this.edges) {
+            if (results.length >= limit) break;
+            const other =
+              edge.source === id ? edge.target : edge.target === id ? edge.source : null;
+            if (!other || seen.has(other)) continue;
+            seen.add(other);
+            const node = this.nodes.get(other);
+            if (!node) continue;
+            results.push(node);
+            next.push(other);
+          }
+          if (results.length >= limit) break;
         }
-        if (edge.target === relatedTo) {
-          relatedNodes.add(edge.source);
-        }
-      }
-
-      for (const id of relatedNodes) {
-        const node = this.nodes.get(id);
-        if (node) results.push(node);
+        frontier = next;
       }
     }
 
-    return results.slice(0, (criteria.limit as number) || 50);
+    return results;
   }
 
   /**

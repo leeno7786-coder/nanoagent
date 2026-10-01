@@ -19,6 +19,16 @@ export const rollbackChangesTool: Tool = {
       const checkpoint =
         typeof args.checkpoint === 'string' && args.checkpoint ? args.checkpoint : undefined;
       const result = rollbackChanges(ws, { path, checkpoint });
+      // A partial rollback is still a rollback: report what landed alongside
+      // what failed, so the model doesn't retry blindly against files that
+      // were already restored.
+      if (result.errors.length > 0) {
+        return JSON.stringify({
+          ok: true,
+          ...result,
+          warning: `Some paths could not be restored: ${result.errors.join('; ')}`,
+        });
+      }
       return JSON.stringify({ ok: true, ...result });
     } catch (err) {
       return JSON.stringify({

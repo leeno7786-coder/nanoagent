@@ -51,6 +51,21 @@ export function stripLineNumberEcho(value: string): { text: string; stripped: bo
 }
 
 /**
+ * 1-based line numbers of every non-overlapping occurrence of `needle`.
+ * Used to tell the model *where* an ambiguous old_text occurs so it can
+ * disambiguate instead of having the tool guess.
+ */
+function lineNumbersOf(text: string, needle: string, limit = 20): number[] {
+  const found: number[] = [];
+  let idx = text.indexOf(needle);
+  while (idx !== -1 && found.length < limit) {
+    found.push(text.slice(0, idx).split('\n').length);
+    idx = text.indexOf(needle, idx + needle.length);
+  }
+  return found;
+}
+
+/**
  * Refuse to run a file-mutating tool whose arguments were truncated upstream
  * (token-budget cap) or failed to parse. Writing partial/garbage content
  * silently corrupts the workspace — a visible, recoverable error is better.
@@ -236,9 +251,12 @@ export const editFileTool: Tool = {
         if (matchStarts.length > 0) {
           const newTextValue = matchEol(text, newEcho.text);
           const nextLines = [...fileLines];
-          // Splice from the bottom up so earlier indexes stay valid.
+          // Splice from the bottom up so earlier indexes stay valid. An empty
+          // new_text must DELETE the matched region — spreading it would
+          // splice in one empty line per deletion and duplicate blank lines.
+          const inserted = newTextValue.length > 0 ? newTextValue.split(/\r?\n/) : [];
           for (let m = matchStarts.length - 1; m >= 0; m--) {
-            nextLines.splice(matchStarts[m], oldLines.length, newTextValue);
+            nextLines.splice(matchStarts[m], oldLines.length, ...inserted);
           }
           // Preserve the file's line endings — splitting on /\r?\n/ strips
           // CR, so joining with '\n' would rewrite CRLF files as LF.
@@ -268,10 +286,24 @@ export const editFileTool: Tool = {
         });
       }
 
+      const occurrences = text.split(oldText).length - 1;
+      if (occurrences > 1 && !args.replace_all) {
+        // Replacing the first hit silently edits the WRONG line: the tool
+        // reports success while the line the model meant is untouched, so it
+        // re-reads and retries forever. Fail like the fuzzy path does.
+        const linesList = lineNumbersOf(text, oldText).join(', ');
+        return JSON.stringify({
+          ok: false,
+          error: `old_text matches ${occurrences} places (at lines ${linesList}). Include more surrounding context to make it unique, or set replace_all: true to update all of them.`,
+        });
+      }
+
       const replacementText = matchEol(text, newEcho.text);
       const next = args.replace_all
         ? text.split(oldText).join(replacementText)
-        : text.replace(oldText, replacementText);
+        : // Function replacer on purpose: a string replacement expands $&, $`,
+          // $' and $1 inside new_text and silently corrupts the file.
+          text.replace(oldText, () => replacementText);
       recordModelWrite(ws, p, 'edit');
       writeFileSync(p, next, 'utf-8');
       const relPath = rel(p, ws);
@@ -283,7 +315,7 @@ export const editFileTool: Tool = {
         added,
         removed,
         diff,
-        replacements: args.replace_all ? text.split(oldText).length - 1 : 1,
+        replacements: occurrences,
         line_number_echo_stripped: oldEcho.stripped || newEcho.stripped ? true : undefined,
       });
     } catch (e: unknown) {
@@ -383,12 +415,20 @@ export const editFileLinesTool: Tool = {
       }
       const echo = stripLineNumberEcho(args.new_text as string);
       const newText = matchEol(text, echo.text);
-      const before = lines.slice(0, startLine - 1);
-      const after = lines.slice(Math.min(endLine, lines.length));
+      const lastLine = Math.min(endLine, lines.length);
       // Preserve the file's line endings — splitting on /\r?\n/ strips CR,
       // so joining with '\n' would rewrite CRLF files as LF.
       const eol = text.includes('\r\n') ? '\r\n' : '\n';
-      const next = [...before, newText, ...after].join(eol);
+      // Splice the range out instead of spreading [before, newText, after]:
+      // spreading inserts newText as a single element, so an empty new_text
+      // (line deletion) left a blank line behind on every call.
+      const nextLines = [...lines];
+      nextLines.splice(
+        startLine - 1,
+        lastLine - startLine + 1,
+        ...(newText.length > 0 ? newText.split(/\r?\n/) : [])
+      );
+      const next = nextLines.join(eol);
       recordModelWrite(ws, p, 'edit');
       writeFileSync(p, next, 'utf-8');
       const relPath = rel(p, ws);
@@ -401,9 +441,9 @@ export const editFileLinesTool: Tool = {
         removed,
         diff,
         start_line: startLine,
-        end_line: Math.min(endLine, lines.length),
-        lines_removed: Math.min(endLine, lines.length) - startLine + 1,
-        lines_added: newText ? newText.split('\n').length : 0,
+        end_line: lastLine,
+        lines_removed: lastLine - startLine + 1,
+        lines_added: newText.length > 0 ? newText.split(/\r?\n/).length : 0,
         line_number_echo_stripped: echo.stripped ? true : undefined,
       });
     } catch (e: unknown) {

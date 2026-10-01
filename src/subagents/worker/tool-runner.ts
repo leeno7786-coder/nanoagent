@@ -41,13 +41,26 @@ function capWorkerResultCharacters(content: string): string {
   return `${content.slice(0, budget)}${marker}`;
 }
 
-/** Read-only exploration tools exposed to sub-agents. */
+/**
+ * Read-only exploration tools exposed to sub-agents.
+ *
+ * v2.7.8 cut these down to 4 entries, which left a worker unable to list a
+ * directory, stat a path or find files by name — the minimum needed to
+ * investigate. The read-only exploration set is restored here.
+ *
+ * Write/shell/git stay out on purpose: a remote 2B worker runs against the
+ * user's real workspace, and `explore_subagent` is dispatched straight from
+ * the model's tool call. Widening that is a permissions decision, not a bug fix.
+ */
 export const SUBAGENT_TOOLS = new Set([
   'read_file',
   'batch_read_files',
+  'list_dir',
+  'stat_path',
+  'find_files',
+  'map_project_tree',
   'grep_search',
   'search_and_view',
-  'search_files',
 ]);
 
 async function normalizeSubAgentPath(
@@ -80,9 +93,13 @@ export async function runWorkerTool(
   tc: { name: string; arguments: string; id: string }
 ): Promise<string> {
   if (!SUBAGENT_TOOLS.has(tc.name)) {
+    // Derived from the allowlist: a hand-written list went stale when entries
+    // were removed and started telling the model to call tools that are then
+    // rejected, burning a turn on every discovery the worker attempts.
+    const available = [...SUBAGENT_TOOLS].sort().join(', ');
     return JSON.stringify({
       ok: false,
-      error: `Tool '${tc.name}' is not available to sub-agents. Use read_file, list_dir, or grep_search.`,
+      error: `Tool '${tc.name}' is not available to sub-agents. Use ${available}.`,
     });
   }
   const tool: Tool | undefined = findTool(tc.name, wctx.cfg.workspace);
@@ -115,7 +132,10 @@ export async function runWorkerTool(
       out = JSON.stringify({ ok: false, error: `Unknown tool: ${tc.name}` });
     }
 
-    const sanitized = wctx.security.sanitizeOutput(out, wctx.cfg.apiKey ?? undefined);
+    // sanitizeToolOutput, not sanitizeOutput: worker results are JSON too, and a
+    // redaction that runs past the end of a secret would otherwise eat the
+    // closing quote and merge the following lines of a read_file listing.
+    const sanitized = wctx.security.sanitizeToolOutput(out, wctx.cfg.apiKey ?? undefined);
     let outForModel = sanitized;
     const budget = resolveToolResultTokenBudget(wctx.cfg);
     if (budget > 0) {

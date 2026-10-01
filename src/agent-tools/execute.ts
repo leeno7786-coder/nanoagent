@@ -54,7 +54,9 @@ export async function executeToolDirect(
     ? await tool.executeAsync(args, agent.cfg.workspace, configWithSecurity)
     : tool.execute(args, agent.cfg.workspace, configWithSecurity);
   // Sanitize secrets out of tool output before it can reach the model.
-  return agent.securityManager.sanitizeOutput(raw, agent.cfg.apiKey ?? undefined);
+  // sanitizeToolOutput keeps the model-authored side of a write diff intact so
+  // the agent isn't told its own new_text became "[REDACTED]".
+  return agent.securityManager.sanitizeToolOutput(raw, agent.cfg.apiKey ?? undefined);
 }
 
 export async function executeToolSequential(
@@ -268,7 +270,7 @@ export async function executeToolSequential(
   }
   // Sanitize secrets out of tool output before it reaches history/model.
   // Cached entries are stored post-sanitization so cache hits stay clean.
-  output = agent.securityManager.sanitizeOutput(output, agent.cfg.apiKey ?? undefined);
+  output = agent.securityManager.sanitizeToolOutput(output, agent.cfg.apiKey ?? undefined);
   const duration = performance.now() - start;
 
   if (!wasCached && tool) {
@@ -300,6 +302,13 @@ export async function executeToolSequential(
   agent.currentTool = undefined;
 }
 
+/**
+ * Max `explore_subagent` dispatches honoured from a single assistant message.
+ * Matches the "call this up to 4 times" guidance in the tool description and the
+ * default `maxBackgroundSubAgents`.
+ */
+export const MAX_PARALLEL_SUBAGENT_DISPATCH = 4;
+
 export async function executeToolsParallel(
   agent: AgentCore,
   parallelTools: Array<{ name: string; arguments: string; index: number; id: string }>,
@@ -309,6 +318,7 @@ export async function executeToolsParallel(
 
   const permissionResults = new Map<string, 'allow' | 'always_allow' | 'deny'>();
   const blockedByRepeat = new Map<string, string>();
+  let subAgentBudget = 0;
   for (const tc of parallelTools) {
     if (signal?.aborted) {
       agent.setState('idle');
@@ -357,6 +367,19 @@ export async function executeToolsParallel(
       const consent = await checkSubAgentConsent(agent, tc.id);
       if (consent === 'deny') {
         permissionResults.set(tc.id, 'deny');
+      } else if (subAgentBudget++ >= MAX_PARALLEL_SUBAGENT_DISPATCH) {
+        // `explore_subagent` is parallel-safe, so one assistant message could
+        // fan out 12 remote generations against a pool of 4. The extras then
+        // queued on scheduler.acquire for up to 60s each and failed with
+        // "all workers busy", stalling the whole tool round. Reject the
+        // overflow immediately with a message the model can act on.
+        blockedByRepeat.set(
+          tc.id,
+          JSON.stringify({
+            ok: false,
+            error: `Too many explore_subagent calls in one turn (limit ${MAX_PARALLEL_SUBAGENT_DISPATCH}). Dispatch the rest after reading these results.`,
+          })
+        );
       }
     }
 
@@ -525,7 +548,7 @@ export async function executeToolsParallel(
       }
 
       // Sanitize secrets out of tool output before caching/history/model.
-      output = agent.securityManager.sanitizeOutput(output, agent.cfg.apiKey ?? undefined);
+      output = agent.securityManager.sanitizeToolOutput(output, agent.cfg.apiKey ?? undefined);
 
       if (tool) {
         try {

@@ -25,6 +25,7 @@ describe('questionTool', () => {
   it('execute returns error (sync fallback)', () => {
     const result = questionTool.execute({}, '', undefined);
     const parsed = JSON.parse(result);
+    expect(parsed.ok).toBe(false);
     expect(parsed.error).toBe('question tool requires async execution');
   });
 

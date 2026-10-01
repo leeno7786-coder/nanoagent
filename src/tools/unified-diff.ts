@@ -21,8 +21,19 @@ export function splitUnifiedDiff(text: string): string[] {
 export function diffFileNames(diff: string): string[] {
   const names: string[] = [];
   for (const line of diff.split('\n')) {
-    const m = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-    if (m) names.push(m[2].replace(/\\/g, '/'));
+    if (!line.startsWith('diff --git ')) continue;
+    // `a/<path> b/<path>` is ambiguous when the path itself contains " b/" —
+    // a greedy split reported "x b/y.txt" as "y.txt". Split on the midpoint so
+    // both halves are the same length, which is unambiguous for any path that
+    // is not its own mirror image.
+    const rest = line.slice('diff --git '.length);
+    const mid = Math.floor(rest.length / 2);
+    if (rest[mid] !== ' ' || rest.slice(mid + 1, mid + 3) !== 'b/') continue;
+    const aSide = rest.slice(0, mid);
+    const bSide = rest.slice(mid + 3);
+    if (!aSide.startsWith('a/')) continue;
+    if (bSide !== aSide.slice(2)) continue;
+    names.push(bSide.replace(/\\/g, '/'));
   }
   return names;
 }
@@ -30,8 +41,21 @@ export function diffFileNames(diff: string): string[] {
 export function diffLineStats(diff: string): { added: number; removed: number } {
   let added = 0;
   let removed = 0;
+  let inHunk = false;
   for (const line of diff.split('\n')) {
-    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    // Track hunk bodies so `+++`/`---` file headers are never counted as
+    // content, while a content line that genuinely begins with `++` or `--`
+    // still is. Skipping on the header prefix alone silently undercounted
+    // those, and the summary feeds the "● Update +N −M" header.
+    if (line.startsWith('@@')) {
+      inHunk = true;
+      continue;
+    }
+    if (line.startsWith('diff --git ') || line.startsWith('index ')) {
+      inHunk = false;
+      continue;
+    }
+    if (!inHunk) continue;
     if (line.startsWith('+')) added++;
     else if (line.startsWith('-')) removed++;
   }
@@ -80,6 +104,31 @@ export function formatNewFileDiff(relPath: string, content: string): string {
  * Drop whole files from the end of a multi-file patch so we never slice
  * mid-hunk (a broken patch looks "truncated" and the model re-runs git_diff).
  */
+/**
+ * Shrink one oversized patch by dropping whole hunks from its end, so a single
+ * huge file still respects the cap without producing a broken patch.
+ */
+function capSinglePatch(part: string, maxChars: number): { kept: string; omitted: string[] } {
+  const lines = part.split('\n');
+  const firstHunk = lines.findIndex((l) => l.startsWith('@@'));
+  if (firstHunk === -1) return { kept: part.slice(0, maxChars), omitted: diffFileNames(part) };
+  const header = lines.slice(0, firstHunk);
+  const keptLines = [...header];
+  let used = header.join('\n').length;
+  for (let i = firstHunk; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (used + line.length + 1 > maxChars) break;
+    used += line.length + 1;
+    keptLines.push(line);
+  }
+  keptLines.push('... [diff truncated for size]');
+  return { kept: keptLines.join('\n'), omitted: diffFileNames(part) };
+}
+
+/**
+ * Drop whole files from the end of a multi-file patch so we never slice
+ * mid-hunk (a broken patch looks "truncated" and the model re-runs git_diff).
+ */
 export function capUnifiedDiff(
   diff: string,
   maxChars: number
@@ -95,6 +144,16 @@ export function capUnifiedDiff(
     const next = kept.length === 0 ? part.length : size + 1 + part.length;
     if (kept.length > 0 && next > maxChars) {
       omitted.push(...diffFileNames(part));
+      continue;
+    }
+    if (kept.length === 0 && part.length > maxChars) {
+      // The first part was always kept whole, so a single oversized file
+      // bypassed the cap entirely — a 25MB rewrite landed in the model's
+      // context with truncated:false. Shed whole hunks from its end instead.
+      const trimmed = capSinglePatch(part, maxChars);
+      kept.push(trimmed.kept);
+      omitted.push(...trimmed.omitted);
+      size = trimmed.kept.length;
       continue;
     }
     kept.push(part);

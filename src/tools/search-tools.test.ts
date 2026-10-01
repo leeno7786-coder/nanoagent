@@ -2,13 +2,18 @@
  * Tests for the ReDoS guard on model-supplied regex patterns.
  */
 
-import { describe, it, expect } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { validateSearchPattern } from './shared.js';
-import { grepSearchTool, findFilesTool, searchAndViewTool } from './search-tools.js';
+import {
+  grepSearchTool,
+  findFilesTool,
+  searchAndViewTool,
+  matchesFileGlob,
+} from './search-tools.js';
 
 describe('validateSearchPattern', () => {
   it('accepts normal patterns', () => {
@@ -127,5 +132,88 @@ describe('search tools ReDoS guard', () => {
     } finally {
       rmSync(ws, { recursive: true, force: true });
     }
+  });
+
+  it('rejects quantified groups that can backtrack', () => {
+    // These slipped past the nested-quantifier rule (which only sees an inner
+    // `+`/`*`) and froze the event loop for seconds.
+    for (const p of ['(a|a)+$', '(?:a|a)+', '(a|aa)+$', '(a?)*$', '(a*)*']) {
+      expect(validateSearchPattern(p)).not.toBeNull();
+    }
+  });
+
+  it('still allows legitimate quantified groups', () => {
+    for (const p of ['(?:get|set)Name', '(foo|bar)+', 'a{2,3}', 'colou?r', '(?:^|\\s)TODO']) {
+      expect(validateSearchPattern(p)).toBeNull();
+    }
+  });
+});
+
+describe('matchesFileGlob', () => {
+  it('matches a bare extension glob at any depth', () => {
+    expect(matchesFileGlob('src/a.ts', '*.ts')).toBe(true);
+    expect(matchesFileGlob('src/deep/x.ts', '*.ts')).toBe(true);
+    expect(matchesFileGlob('readme.md', '*.ts')).toBe(false);
+  });
+
+  it('matches directory globs', () => {
+    expect(matchesFileGlob('src/a.ts', 'src/**')).toBe(true);
+    expect(matchesFileGlob('src/nested/a.ts', 'src/**')).toBe(true);
+    expect(matchesFileGlob('src/a.ts', 'src/*')).toBe(true);
+    expect(matchesFileGlob('other/a.ts', 'src/**')).toBe(false);
+  });
+
+  it('keeps plain substring filters working', () => {
+    expect(matchesFileGlob('src/a.ts', 'src')).toBe(true);
+    expect(matchesFileGlob('src/a.ts', '')).toBe(true);
+  });
+});
+
+describe('search filters actually apply', () => {
+  let ws: string;
+
+  beforeEach(() => {
+    ws = mkdtempSync(join(tmpdir(), 'search-filter-'));
+    mkdirSync(join(ws, 'src'));
+    writeFileSync(join(ws, 'src', 'a.ts'), 'const NEEDLE = 1;\n');
+    writeFileSync(join(ws, 'src', 'b.py'), 'NEEDLE = 2\n');
+  });
+
+  afterEach(() => {
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  const bigCfg = () => ({ workspace: ws, model: 'some-large-model' }) as never;
+
+  it('grep_search file_glob filters by extension', () => {
+    const out = JSON.parse(
+      grepSearchTool.execute({ query: 'NEEDLE', file_glob: '*.ts' }, ws, bigCfg())
+    );
+    expect(out.ok).toBe(true);
+    expect(out.results.map((r: { path: string }) => r.path)).toEqual(['src/a.ts']);
+  });
+
+  it('search_and_view file_pattern filters by extension', () => {
+    const out = JSON.parse(
+      searchAndViewTool.execute({ pattern: 'NEEDLE', file_pattern: '*.ts' }, ws, bigCfg())
+    );
+    expect(out.ok).toBe(true);
+    expect(out.results.length).toBe(1);
+  });
+
+  it('regex: false performs a literal search', () => {
+    writeFileSync(join(ws, 'lit.txt'), 'call foo(bar) here\n');
+    const out = JSON.parse(
+      grepSearchTool.execute({ query: 'foo(bar)', regex: false, path: 'lit.txt' }, ws, bigCfg())
+    );
+    expect(out.ok).toBe(true);
+    expect(out.results.length).toBe(1);
+  });
+
+  it('finds matches below line 100 for small models', () => {
+    writeFileSync(join(ws, 'big.ts'), `${'x\n'.repeat(349)}NEEDLE_AT_LINE_350\n`);
+    const small = { workspace: ws, model: 'qwen3.5-2b' } as never;
+    const out = JSON.parse(grepSearchTool.execute({ query: 'NEEDLE_AT_LINE_350' }, ws, small));
+    expect(out.results.length).toBe(1);
   });
 });

@@ -123,31 +123,16 @@ export function extractDependencies(
         break;
 
       case 'find_files':
-        if (args.path) {
-          const path = resolve(workspace, String(args.path));
-          if (existsSync(path)) {
-            dependencies.add(path);
-          }
-        }
-        break;
-
       case 'grep_search':
-        if (args.path) {
-          const path = resolve(workspace, String(args.path));
-          if (existsSync(path)) {
-            dependencies.add(path);
-          }
-        }
+      case 'search_and_view': {
+        // `path` is optional for all three (it defaults to the workspace root),
+        // so a search without it registered NO dependency at all — no watcher
+        // and no mtime check — and then served stale results for the whole TTL.
+        // Fall back to the workspace exactly as `list_dir` already does.
+        const target = resolve(workspace, String(args.path || '.'));
+        dependencies.add(existsSync(target) ? target : workspace);
         break;
-
-      case 'search_and_view':
-        if (args.path) {
-          const path = resolve(workspace, String(args.path));
-          if (existsSync(path)) {
-            dependencies.add(path);
-          }
-        }
-        break;
+      }
 
       case 'batch_read_files':
         if (args.paths && Array.isArray(args.paths)) {

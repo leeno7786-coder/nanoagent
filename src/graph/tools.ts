@@ -243,12 +243,16 @@ export async function find_dependencies(args: {
 
   try {
     const graph = await getMemoryGraph(workspace);
+    const maxDepth = Math.max(1, Math.min(Number(args.maxDepth) || 1, 10));
     const result = graph.query({
       type: 'semantic',
       query: {
         relatedTo: args.nodeId,
+        // maxDepth has to reach the traversal itself; putting it only on the
+        // result limit made every depth return the same 1-hop neighbourhood.
+        maxDepth,
       },
-      limit: args.maxDepth ? args.maxDepth * 10 : 50,
+      limit: maxDepth * 10,
     });
     return result.nodes;
   } catch {
@@ -274,7 +278,9 @@ export async function find_path(args: {
       query: {
         from: args.from,
         to: args.to,
-        maxDepth: args.maxDepth || 5,
+        // Clamp: an unbounded depth turns the BFS into minutes of synchronous
+        // CPU on a large graph, which freezes the TUI.
+        maxDepth: Math.max(1, Math.min(Number(args.maxDepth) || 5, 20)),
       },
     });
     return result.paths;

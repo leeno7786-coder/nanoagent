@@ -251,4 +251,33 @@ describe('directory dependency staleness', () => {
       rmSync(ws, { recursive: true, force: true });
     }
   });
+
+  it('registers a dependency for searches that omit `path`', () => {
+    // `path` is optional for grep_search/find_files/search_and_view (it
+    // defaults to the workspace root). With no `path` they registered NO
+    // dependency, so nothing could invalidate the entry and a stale result was
+    // served for the whole TTL.
+    for (const tool of ['grep_search', 'find_files', 'search_and_view']) {
+      const ws = mkdtempSync(join(tmpdir(), 'toolcache-nodep-'));
+      const c = new ToolCacheManager({}, ws);
+      try {
+        const child = join(ws, 'child.txt');
+        writeFileSync(child, 'v1');
+        const past = new Date(Date.now() - 10_000);
+        utimesSync(child, past, past);
+        utimesSync(ws, past, past);
+
+        const args = {}; // no `path`
+        c.set(tool, args, ws, JSON.stringify({ ok: true, results: [] }), 10, true);
+        expect(c.get(tool, args, ws)).toBeDefined();
+
+        const future = new Date(Date.now() + 10_000);
+        utimesSync(child, future, future);
+        expect(c.get(tool, args, ws)).toBeUndefined();
+      } finally {
+        c.clear();
+        rmSync(ws, { recursive: true, force: true });
+      }
+    }
+  });
 });

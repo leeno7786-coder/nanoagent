@@ -15,6 +15,59 @@ import {
   walk,
 } from './shared.js';
 
+/** Translate a glob to an anchored RegExp. `**` spans directories, `*` does not. */
+function globToRegExp(glob: string): RegExp {
+  let out = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]!;
+    if (c === '*') {
+      if (glob[i + 1] === '*') {
+        if (glob[i + 2] === '/') {
+          // `**/` matches zero or more directory segments.
+          out += '(?:.*/)?';
+          i += 2;
+        } else {
+          out += '.*';
+          i += 1;
+        }
+      } else {
+        out += '[^/]*';
+      }
+      continue;
+    }
+    if (c === '?') {
+      out += '[^/]';
+      continue;
+    }
+    out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/**
+ * Match a workspace-relative path against a `file_glob` / `file_pattern` filter.
+ *
+ * The schema advertises glob syntax ('*.ts', 'src/**'), but the filter used to
+ * be a raw substring test against the *absolute* path: '*.ts' therefore matched
+ * nothing at all (a small model reads that as "the file does not exist"), and a
+ * bare 'src' matched through the workspace's own directory name. Real globs are
+ * matched first; the old substring behaviour is kept as a fallback so plain
+ * terms like 'test' still filter by directory or extension.
+ */
+export function matchesFileGlob(relPath: string, glob: string): boolean {
+  if (!glob) return true;
+  const path = relPath.replace(/\\/g, '/').toLowerCase();
+  const g = glob.replace(/\\/g, '/').toLowerCase();
+  if (g.includes('*') || g.includes('?')) {
+    const direct = globToRegExp(g);
+    if (direct.test(path) || direct.test(path.slice(path.lastIndexOf('/') + 1))) return true;
+    // `src/**` must also match files directly under src/, and a bare `*.ts`
+    // must match at any depth.
+    if (globToRegExp(`**/${g}`).test(path)) return true;
+  }
+  return path.includes(g);
+}
+
 /**
  * Build a case-insensitive RegExp from model input.
  * Returns an error string when the pattern is unsafe (ReDoS guard).
@@ -208,7 +261,7 @@ export const searchAndViewTool: Tool = {
       const rootStat = statSync(root);
       const searchFile = (file: string) => {
         if (isAccessBlocked(file, cfg)) return;
-        if (fileFilter && !file.toLowerCase().includes(fileFilter)) return;
+        if (fileFilter && !matchesFileGlob(rel(file, ws), fileFilter)) return;
         const st = statSync(file);
         const maxSize = isSmall ? 500_000 : 2_000_000;
         if (st.size > maxSize) return;
@@ -360,8 +413,10 @@ export const grepSearchTool: Tool = {
       }
       // Auto-treat strong regex metacharacters as regex so searches like
       // "addTodo|removeTodo" work without the model remembering `regex: true`.
+      // An explicit `regex: false` must win — otherwise a literal search for
+      // "foo(" is impossible and the tool just errors out.
       const AUTO_REGEX = /[()|[\]^$\\{}]/;
-      const isRegex = Boolean(args.regex) || AUTO_REGEX.test(q);
+      const isRegex = args.regex === false ? false : Boolean(args.regex) || AUTO_REGEX.test(q);
       const built = isRegex ? buildModelRegex(q) : null;
       if (built && 'error' in built) return JSON.stringify({ ok: false, error: built.error });
       const re = built && 're' in built ? built.re : null;
@@ -407,7 +462,7 @@ export const grepSearchTool: Tool = {
       const maxResults = isSmall ? 10 : MAX_SEARCH_RESULTS;
       const results: Array<{ path: string; line: number; text: string }> = [];
       walk(root, ws, cfg, (file) => {
-        if (fileFilter && !file.toLowerCase().includes(fileFilter)) return;
+        if (fileFilter && !matchesFileGlob(rel(file, ws), fileFilter)) return;
 
         // For small models, focus on source files only
         if (isSmall) {
@@ -441,9 +496,11 @@ export const grepSearchTool: Tool = {
           return;
         }
         const lines = text.split(/\r?\n/);
-        // For small models, limit lines processed per file
-        const maxLines = isSmall ? 100 : lines.length;
-        for (let i = 0; i < Math.min(lines.length, maxLines); i++) {
+        // Scan the whole file. Capping the scan at the first 100 lines made a
+        // match below that invisible while still reporting `truncated: false`,
+        // so the model concluded the symbol simply did not exist. `maxResults`
+        // is what actually bounds the token cost of the answer.
+        for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
           const hit = re ? re.test(line) : line.toLowerCase().includes(q.toLowerCase());
           if (hit) {

@@ -147,6 +147,121 @@ describe('edit_file integrity guards', () => {
   });
 });
 
+describe('edit_file does not corrupt files', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'edit-nocorrupt-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('treats $-substitution patterns in new_text as literal text', () => {
+    // `$&`, `$'` and `` $` `` are expanded by String.replace when the
+    // replacement is a plain string, which duplicated file content.
+    const cases = [
+      { new_text: 'log(`[dbg] $&`);' },
+      { new_text: "log($'tail);" },
+      { new_text: 'log($`head);' },
+      { new_text: 'log($1 and $<name>);' },
+    ];
+    for (const { new_text } of cases) {
+      writeFileSync(join(tmpDir, 'c.ts'), 'log(msg);\nconst tail = 1;\n', 'utf-8');
+      const result = JSON.parse(
+        editFileTool.execute({ path: 'c.ts', old_text: 'log(msg);', new_text }, tmpDir)
+      ) as { ok: boolean; error?: string };
+      expect(result.ok).toBe(true);
+      expect(readFileSync(join(tmpDir, 'c.ts'), 'utf-8')).toBe(`${new_text}\nconst tail = 1;\n`);
+    }
+  });
+
+  it('refuses an ambiguous old_text instead of silently editing the first hit', () => {
+    writeFileSync(join(tmpDir, 'amb.ts'), 'log(msg);\nfunction a() {\n  log(msg);\n}\n', 'utf-8');
+    const result = JSON.parse(
+      editFileTool.execute(
+        { path: 'amb.ts', old_text: 'log(msg);', new_text: 'log(`[dbg] ${msg}`);' },
+        tmpDir
+      )
+    ) as { ok: boolean; error?: string };
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/2 places/);
+    // The file must be untouched — the whole point of failing.
+    expect(readFileSync(join(tmpDir, 'amb.ts'), 'utf-8')).toBe(
+      'log(msg);\nfunction a() {\n  log(msg);\n}\n'
+    );
+  });
+
+  it('reports the line numbers of each ambiguous occurrence', () => {
+    writeFileSync(join(tmpDir, 'amb2.ts'), 'a();\n\nb();\n\nc();\na();\n', 'utf-8');
+    const result = JSON.parse(
+      editFileTool.execute({ path: 'amb2.ts', old_text: 'a();', new_text: 'z();' }, tmpDir)
+    ) as { ok: boolean; error?: string };
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/at lines 1, 6/);
+  });
+
+  it('still replaces all occurrences with replace_all: true', () => {
+    writeFileSync(join(tmpDir, 'all.ts'), 'log(msg);\nb();\nlog(msg);\n', 'utf-8');
+    const result = JSON.parse(
+      editFileTool.execute(
+        { path: 'all.ts', old_text: 'log(msg);', new_text: 'log($&);', replace_all: true },
+        tmpDir
+      )
+    ) as { ok: boolean; replacements?: number };
+    expect(result.ok).toBe(true);
+    expect(result.replacements).toBe(2);
+    expect(readFileSync(join(tmpDir, 'all.ts'), 'utf-8')).toBe('log($&);\nb();\nlog($&);\n');
+  });
+
+  it('deletes lines when new_text is empty', () => {
+    writeFileSync(join(tmpDir, 'del.ts'), 'one\ntwo\nthree\nfour\n', 'utf-8');
+    const result = JSON.parse(
+      editFileLinesTool.execute(
+        { path: 'del.ts', start_line: 2, end_line: 3, new_text: '' },
+        tmpDir
+      )
+    ) as { ok: boolean; lines_added?: number; lines_removed?: number };
+    expect(result.ok).toBe(true);
+    expect(result.lines_removed).toBe(2);
+    expect(result.lines_added).toBe(0);
+    expect(readFileSync(join(tmpDir, 'del.ts'), 'utf-8')).toBe('one\nfour\n');
+  });
+
+  it('deletes the only line of a file when new_text is empty', () => {
+    writeFileSync(join(tmpDir, 'only.ts'), 'one\n', 'utf-8');
+    const result = JSON.parse(
+      editFileLinesTool.execute(
+        { path: 'only.ts', start_line: 1, end_line: 1, new_text: '' },
+        tmpDir
+      )
+    ) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(tmpDir, 'only.ts'), 'utf-8')).toBe('');
+  });
+
+  it('deletes lines through the edit_file fuzzy path too', () => {
+    // old_text is indented so only the whitespace-insensitive path matches.
+    writeFileSync(join(tmpDir, 'fz.ts'), 'one\n  two\n  three\nfour\n', 'utf-8');
+    const result = JSON.parse(
+      editFileTool.execute({ path: 'fz.ts', old_text: 'two\nthree', new_text: '' }, tmpDir)
+    ) as { ok: boolean; fuzzy_match?: boolean };
+    expect(result.ok).toBe(true);
+    expect(result.fuzzy_match).toBe(true);
+    expect(readFileSync(join(tmpDir, 'fz.ts'), 'utf-8')).toBe('one\nfour\n');
+  });
+
+  it('keeps a multi-line edit_file_lines replacement correct', () => {
+    writeFileSync(join(tmpDir, 'ml.txt'), 'one\ntwo\nthree\n', 'utf-8');
+    editFileLinesTool.execute(
+      { path: 'ml.txt', start_line: 2, end_line: 2, new_text: 'TWO\nextra' },
+      tmpDir
+    );
+    expect(readFileSync(join(tmpDir, 'ml.txt'), 'utf-8')).toBe('one\nTWO\nextra\nthree\n');
+  });
+});
+
 describe('edit_file_lines integrity guards', () => {
   let tmpDir: string;
 

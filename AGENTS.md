@@ -135,8 +135,14 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Concurrency defaults to **4** (`maxBackgroundSubAgents`, up to 16). Pool capacity is
   endpoints × per-endpoint `concurrency` (default 1 worker per loaded 2B). The main agent
   synthesizes results itself.
-- Sub-agents get the **full local tool set** (read/write/search/shell/git) against the
-  shared workspace.
+- Sub-agents get the **read-only exploration tool set** against the shared workspace:
+  `read_file`, `batch_read_files`, `list_dir`, `stat_path`, `find_files`,
+  `map_project_tree`, `grep_search`, `search_and_view` (`SUBAGENT_TOOLS`,
+  `src/subagents/worker/tool-runner.ts`). Write/shell/git are deliberately
+  excluded — a remote 2B worker runs against the user's real workspace and
+  `explore_subagent` is dispatched straight from the model's tool call. Widening
+  that is a permissions decision, not a bug fix; keep this list and the
+  tool-runner error message in sync (the message is derived from the set).
 - Pool auto-discovery order (`resolveSubAgentPool`, `src/subagents.ts`): explicit
   `cfg.subagents` → `REMOTE_LMSTUDIO_URL` → local LM Studio Qwen3.5 **2B** models
   (`isSubAgentModelId`). Discovered models each get `NANOGENT_SUBAGENT_SLOTS`
@@ -194,10 +200,13 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Sub-agent tool: `explore_subagent` (dispatch ONE remote Qwen with a focused `prompt` + optional `focus_path`). The blind "fan to all" tool was removed because vague prompts time out on large codebases.
 - Remote sub-agents run on loaded Qwen3.5 **2B** models in this machine's LM Studio.
   Load 4 separate 2B instances (one worker each). Sub-agents hit `http://127.0.0.1:1234/v1`.
-- Sub-agents get the FULL local tool set (read/write/search/shell/git) against the shared workspace, so they can actually investigate and act — not just answer prompts.
+- Sub-agents get the read-only exploration tool set (see §6 for the exact list) against the shared workspace, so they can actually investigate — not just answer prompts. Write/shell/git are excluded by design; the main agent does the mutating.
 - Pool is auto-discovered: `resolveSubAgentPool` (src/subagents.ts) prefers explicit `cfg.subagents`, then `REMOTE_LMSTUDIO_URL`, then local LM Studio's `qwen3.5-2b*` models. No manual config needed.
 - Main agent calls `explore_subagent` up to 4× in parallel with narrow, file-specific prompts;
   default concurrency 4 (configurable to 16 via `maxBackgroundSubAgents`). It synthesizes results itself.
+  A 5th+ dispatch in the SAME assistant message is rejected immediately
+  (`MAX_PARALLEL_SUBAGENT_DISPATCH`, `src/agent-tools/execute.ts`) — `explore_subagent` is
+  parallel-safe, so 12 calls in one turn otherwise queued on the scheduler for up to 60s each.
 - Parallel `code_review` sub-agent mode was removed; main agent crafts per-agent prompts.
 - Detects loaded model size and context from LM Studio dynamically.
 - OpenRouter sub-agents reuse `OPENROUTER_API_KEY` when the main agent also uses OpenRouter.

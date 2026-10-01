@@ -70,8 +70,11 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
     // Secrets / credentials
     '**/.env',
     '**/.env.*',
+    '**/.ssh',
     '**/.ssh/**',
+    '**/secrets',
     '**/secrets/**',
+    '**/credentials',
     '**/credentials/**',
     '**/*.pem',
     '**/*.key',
@@ -115,6 +118,60 @@ export const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
   maxFileSize: 10 * 1024 * 1024, // 10MB
   maxBatchFiles: 50,
 };
+
+/**
+ * Private-use-area sentinel that stands in for a model-authored diff line while
+ * the payload is sanitized. A file on disk cannot forge one, so the only way a
+ * sentinel can appear in the sanitized text is if we put it there.
+ */
+const DIFF_LINE_SENTINEL = '\uE000';
+
+/**
+ * Build the regex source for "one run of secret characters", excluding
+ * whitespace, the double quote, plus whatever the caller wants to stop at.
+ *
+ * Tool results are JSON, so a redaction that runs past the end of a secret
+ * eats the `"` that terminates the string value (and, for an escaped quote,
+ * the `\` before it). That leaves the model with output it cannot parse at all.
+ * Stopping at the quote — and letting the callers consume a single optional
+ * opening quote — keeps the secret itself redacted while leaving the JSON
+ * intact.
+ *
+ * The `["nrt]` lookahead is the same fix for a line break: inside JSON a
+ * newline is the two characters `\` and `n`, neither of which is whitespace to
+ * a regex, so a greedy run would swallow the escape and silently merge the
+ * next line into this one. Redaction coverage is unchanged in every case that
+ * matters; only where a secret is allowed to *end* inside JSON is corrected.
+ */
+function secretRun(exclude: string): string {
+  return String.raw`(?:[^\\\s"${exclude}]|\\(?!["nrt]))+`;
+}
+
+/**
+ * Source for "a secret-bearing key, then its separator".
+ *
+ * Tool results are JSON, so a key/value pair is usually escaped as
+ * `\"secret\":\"...\"`. Matching only `secret=`/`secret:` missed those entirely
+ * and let an opaque secret through untouched. The optional backslash and quote
+ * cover the escaped and bare JSON spellings as well as plain `key=value` text.
+ */
+const SECRET_KEY_SEP = String.raw`\\?["']?\s*[=:]`;
+const SECRET_KEY_EQ = String.raw`\\?["']?\s*=`;
+
+/**
+ * Apply a keyed-secret redaction, skipping matches that are already a
+ * redaction marker.
+ *
+ * The replacement (`token=[REDACTED]`) is itself shaped like the pattern's
+ * input, so a global scan re-matches the marker it just wrote and swallows
+ * whatever follows — quotes, line breaks and the rest of the payload. Treating
+ * an existing marker as a no-op makes the pass idempotent.
+ */
+function redactKeyed(text: string, source: string, prefix: string): string {
+  return text.replace(new RegExp(source, 'gi'), (match) =>
+    match.includes('_REDACTED]') ? match : `${prefix}[REDACTED]`
+  );
+}
 
 /**
  * Security manager for validating commands and file access.
@@ -440,7 +497,10 @@ export class SecurityManager {
     // Sanitize API keys (prefix is regex-escaped — keys can contain metacharacters)
     if (apiKey) {
       const keyPrefix = apiKey.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      sanitized = sanitized.replace(new RegExp(keyPrefix + '.*', 'g'), '[REDACTED_API_KEY]');
+      sanitized = sanitized.replace(
+        new RegExp(keyPrefix + secretRun(''), 'g'),
+        '[REDACTED_API_KEY]'
+      );
     }
 
     // Common API key patterns
@@ -454,24 +514,45 @@ export class SecurityManager {
     );
 
     // Bearer tokens (check before other auth patterns)
-    sanitized = sanitized.replace(/auth:\s*Bearer\s+[^\s,;"']+/gi, 'auth: Bearer [REDACTED]');
-    sanitized = sanitized.replace(/bearer\s+[^\s,;"']+/gi, 'Bearer [REDACTED]');
+    const TIGHT = secretRun(",;'");
+    const LOOSE = secretRun('');
+    sanitized = redactKeyed(sanitized, String.raw`auth:\s*Bearer\s*\\?"?${TIGHT}`, 'auth: Bearer ');
+    sanitized = redactKeyed(sanitized, String.raw`bearer\s*\\?"?${TIGHT}`, 'Bearer ');
 
     // Passwords and secrets
-    sanitized = sanitized.replace(/password[=:]\s*[^\s]+/gi, 'password=[REDACTED]');
-    sanitized = sanitized.replace(/secret[=:]\s*[^\s]+/gi, 'secret=[REDACTED]');
-    sanitized = sanitized.replace(/token[=:]\s*[^\s]+/gi, 'token=[REDACTED]');
-    sanitized = sanitized.replace(/api[_-]?key[=:]\s*[^\s]+/gi, 'api_key=[REDACTED]');
-    sanitized = sanitized.replace(/auth[=:]\s*[^\s]+/gi, 'auth=[REDACTED]');
+    sanitized = redactKeyed(
+      sanitized,
+      String.raw`password${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`,
+      'password='
+    );
+    sanitized = redactKeyed(
+      sanitized,
+      String.raw`secret${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`,
+      'secret='
+    );
+    sanitized = redactKeyed(
+      sanitized,
+      String.raw`token${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`,
+      'token='
+    );
+    sanitized = redactKeyed(
+      sanitized,
+      String.raw`api[_-]?key${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`,
+      'api_key='
+    );
+    sanitized = redactKeyed(sanitized, String.raw`auth${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`, 'auth=');
 
     // Credentials embedded in DATABASE_URL/REDIS_URL-style values do not
     // contain the literal word "password" and must be handled separately.
     sanitized = sanitized.replace(
-      /([a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:)[^/\s@]+(@)/gi,
+      new RegExp(String.raw`([a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:)${secretRun('/@')}(@)`, 'gi'),
       '$1[REDACTED]$2'
     );
     sanitized = sanitized.replace(
-      /((?:password|passwd|secret|token|api[_-]?key)\s*=\s*)[^&\s]+/gi,
+      new RegExp(
+        String.raw`((?:password|passwd|secret|token|api[_-]?key)${SECRET_KEY_EQ}\s*)\\?"?${secretRun('&')}`,
+        'gi'
+      ),
       '$1[REDACTED]'
     );
 
@@ -495,6 +576,93 @@ export class SecurityManager {
     sanitized = sanitized.replace(/\bsecrets?\.\w+/g, 'secrets[REDACTED]');
 
     return sanitized;
+  }
+
+  /**
+   * Sanitize a tool result that may embed a unified diff.
+   *
+   * The `-`/context side of a write-tool diff is file content read off disk and
+   * must be redacted. The `+` side is different: it is a verbatim echo of the
+   * `new_text` the model itself sent in the tool call one turn earlier.
+   * Redacting that side protects nothing — the model already holds the text and
+   * can simply print it — but it actively lies about what the file now
+   * contains. The agent re-reads, sees `[REDACTED]` where it wrote code, and
+   * retries the same edit forever.
+   *
+   * So mask the `+` lines with sentinels, run the unchanged `sanitizeOutput`
+   * over the whole payload, then restore them. Anything else in the result
+   * (the error field, the `-` side, headers, every other tool) goes through
+   * exactly the same redaction as before. A sentinel that does not survive the
+   * round trip leaves that line masked, which fails safe.
+   */
+  sanitizeToolOutput(output: string, apiKey?: string): string {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch {
+      return this.sanitizeOutput(output, apiKey);
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return this.sanitizeOutput(output, apiKey);
+    }
+    const record = parsed as Record<string, unknown>;
+    const diff = record.diff;
+    if (typeof diff !== 'string' || !diff.includes('\n+')) {
+      return this.sanitizeOutput(output, apiKey);
+    }
+
+    // `+++` is the file header, not added content.
+    const authored: string[] = [];
+    const masked = diff
+      .split('\n')
+      .map((line) => {
+        if (!line.startsWith('+') || line.startsWith('+++')) return line;
+        const sentinel = `${DIFF_LINE_SENTINEL}${authored.length}${DIFF_LINE_SENTINEL}`;
+        authored.push(line);
+        return sentinel;
+      })
+      .join('\n');
+    if (authored.length === 0) return this.sanitizeOutput(output, apiKey);
+
+    let sanitized: string;
+    try {
+      sanitized = this.sanitizeOutput(JSON.stringify({ ...record, diff: masked }), apiKey);
+    } catch {
+      return this.sanitizeOutput(output, apiKey);
+    }
+
+    let restored: unknown;
+    try {
+      restored = JSON.parse(sanitized);
+    } catch {
+      return this.sanitizeOutput(output, apiKey);
+    }
+    if (!restored || typeof restored !== 'object' || Array.isArray(restored)) {
+      return this.sanitizeOutput(output, apiKey);
+    }
+    const outRecord = restored as Record<string, unknown>;
+    if (typeof outRecord.diff !== 'string') return this.sanitizeOutput(output, apiKey);
+
+    let cursor = 0;
+    outRecord.diff = outRecord.diff
+      .split('\n')
+      .map((line) => {
+        // Stop at the first mismatch so a sanitizer that merged or dropped a
+        // line cannot shift every later restore onto the wrong content.
+        const original = authored[cursor];
+        if (original === undefined) return line;
+        if (line !== `${DIFF_LINE_SENTINEL}${cursor}${DIFF_LINE_SENTINEL}`) return line;
+        cursor++;
+        return original;
+      })
+      .join('\n');
+
+    // If any sentinel failed to survive the redaction pass, the diff no longer
+    // lines up with what we masked. Fall back to the plain path rather than
+    // restore a `+` line onto the wrong position — that would be a leak.
+    if (cursor !== authored.length) return this.sanitizeOutput(output, apiKey);
+
+    return JSON.stringify(outRecord);
   }
 
   /**

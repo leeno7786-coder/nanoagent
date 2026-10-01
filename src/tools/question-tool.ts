@@ -166,13 +166,15 @@ Usage notes:
   },
 
   execute: (_args, _workspace, _cfg) => {
-    return JSON.stringify({ error: 'question tool requires async execution' });
+    // ok:false keeps the structured tool-error contract every other tool
+    // follows — consumers branch on `ok`, not on the presence of `error`.
+    return JSON.stringify({ ok: false, error: 'question tool requires async execution' });
   },
 
   executeAsync: async (args, _workspace, _cfg, signal) => {
     const questions: QuestionPrompt[] = args.questions;
     if (!Array.isArray(questions) || questions.length === 0) {
-      return JSON.stringify({ error: 'No questions provided' });
+      return JSON.stringify({ ok: false, error: 'No questions provided' });
     }
 
     // Reject if a question is already pending (race condition guard)
@@ -193,15 +195,18 @@ Usage notes:
     // Validate question structure
     for (const q of clamped) {
       if (!q.question || typeof q.question !== 'string') {
-        return JSON.stringify({ error: 'Each question must have a non-empty question string' });
+        return JSON.stringify({
+          ok: false,
+          error: 'Each question must have a non-empty question string',
+        });
       }
       if (!Array.isArray(q.options) || q.options.length === 0) {
-        return JSON.stringify({ error: 'Each question must have at least one option' });
+        return JSON.stringify({ ok: false, error: 'Each question must have at least one option' });
       }
       // Validate option labels
       for (const opt of q.options) {
         if (!opt.label || typeof opt.label !== 'string') {
-          return JSON.stringify({ error: 'Each option must have a non-empty label' });
+          return JSON.stringify({ ok: false, error: 'Each option must have a non-empty label' });
         }
       }
     }
@@ -212,6 +217,7 @@ Usage notes:
     const notify = g.__questionToolNotify;
     if (typeof notify !== 'function') {
       return JSON.stringify({
+        ok: false,
         error: 'Question tool is unavailable outside the interactive TUI',
         headless: true,
       });
@@ -233,7 +239,7 @@ Usage notes:
         _pendingQuestions = null;
         _activeController = null;
         clearController(controller);
-        resolve(JSON.stringify({ error: 'Cancelled' }));
+        resolve(JSON.stringify({ ok: false, error: 'Cancelled', cancelled: true }));
         return;
       }
 

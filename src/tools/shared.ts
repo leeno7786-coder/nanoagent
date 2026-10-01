@@ -192,6 +192,32 @@ export const MAX_REGEX_PATTERN_LENGTH = 256;
 const NESTED_QUANTIFIER_RE = /(\([^)]*[+*][^)]*\))[+*{]/;
 // Adjacent quantifiers — e.g. `a+*`, `a{2,}+` (invalid or pathological in JS).
 const CONSECUTIVE_QUANTIFIER_RE = /[+*]{2,}|\{\d*,?\d*\}[+*{]/;
+// A quantified group at all, so its body can be inspected.
+const QUANTIFIED_GROUP_RE = /\(([^()]*)\)(?:[+*]|\{\d+,\d*\})/g;
+const INNER_QUANTIFIER_RE = /[*+?{]/;
+// The `?:`, `?=`, `?!`, `?<name>`, `?<=`, `?<!` prefix of a group.
+const GROUP_PREFIX_RE = /^\?(?::|[=!]|<=?)/;
+
+/**
+ * True when a quantified group's alternatives can match the same string, which
+ * is what makes `(a|a)+` / `(a|aa)+` catastrophic. Distinct literal branches
+ * like `(?:get|set)Name` are fine, so this only fires on plain-literal bodies.
+ */
+function hasOverlappingAlternatives(body: string): boolean {
+  if (!body.includes('|')) return false;
+  const alts = body.split('|');
+  // Only reason about plain literals; anything with metacharacters needs a real
+  // matcher and is left to the nested-quantifier rule above.
+  if (alts.some((a) => /[*+?{}\\[\]()^$.|]/.test(a))) return false;
+  for (let i = 0; i < alts.length; i++) {
+    for (let j = i + 1; j < alts.length; j++) {
+      const a = alts[i]!;
+      const b = alts[j]!;
+      if (a === b || a.startsWith(b) || b.startsWith(a)) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Guard against ReDoS from model-supplied regex patterns.
@@ -203,6 +229,20 @@ export function validateSearchPattern(q: string): string | null {
   }
   if (NESTED_QUANTIFIER_RE.test(q) || CONSECUTIVE_QUANTIFIER_RE.test(q)) {
     return 'Regex pattern rejected: nested or adjacent quantifiers can cause catastrophic backtracking. Simplify the pattern (e.g. drop the nested group or use a plain text search).';
+  }
+  // The nested rule above only sees an inner `+`/`*`, so `(a|a)+`, `(a?)*` and
+  // friends slipped through and could freeze the TUI for minutes: V8 caps each
+  // individual `test()` at ~290ms, but that cap is per line, so the cost scales
+  // with file size. Reject any quantified group that can backtrack.
+  QUANTIFIED_GROUP_RE.lastIndex = 0;
+  for (let m = QUANTIFIED_GROUP_RE.exec(q); m; m = QUANTIFIED_GROUP_RE.exec(q)) {
+    // Strip the `?:`, `?=`, `?<=` prefix BEFORE inspecting the body — otherwise
+    // the `?` of `?:` reads as an inner quantifier and every non-capturing group
+    // is rejected, while `(?:a|a)+` slips past the alternation check.
+    const body = m[1]!.replace(GROUP_PREFIX_RE, '');
+    if (INNER_QUANTIFIER_RE.test(body) || hasOverlappingAlternatives(body)) {
+      return 'Regex pattern rejected: a repeated group can match the same text in several ways and cause catastrophic backtracking. Simplify the pattern (e.g. drop the nested group or use a plain text search).';
+    }
   }
   return null;
 }

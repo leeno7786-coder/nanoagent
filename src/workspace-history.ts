@@ -454,6 +454,8 @@ export interface RollbackResult {
   removed: string[];
   /** Paths whose pre-change content was never captured (too large, or legacy). */
   skipped: string[];
+  /** Paths that could not be restored; everything else still succeeded. */
+  errors: string[];
 }
 
 /**
@@ -489,29 +491,38 @@ export function rollbackChanges(
     undid.push(e.seq);
   }
 
-  const result: RollbackResult = { restored: [], removed: [], skipped: [] };
+  const result: RollbackResult = { restored: [], removed: [], skipped: [], errors: [] };
+  const appliedSeqs: number[] = [];
   for (const [relPath, e] of earliest) {
     if (!e.restorable) {
       result.skipped.push(relPath);
       continue;
     }
-    const target = safe(relPath, workspace);
-    if (e.before === null) {
-      if (existsSync(target)) {
-        rmSync(target, { force: true });
-        result.removed.push(relPath);
+    // Per-path try/catch: one missing history object used to abort the whole
+    // loop, so the files already restored on disk were never journaled as
+    // undone and the NEXT rollback re-applied them — while the tool reported a
+    // bare ok:false with no list of what it had actually restored.
+    try {
+      const target = safe(relPath, workspace);
+      if (e.before === null) {
+        if (existsSync(target)) {
+          rmSync(target, { force: true });
+          result.removed.push(relPath);
+        }
+      } else {
+        const data = readFileSync(join(objectsDir(workspace), e.before));
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, data);
+        result.restored.push(relPath);
       }
-    } else {
-      const data = readFileSync(join(objectsDir(workspace), e.before));
-      mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, data);
-      result.restored.push(relPath);
+      mirrorToWorktree(workspace, relPath);
+      appliedSeqs.push(e.seq);
+    } catch (err: unknown) {
+      result.errors.push(`${relPath}: ${(err as Error)?.message ?? String(err)}`);
     }
-    mirrorToWorktree(workspace, relPath);
   }
-  const skipped = new Set(result.skipped);
-  const applied = undid.filter((s) => !skipped.has((journal[s] as HistoryEntry).path));
-  if (applied.length > 0) append(workspace, { type: 'rollback', undid: applied });
+  // Journal only what actually landed, and do it even when some paths failed.
+  if (appliedSeqs.length > 0) append(workspace, { type: 'rollback', undid: appliedSeqs });
   return result;
 }
 

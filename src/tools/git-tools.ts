@@ -17,12 +17,80 @@ import { capUnifiedDiff, diffFileNames, formatNewFileDiff } from './unified-diff
 const MAX_DIFF_CHARS = 100_000;
 const MAX_UNTRACKED_BYTES = 50_000;
 
+/**
+ * Decode git's C-style path quoting.
+ *
+ * git wraps a path in double quotes and octal-escapes any non-ASCII byte when
+ * `core.quotePath` is on (the default). Without decoding, `read_file` was told
+ * about a path like `caf\303\251-notes.txt` that does not exist, and untracked
+ * non-ASCII files were reported as omitted rather than shown.
+ */
+function decodeGitPath(value: string): string {
+  const unquoted = value.replace(/^"(.*)"$/s, '$1');
+  if (!unquoted.includes('\\')) return unquoted;
+
+  const simple: Record<string, string> = {
+    n: '\n',
+    t: '\t',
+    r: '\r',
+    b: '\b',
+    f: '\f',
+    v: '\v',
+    a: '\x07',
+    '"': '"',
+    '\\': '\\',
+  };
+  const decoder = new TextDecoder('utf-8');
+  let out = '';
+  // git escapes raw BYTES, not codepoints: "é" is `\303\251`. Each escape has
+  // to be buffered and decoded as a UTF-8 run, or every byte becomes its own
+  // Latin-1 char and "café" comes back as "cafÃ©".
+  let bytes: number[] = [];
+  const flush = () => {
+    if (bytes.length > 0) {
+      out += decoder.decode(new Uint8Array(bytes));
+      bytes = [];
+    }
+  };
+
+  for (let i = 0; i < unquoted.length; i++) {
+    const ch = unquoted[i]!;
+    if (ch !== '\\') {
+      flush();
+      out += ch;
+      continue;
+    }
+    const rest = unquoted.slice(i + 1);
+    const hex = /^x([0-9a-fA-F]{2})/.exec(rest);
+    if (hex) {
+      bytes.push(parseInt(hex[1]!, 16));
+      i += 3;
+      continue;
+    }
+    const oct = /^([0-7]{3})/.exec(rest);
+    if (oct) {
+      bytes.push(parseInt(oct[1]!, 8));
+      i += 3;
+      continue;
+    }
+    const esc = unquoted[i + 1] ?? '';
+    flush();
+    out += simple[esc] ?? esc;
+    i += 1;
+  }
+  flush();
+  return out;
+}
+
 /** Porcelain path from a `git status --porcelain` line (handles renames). */
 function porcelainPath(line: string): string {
   const rest = line.length >= 3 ? line.slice(3) : line;
-  const unquoted = rest.replace(/^"(.*)"$/, '$1');
-  const parts = unquoted.split(' -> ');
-  return (parts[parts.length - 1] || '').replace(/\\/g, '/');
+  const decoded = decodeGitPath(rest);
+  const parts = decoded.split(' -> ');
+  const chosen = parts[parts.length - 1] || '';
+  // Only normalize separators AFTER decoding — a blanket `\\` -> `/` rewrite
+  // mangled legitimate backslashes inside POSIX filenames.
+  return chosen.replace(/\\/g, '/');
 }
 
 function isVisibleGitPath(path: string, ws: string, cfg?: Config): boolean {
@@ -45,7 +113,7 @@ function isVisibleGitPath(path: string, ws: string, cfg?: Config): boolean {
 function execGit(
   args: string[],
   ws: string,
-  opts: { timeout?: number; maxBuffer?: number; write?: boolean } = {},
+  opts: { timeout?: number; maxBuffer?: number; write?: boolean; preserveNul?: boolean } = {},
   cfg?: Config
 ): Promise<{ ok: boolean; stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolvePromise) => {
@@ -84,16 +152,27 @@ function execGit(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      // NUL is the record separator for `git ... -z`, and stripping it here
+      // fused every changed path into one bogus name — which made git_diff
+      // report "no changes" for any 2+ modified files. Only strip when the
+      // caller did not ask for -z output.
+      const strip = opts.preserveNul
+        ? (s: string) => s
+        : (s: string) => s.replace(NULL_BYTE_RE, '');
       resolvePromise({
         ok,
-        stdout: stdout.replace(NULL_BYTE_RE, ''),
-        stderr: stderr.replace(NULL_BYTE_RE, ''),
+        stdout: strip(stdout),
+        stderr: strip(stderr),
         code,
       });
     };
     const timer = setTimeout(() => {
       child.kill();
-      stderr = stderr || `git ${args[0] || ''} timed out`;
+      // Append rather than `||`: a hook that writes its own progress to stderr
+      // used to swallow the timeout entirely, so the model saw only "running
+      // lint..." and retried into the same wall.
+      const label = args.find((a) => !a.startsWith('-')) || args[0] || '';
+      stderr = `${stderr}${stderr && !stderr.endsWith('\n') ? '\n' : ''}git ${label} timed out`;
       finish(false, null);
     }, opts.timeout ?? 30000);
 
@@ -133,7 +212,7 @@ export const gitDiffTool: Tool = {
         ? ['--no-optional-locks', 'diff', 'HEAD', '--name-only', '-z']
         : ['--no-optional-locks', 'diff', '--name-only', '-z'],
       ws,
-      { timeout: 10000 },
+      { timeout: 10000, preserveNul: true },
       cfg
     );
     if (!changedPaths.ok) {
@@ -191,9 +270,11 @@ async function collectUntrackedDiffs(
   cfg?: Config
 ): Promise<{ parts: string[]; files: string[]; omitted: string[] }> {
   const ls = await execGit(
-    ['--no-optional-locks', 'ls-files', '--others', '--exclude-standard'],
+    // `-z` gives raw, unquoted, NUL-separated paths — no C-escaping to undo and
+    // no ambiguity for names containing spaces or newlines.
+    ['--no-optional-locks', 'ls-files', '--others', '--exclude-standard', '-z'],
     ws,
-    { timeout: 10000 },
+    { timeout: 10000, preserveNul: true },
     cfg
   );
   if (!ls.ok) return { parts: [], files: [], omitted: [] };
@@ -202,9 +283,8 @@ async function collectUntrackedDiffs(
   const files: string[] = [];
   const omitted: string[] = [];
   const paths = ls.stdout
-    .split('\n')
-    .map((p) => p.trim())
-    .filter((p) => p && !isNanoagentRel(p.replace(/\\/g, '/')));
+    .split('\0')
+    .filter((p) => p.length > 0 && !isNanoagentRel(p.replace(/\\/g, '/')));
 
   for (const p of paths) {
     let abs: string;
@@ -262,10 +342,14 @@ export const gitStatusTool: Tool = {
       });
     }
 
+    // Filter on the DECODED path but report the decoded path too — returning the
+    // raw porcelain line handed the model ` M "caf\303\251-notes.txt"`, a path
+    // that does not exist and cannot be passed to read_file.
     const fileLines = status.stdout
       .split('\n')
       .map((l) => l.trimEnd())
       .filter((l) => l.trim())
+      .map((l) => `${l.slice(0, 3)}${porcelainPath(l)}`)
       .filter((l) => isVisibleGitPath(porcelainPath(l), ws, cfg));
     const hasChanges = fileLines.length > 0;
     const MAX_FILES = 80;

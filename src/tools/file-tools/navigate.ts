@@ -68,11 +68,13 @@ export const listDirTool: Tool = {
         return JSON.stringify({ ok: false, error: harness });
       }
       const entries = readdirSync(p, { withFileTypes: true })
-        .slice(0, Math.max(1, Number(args.limit || 200)))
         .flatMap((e) => {
           const ep = resolve(p, e.name);
           // Hide blocked entries (.env, keys, ...) entirely — read_file and
           // stat_path deny them, so list_dir must not leak their names/sizes.
+          // Filter BEFORE slicing: dropping them after the cut let blocked
+          // entries consume the budget, so a directory of 3 hidden + 3 visible
+          // files with limit 4 returned 1 entry instead of 3.
           if (e.name === '.nanoagent' || isAccessBlocked(ep, cfg)) return [];
           let st;
           try {
@@ -87,7 +89,8 @@ export const listDirTool: Tool = {
               size: st.size,
             },
           ];
-        });
+        })
+        .slice(0, Math.max(1, Number(args.limit || 200)));
       return JSON.stringify({ ok: true, path: rel(p, ws), entries });
     } catch (e: unknown) {
       return JSON.stringify({ ok: false, error: sandboxErrorMessage(e) });

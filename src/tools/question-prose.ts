@@ -58,7 +58,7 @@ export function parseProseChoiceQuestion(text: string): ParsedProseQuestion | nu
     .join('\n')
     .trim();
 
-  if (!looksLikeClarifyingAsk(preamble, raw)) return null;
+  if (!looksLikeClarifyingAsk(preamble)) return null;
 
   let question = lastQuestionSentence(preamble) || 'Which option do you want?';
   if (after && after.length <= 280) {
@@ -117,9 +117,14 @@ function splitOptionBody(body: string): QuestionOption {
   return { label: body.trim().slice(0, 80) };
 }
 
-function looksLikeClarifyingAsk(preamble: string, full: string): boolean {
-  const hay = `${preamble}\n${full}`;
-  if (/\?/.test(preamble) || /\?/.test(hay.slice(0, 800))) return true;
+function looksLikeClarifyingAsk(preamble: string): boolean {
+  // The evidence must be in the text BEFORE the option list. Scanning the
+  // whole message meant a finished code review whose numbered findings happened
+  // to contain a rhetorical question ("retry loop ignores AbortSignal — should
+  // this bail out?") got promoted into a blocking picker, stalling the agent
+  // on work it had already finished. AGENTS.md is explicit: do not use
+  // `question` to stall on review tasks.
+  if (preamble.includes('?')) return true;
   return /\b(prefer|choose|which|pick|option|stack|want|like)\b/i.test(preamble);
 }
 

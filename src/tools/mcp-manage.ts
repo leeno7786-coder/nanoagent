@@ -54,6 +54,15 @@ export function applyMcpAction(
   }
 
   if (action === 'add') {
+    // A prototype-polluting name would make `mcp[name] = …` mutate the
+    // object's prototype instead of adding a server, while still reporting
+    // success — the config would silently not contain what it claims.
+    if (name === '__proto__' || name === 'constructor' || name === 'prototype') {
+      return {
+        mcp: current,
+        result: { ok: false, error: `"${name}" is not a usable MCP server name.` },
+      };
+    }
     const mcp = { ...current };
     if (args.type === 'local') {
       const command = Array.isArray(args.command) ? args.command.map(String) : [];
@@ -86,7 +95,10 @@ export function applyMcpAction(
   }
 
   if (action === 'remove') {
-    if (!(name in current)) {
+    // `name in current` is true for inherited keys, so removing `__proto__`
+    // reported success for a server that never existed; and assigning
+    // `mcp['__proto__']` would set the prototype rather than an own key.
+    if (!Object.hasOwn(current, name)) {
       return {
         mcp: current,
         result: { ok: false, error: `No MCP server named "${name}" in the global config.` },
