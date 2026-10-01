@@ -146,8 +146,14 @@ describe('list_dir and stat_path hide secret directories', () => {
     const out = JSON.parse(listDirTool.execute({ path: 'many', limit: 4 }, ws, cfg)) as {
       entries: Array<{ name: string }>;
     };
-    // The 3 hidden entries must not eat into the limit.
-    expect(out.entries.map((e) => e.name)).toEqual(['visible0.ts', 'visible1.ts', 'visible2.ts']);
+    // The 3 hidden entries must not eat into the limit. Compare as a set —
+    // readdirSync order is filesystem-dependent (ext4 and NTFS differ), so an
+    // ordered assertion fails on whichever machine disagrees.
+    expect(out.entries.map((e) => e.name).sort()).toEqual([
+      'visible0.ts',
+      'visible1.ts',
+      'visible2.ts',
+    ]);
     expect(readFileSync(join(ws, 'keep.ts'), 'utf-8')).toBe('ok\n');
   });
 });

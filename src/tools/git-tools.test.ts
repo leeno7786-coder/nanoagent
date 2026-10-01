@@ -103,7 +103,7 @@ describe('git_diff reports every changed file', () => {
     };
     const raw = JSON.stringify(status.files);
     expect(raw).not.toContain('\\303');
-    expect(raw).not.toContain('\\"'[0] + '"');
+    expect(raw).not.toContain('\\"');
     expect(raw).toContain('caf\u00e9-notes.txt');
     expect(raw).toContain('na\u00efve-draft.md');
 
