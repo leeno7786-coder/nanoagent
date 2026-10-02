@@ -1031,6 +1031,8 @@ function SubAgentPanel({
     <box flexDirection="column" marginY={1}>
       {subAgents.map((sa, idx) => {
         const log = sa.log ?? [];
+        // Real tool calls, not turn count — this is what the worker's
+        // subagent_done event reports.
         const turns = sa.result?.toolCalls ?? 0;
         const isRunning = sa.status === RUNNING;
 
@@ -1124,7 +1126,7 @@ function SubAgentPanel({
 
             {sa.status === DONE && (
               <text fg={theme.mutedFg} marginLeft={2}>
-                ✓ {turns} turns
+                ✓ {turns} tool calls
                 {sa.result?.durationMs != null
                   ? ` · ${(sa.result.durationMs / 1000).toFixed(1)}s`
                   : ''}

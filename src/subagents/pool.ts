@@ -8,7 +8,7 @@ import type { Config, SubAgentEndpoint, SubAgentPoolConfig } from '../types.js';
  * Default base URL for sub-agents: this machine's LM Studio, which proxies to
  * the other device's models automatically.
  */
-const LOCAL_LMSTUDIO_URL = 'http://127.0.0.1:1234/v1';
+export const LOCAL_LMSTUDIO_URL = 'http://127.0.0.1:1234/v1';
 
 /**
  * Parallel prediction slots assumed per discovered LM Studio model.
@@ -109,4 +109,63 @@ export async function resolveSubAgentPool(base: Config): Promise<SubAgentPoolCon
     }
   }
   return undefined;
+}
+
+/**
+ * Cache lifetime for `resolveSubAgentPoolCached`.
+ *
+ * Short enough that loading or unloading a 2B instance mid-session is picked up
+ * without a restart, long enough that four parallel dispatches in one turn
+ * share a single resolution.
+ */
+const POOL_CACHE_TTL_MS = 30_000;
+
+let poolCache: { key: string; at: number; pool: SubAgentPoolConfig | undefined } | undefined;
+
+/** Everything `resolveSubAgentPool` reads that can change its answer. */
+export function subAgentPoolCacheKey(base: Config): string {
+  return JSON.stringify({
+    s: base.subagents,
+    sb: base.subAgentBaseURL,
+    b: base.baseURL,
+    r: process.env.REMOTE_LMSTUDIO_URL,
+  });
+}
+
+/**
+ * Memoized `resolveSubAgentPool`.
+ *
+ * Discovery costs up to two HTTP probes of `/api/v0/models`. The agent, the
+ * `explore_subagent` tool and the init-time availability probe must all agree,
+ * so the cache lives here rather than in any one caller.
+ */
+export async function resolveSubAgentPoolCached(
+  base: Config
+): Promise<SubAgentPoolConfig | undefined> {
+  const key = subAgentPoolCacheKey(base);
+  const cached = poolCache;
+  if (cached && cached.key === key && Date.now() - cached.at < POOL_CACHE_TTL_MS) {
+    return cached.pool;
+  }
+  const pool = await resolveSubAgentPool(base);
+  poolCache = { key, at: Date.now(), pool };
+  return pool;
+}
+
+/**
+ * The memoized resolution for this config, without triggering a probe.
+ * Returns `undefined` when nothing has been resolved yet (or the last
+ * resolution found no pool). Used when building the system prompt, which must
+ * agree with whatever discovery already decided rather than starting its own
+ * lookup.
+ */
+export function peekSubAgentPoolCached(base: Config): SubAgentPoolConfig | undefined {
+  const cached = poolCache;
+  if (!cached || cached.key !== subAgentPoolCacheKey(base)) return undefined;
+  return cached.pool;
+}
+
+/** Drop the memoized resolution (config reloads, `/connect`, tests). */
+export function clearSubAgentPoolCache(): void {
+  poolCache = undefined;
 }

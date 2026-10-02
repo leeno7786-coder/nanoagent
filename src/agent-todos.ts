@@ -15,7 +15,7 @@ import { rnd, now } from './agent-utils.js';
 export function buildTodoContext(agent: AgentCore): string {
   const pending = agent.todos.filter((t) => !t.done);
   if (pending.length === 0) {
-    return 'Current todo list: (empty â€” no todos yet)';
+    return 'Current todo list: (empty — no todos yet)';
   }
   const current = pending[0];
   let text = `Current todo (1 of ${pending.length}): id=${current.id} | ${current.text}\n`;

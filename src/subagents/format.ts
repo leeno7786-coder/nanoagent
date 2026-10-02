@@ -18,53 +18,59 @@ export interface SubAgentResult {
   toolCalls: number;
 }
 
-/**
- * Build a shared context block for a sub-agent: the absolute workspace root
- * and a recursive file tree so they can skip list_dir entirely and go
- * straight to batch_read_files with the correct paths.
- */
-export async function buildSubAgentContext(cfg: Config): Promise<string> {
-  const ws = cfg.workspace || process.cwd();
-  const lines: string[] = [];
-  lines.push(`WORKSPACE ROOT (absolute): ${ws}`);
-  lines.push(
-    `Use paths RELATIVE to the workspace root. Example: "src/agent.ts" not "G:\\project\\src\\agent.ts".`
-  );
-  lines.push(
-    `\`.nanoagent/\` is this NanoAgent workspace's own harness state (sessions, worktree copies, snapshots) — part of this run, not an outside project folder. Do not explore, edit, or cd into it.`
-  );
-  lines.push(
-    `DO NOT call list_dir, git_status, or stat_path — the file tree is provided below. Go straight to batch_read_files.`
-  );
+/** Directories never worth putting in a worker's file tree. */
+const TREE_SKIP = new Set([
+  'node_modules',
+  'dist',
+  '.git',
+  '.nanoagent',
+  '__pycache__',
+  '.next',
+  '.cache',
+  'bun.lock',
+  'skills',
+  'prerelease',
+  'dist-opentui',
+]);
 
-  const SKIP = new Set([
-    'node_modules',
-    'dist',
-    '.git',
-    '.nanoagent',
-    '__pycache__',
-    '.next',
-    '.cache',
-    'bun.lock',
-    'skills',
-    'prerelease',
-    'dist-opentui',
-  ]);
+/** Hard cap on entries in a worker's file tree. */
+const MAX_TREE_FILES = 150;
+/** Max directory depth walked when building the tree. */
+const MAX_TREE_DEPTH = 3;
+
+/**
+ * How long one built file tree is reused.
+ *
+ * The walk is a recursive `readdir` of the workspace and `explore_subagent`
+ * builds a fresh tree on every dispatch — four parallel dispatches in one turn
+ * meant four identical walks plus four identical trees in four worker payloads.
+ * A short TTL collapses that to one walk per turn while still picking up files
+ * the agent creates mid-session. Keyed by workspace, so `/cd` misses naturally.
+ */
+const TREE_CACHE_TTL_MS = 30_000;
+
+let treeCache: { key: string; at: number; body: string } | undefined;
+
+/** Drop the cached file tree (tests; a `/cd` misses on the workspace key). */
+export function clearSubAgentTreeCache(): void {
+  treeCache = undefined;
+}
+
+async function walkFileTree(ws: string): Promise<string> {
   const files: string[] = [];
-  const MAX_FILES = 150;
 
   async function walk(dir: string, prefix: string, depth: number): Promise<void> {
-    if (depth > 3 || files.length >= MAX_FILES) return;
+    if (depth > MAX_TREE_DEPTH || files.length >= MAX_TREE_FILES) return;
     try {
       const entries = (await readdir(dir, { withFileTypes: true }))
-        .filter((e) => !SKIP.has(e.name) && !e.name.startsWith('.'))
+        .filter((e) => !TREE_SKIP.has(e.name) && !e.name.startsWith('.'))
         .sort((a, b) => {
           if (a.isDirectory() && !b.isDirectory()) return -1;
           if (!a.isDirectory() && b.isDirectory()) return 1;
           return a.name.localeCompare(b.name);
         });
       for (const e of entries) {
-        if (files.length >= MAX_FILES) break;
+        if (files.length >= MAX_TREE_FILES) break;
         const rel = prefix ? `${prefix}/${e.name}` : e.name;
         if (e.isDirectory()) {
           files.push(`${rel}/`);
@@ -84,12 +90,40 @@ export async function buildSubAgentContext(cfg: Config): Promise<string> {
     /* ignore */
   }
 
-  if (files.length > 0) {
-    lines.push(`\nFILE TREE (${files.length} files):`);
-    lines.push(files.join('\n'));
-  } else {
-    lines.push(`\n(could not enumerate files — use list_dir if needed)`);
+  if (files.length > 0) return `\nFILE TREE (${files.length} files):\n${files.join('\n')}`;
+  return `\n(could not enumerate files — use list_dir if needed)`;
+}
+
+async function cachedFileTree(ws: string): Promise<string> {
+  const cached = treeCache;
+  if (cached && cached.key === ws && Date.now() - cached.at < TREE_CACHE_TTL_MS) {
+    return cached.body;
   }
+  const body = await walkFileTree(ws);
+  treeCache = { key: ws, at: Date.now(), body };
+  return body;
+}
+
+/**
+ * Build a shared context block for a sub-agent: the absolute workspace root
+ * and a recursive file tree so they can skip list_dir entirely and go
+ * straight to batch_read_files with the correct paths.
+ */
+export async function buildSubAgentContext(cfg: Config): Promise<string> {
+  const ws = cfg.workspace || process.cwd();
+  const lines: string[] = [];
+  lines.push(`WORKSPACE ROOT (absolute): ${ws}`);
+  lines.push(
+    `Use paths RELATIVE to the workspace root. Example: "src/agent.ts" not "G:\\project\\src\\agent.ts".`
+  );
+  lines.push(
+    `\`.nanoagent/\` is this NanoAgent workspace's own harness state (sessions, worktree copies, snapshots) — part of this run, not an outside project folder. Do not explore, edit, or cd into it.`
+  );
+  lines.push(
+    `DO NOT call list_dir, git_status, or stat_path — the file tree is provided below. Go straight to batch_read_files.`
+  );
+
+  lines.push(await cachedFileTree(ws));
 
   return lines.join('\n');
 }
@@ -104,6 +138,22 @@ export async function enrichTaskWithContext(
   const focus = focusPath ? `\n\nFOCUS PATH (prefer this area): ${focusPath}` : '';
   return `=== SHARED CONTEXT ===\n${ctx}\n=== END CONTEXT ===\n\n${task}${focus}`;
 }
+
+/**
+ * Tool-name groupings for the one-line live summary. Explicit sets, not
+ * regexes: `/grep|search|find|rg/i` matched by accident, so any future tool
+ * whose name merely contained one of those fragments silently rendered as
+ * "Found N matches".
+ */
+const COUNT_MATCHED_TOOLS = new Set([
+  'grep_search',
+  'search_and_view',
+  'find_files',
+  'search_files',
+  'pattern_search',
+]);
+const LISTING_TOOLS = new Set(['list_dir', 'map_project_tree', 'stat_path', 'get_file_info']);
+const GIT_TOOLS = new Set(['git_status', 'git_diff']);
 
 /**
  * Build a one-line result summary for a sub-agent tool call, shown in the live
@@ -134,7 +184,7 @@ export function summarizeToolResult(tool: string | undefined, raw: string): stri
     parsed?.total ??
     (Array.isArray(parsed?.results) ? (parsed.results as unknown[]).length : undefined) ??
     (Array.isArray(_res?.results) ? (_res.results as unknown[]).length : undefined);
-  if (matchCount != null && /grep|search|find|pattern|rgit|rg/i.test(tool)) {
+  if (matchCount != null && COUNT_MATCHED_TOOLS.has(tool)) {
     return `${tool}: Found ${matchCount} matches`;
   }
 
@@ -149,7 +199,7 @@ export function summarizeToolResult(tool: string | undefined, raw: string): stri
   }
 
   // list_dir
-  if (/list_dir|map_project|tree/i.test(tool)) {
+  if (LISTING_TOOLS.has(tool)) {
     const n =
       (parsed?.entries as unknown[] | undefined)?.length ??
       parsed?.count ??
@@ -158,7 +208,7 @@ export function summarizeToolResult(tool: string | undefined, raw: string): stri
   }
 
   // git
-  if (/git_/.test(tool)) {
+  if (GIT_TOOLS.has(tool)) {
     return `${tool}: ok`;
   }
 

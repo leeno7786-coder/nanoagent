@@ -45,7 +45,7 @@ export const manageTodosTool: Tool = {
 export const exploreSubagentTool: Tool = {
   name: 'explore_subagent',
   description:
-    'Dispatch ONE remote sub-agent with a focused, context-rich prompt. It has read-only exploration tools against this workspace. Sub-agents run SYNCHRONOUSLY — when this tool returns, execution is 100% finished. Do NOT wait for sub-agents or reason that they are still running. Synthesize their findings immediately. Call this up to 4 times IN PARALLEL in one message.',
+    'Dispatch ONE remote sub-agent with a focused, context-rich prompt. It has read-only exploration tools against this workspace. Sub-agents run SYNCHRONOUSLY — when this tool returns, execution is 100% finished. Do NOT wait for sub-agents or reason that they are still running. Synthesize their findings immediately. Emit several calls in ONE message to run them in parallel, up to the sub-agent concurrency cap stated in the system prompt.',
   parameters: {
     type: 'object',
     properties: {
@@ -81,12 +81,14 @@ export const exploreSubagentTool: Tool = {
       // inside spawnBackgroundSubAgent so the live TUI stream shows only the
       // original prompt, not the injected context block.
       const {
-        resolveSubAgentPool,
+        resolveSubAgentPoolCached,
         exploreWithSubAgent,
         formatSubAgentResults,
         enrichTaskWithContext,
       } = await import('../subagents/index.js');
-      const pool = await resolveSubAgentPool(cfg!);
+      // Memoized: discovery costs up to two HTTP probes of /api/v0/models, and
+      // a parallel batch of dispatches would otherwise probe once per call.
+      const pool = await resolveSubAgentPoolCached(cfg!);
       if (!pool) {
         return JSON.stringify({
           ok: false,

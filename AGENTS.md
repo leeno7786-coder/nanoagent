@@ -143,11 +143,26 @@ These exist because breaking them has caused real incidents. Do not violate them
   `explore_subagent` is dispatched straight from the model's tool call. Widening
   that is a permissions decision, not a bug fix; keep this list and the
   tool-runner error message in sync (the message is derived from the set).
-- Pool auto-discovery order (`resolveSubAgentPool`, `src/subagents.ts`): explicit
+- Pool auto-discovery order (`resolveSubAgentPool`, `src/subagents/pool.ts`): explicit
   `cfg.subagents` → `REMOTE_LMSTUDIO_URL` → local LM Studio Qwen3.5 **2B** models
   (`isSubAgentModelId`). Discovered models each get `NANOGENT_SUBAGENT_SLOTS`
   workers (default **1** — load 4 separate 2B instances for 4-wide parallel).
   Preserve this order.
+- **`cfg.subAgentEnabled` gates the `explore_subagent` tool** — false means the
+  tool is stripped from the schema *and* omitted from the system prompt, so the
+  sub-agent system is unreachable. It is derived from three sources, not config
+  alone: `applySubAgentDefaults` (`config/defaults.ts`) handles tiers 1–2, and
+  `publishSubAgentAvailability` (`agent-lifecycle.ts`, called from `initAgent`
+  and `reconfigureAgent`) resolves the pool so **tier 3** works with no config
+  at all. Any new discovery tier must publish here or it stays invisible.
+  Resolution is memoized in `pool.ts` (`resolveSubAgentPoolCached`, 30s TTL)
+  and shared by init, `agent.getSubAgentPool()` and the tool — do not call the
+  uncached `resolveSubAgentPool` from a hot path.
+- Pool limits (`maxIterations`, `toolBudget`, `maxTokens`, `temperature`,
+  `timeoutMs`) are read off the **resolved pool** passed into
+  `buildWorkerContext(endpoint, base, pool)`, never off `base.subagents` — on
+  the discovery path those are different objects and the latter silently falls
+  back to defaults.
 - OpenRouter sub-agents reuse `OPENROUTER_API_KEY` when the main agent uses OpenRouter.
 - Default local backend: LM Studio at `http://127.0.0.1:1234/v1`. Handle unreachable/
   slow endpoints with timeouts and clear user-facing errors — never hang silently.
@@ -201,12 +216,14 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Remote sub-agents run on loaded Qwen3.5 **2B** models in this machine's LM Studio.
   Load 4 separate 2B instances (one worker each). Sub-agents hit `http://127.0.0.1:1234/v1`.
 - Sub-agents get the read-only exploration tool set (see §6 for the exact list) against the shared workspace, so they can actually investigate — not just answer prompts. Write/shell/git are excluded by design; the main agent does the mutating.
-- Pool is auto-discovered: `resolveSubAgentPool` (src/subagents.ts) prefers explicit `cfg.subagents`, then `REMOTE_LMSTUDIO_URL`, then local LM Studio's `qwen3.5-2b*` models. No manual config needed.
-- Main agent calls `explore_subagent` up to 4× in parallel with narrow, file-specific prompts;
-  default concurrency 4 (configurable to 16 via `maxBackgroundSubAgents`). It synthesizes results itself.
-  A 5th+ dispatch in the SAME assistant message is rejected immediately
-  (`MAX_PARALLEL_SUBAGENT_DISPATCH`, `src/agent-tools/execute.ts`) — `explore_subagent` is
-  parallel-safe, so 12 calls in one turn otherwise queued on the scheduler for up to 60s each.
+- Pool is auto-discovered: `resolveSubAgentPool` (src/subagents/pool.ts) prefers explicit `cfg.subagents`, then `REMOTE_LMSTUDIO_URL`, then local LM Studio's `qwen3.5-2b*` models. No manual config needed — tier 3 is resolved at `initAgent` and publishes `cfg.subAgentEnabled`, so `explore_subagent` appears in the schema with zero config.
+- Main agent calls `explore_subagent` in parallel with narrow, file-specific prompts;
+  concurrency default 4 (configurable 1–16 via `maxBackgroundSubAgents`). It synthesizes results itself.
+  The per-message cap is `min(4, maxBackgroundSubAgents)` (`subAgentDispatchLimit`,
+  `src/agent-tools/execute.ts`); overflow is rejected immediately rather than queued —
+  `explore_subagent` is parallel-safe, so extra calls otherwise queued on the scheduler for up
+  to 60s each and failed with "all workers busy", stalling the whole tool round. The system
+  prompt states the configured number; the tool description points at it rather than hard-coding 4.
 - Parallel `code_review` sub-agent mode was removed; main agent crafts per-agent prompts.
 - Detects loaded model size and context from LM Studio dynamically.
 - OpenRouter sub-agents reuse `OPENROUTER_API_KEY` when the main agent also uses OpenRouter.

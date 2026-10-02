@@ -3,8 +3,15 @@ import type { ChatMessage } from '../llm/index.js';
 import { toOpenAI, ToolCacheManager, createToolCacheManager, getAllTools } from '../tools/index.js';
 import type { SubAgentProgressEvent } from '../tools/index.js';
 import { SkillManager } from '../skill-manager.js';
-import type { Config, Message, ToolResult, AgentState, Todo } from '../types.js';
-import { resolveSubAgentPool } from '../subagents/index.js';
+import type {
+  Config,
+  Message,
+  ToolResult,
+  AgentState,
+  Todo,
+  SubAgentPoolConfig,
+} from '../types.js';
+import { peekSubAgentPoolCached, resolveSubAgentPoolCached } from '../subagents/index.js';
 import { ContextManager, createContextManager } from '../context/manager.js';
 import {
   SecurityManager,
@@ -94,11 +101,6 @@ export class AgentCore {
   private lastUpdateEmit = 0;
   /** Cached OpenAI tool schemas (rebuilt only when the tool/skill set changes). */
   private toolSchemaCache?: { key: string; tools: ReturnType<typeof toOpenAI> };
-  /** Cached sub-agent pool (avoids an HTTP /models fetch per dispatch). */
-  private subAgentPoolCache?: {
-    key: string;
-    pool: Awaited<ReturnType<typeof resolveSubAgentPool>>;
-  };
 
   /**
    * Throttled onUpdate emission for hot paths (streaming). Emits at most
@@ -146,20 +148,25 @@ export class AgentCore {
     this.toolSchemaCache = undefined;
   }
 
-  /** Resolve the remote sub-agent pool, memoized against the relevant config. */
-  /** @internal Used by the agent-subagents module. */
+  /**
+   * Resolve the remote sub-agent pool. Memoization lives in
+   * `src/subagents/pool.ts` so the init-time availability probe, this method
+   * and the `explore_subagent` tool all share one resolution.
+   * @internal Used by the agent-subagents module and initAgent.
+   */
   async getSubAgentPool() {
-    const key = JSON.stringify({
-      s: this.cfg.subagents,
-      sb: this.cfg.subAgentBaseURL,
-      b: this.cfg.baseURL,
-      r: process.env.REMOTE_LMSTUDIO_URL,
-    });
-    if (!this.subAgentPoolCache || this.subAgentPoolCache.key !== key) {
-      this.subAgentPoolCache = { key, pool: await resolveSubAgentPool(this.cfg) };
-    }
-    return this.subAgentPoolCache.pool;
+    return resolveSubAgentPoolCached(this.cfg);
   }
+
+  /**
+   * The most recently resolved pool, without triggering a network probe.
+   * Used when building the system prompt so discovery at init and the prompt
+   * cannot disagree.
+   */
+  get cachedSubAgentPool(): SubAgentPoolConfig | undefined {
+    return peekSubAgentPoolCached(this.cfg);
+  }
+
   /** Called after a tool finishes executing. */
   public onToolResult?: (r: ToolResult) => void;
   /** Permission request callback for interactive user confirmation. */

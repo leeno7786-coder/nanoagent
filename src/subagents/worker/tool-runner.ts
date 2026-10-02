@@ -63,6 +63,11 @@ export const SUBAGENT_TOOLS = new Set([
   'search_and_view',
 ]);
 
+/**
+ * Map a worker-supplied path onto something that resolves inside the
+ * workspace. Models emit `src/a.ts`, `./src/a.ts`, absolute paths and
+ * workspace-prefixed paths for the same file.
+ */
 async function normalizeSubAgentPath(
   p: string | undefined,
   ws: string

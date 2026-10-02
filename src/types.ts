@@ -206,7 +206,17 @@ export interface Config {
   commandTimeoutSeconds?: number;
   /** Remote sub-agent pool config (e.g. another device's LM Studio). */
   subagents?: SubAgentPoolConfig;
-  /** Whether remote sub-agents are available (derived at init). */
+  /**
+   * Whether remote sub-agents are available. GATES the `explore_subagent` tool:
+   * when this is false the tool is filtered out of the schema and omitted from
+   * the system prompt.
+   *
+   * Derived at init, not purely from config: `applySubAgentDefaults` sets it
+   * from an explicit `subagents` block or `REMOTE_LMSTUDIO_URL`, and
+   * `initAgent` additionally resolves the pool so local LM Studio
+   * auto-discovery (tier 3 of `resolveSubAgentPool`, the no-config default) can
+   * turn it on. An explicit `subagents.enabled: false` always wins.
+   */
   subAgentEnabled?: boolean;
   /** Model id used for remote sub-agents. */
   subAgentModel?: string;
@@ -268,7 +278,11 @@ export interface SubAgentPoolConfig {
   turnTimeoutMs?: number;
   /** Per-subagent temperature (defaults to main cfg.temperature). */
   temperature?: number;
-  /** Max tool-call iterations per subagent turn (default: 20). */
+  /**
+   * Max worker turns (default: 24, hard-capped at 24 regardless of config).
+   * Read from the RESOLVED pool, so it applies to auto-discovered endpoints too
+   * — not just an explicit `subagents` block.
+   */
   maxIterations?: number;
   /** Per-request timeout in ms for subagent calls (default: 900000 = 15min). */
   timeoutMs?: number;

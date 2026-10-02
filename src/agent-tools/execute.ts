@@ -1,9 +1,9 @@
 import { findTool } from '../tools/index.js';
-import type { ToolExecutionHooks } from '../tools/index.js';
 import type { AgentCore } from '../agent.js';
 import { addToolMessage } from '../agent-messages.js';
 import { logDebug, logError } from '../log.js';
 import { parseToolArgs, checkSubAgentConsent, handleSpecialToolResults } from './utils.js';
+import { createSubAgentMirrorHook } from './subagent-mirror.js';
 import { evaluateToolRepeat } from '../agent/tool-repeat.js';
 
 export async function executeToolDirect(
@@ -189,69 +189,20 @@ export async function executeToolSequential(
     if (tool?.executeAsync) {
       // Synthetic UI-mirror handles for sync explore_subagent runs. They must
       // be removed once the parent tool call completes or they leak forever.
-      const syntheticSaIds = new Set<string>();
-      const subHooks: ToolExecutionHooks | undefined =
-        tc.name === 'explore_subagent'
-          ? {
-              onSubAgentProgress: (progress) => {
-                // Key the mirror handle by TOOL CALL id, not progress.agent:
-                // agent is the endpoint name, and with multi-slot endpoints
-                // several concurrent workers share it — their events would
-                // all collapse into one handle.
-                const saId = `sa-sync-${tc.id}`;
-                syntheticSaIds.add(saId);
-                let handle = agent.backgroundSubAgents.get(saId);
-                if (!handle) {
-                  let pPrompt = tc.arguments;
-                  try {
-                    pPrompt = JSON.parse(tc.arguments).prompt || tc.arguments;
-                  } catch {
-                    /* not JSON */
-                  }
-                  handle = {
-                    id: saId,
-                    prompt: progress.task || pPrompt,
-                    status: 'running',
-                    promise: Promise.resolve(),
-                    resolve: () => {},
-                    reject: () => {},
-                  };
-                  agent.backgroundSubAgents.set(saId, handle);
-                }
-                handle.log = handle.log ?? [];
-                if (handle.log.length < 200) handle.log.push(progress);
-                if (progress.type === 'subagent_done') {
-                  handle.status = progress.ok ? 'done' : 'error';
-                  handle.result = {
-                    name: saId,
-                    model: progress.model,
-                    baseURL: '',
-                    ok: progress.ok ?? false,
-                    output: progress.output ?? '',
-                    durationMs: 0,
-                    toolCalls: progress.toolCalls ?? 0,
-                    error: progress.ok ? undefined : progress.output || 'sub-agent failed',
-                  };
-                }
-                agent.currentTool = {
-                  name: tc.name,
-                  args: tc.arguments,
-                  subAgentProgress: progress,
-                };
-                agent.onUpdate?.();
-              },
-            }
-          : undefined;
+      const mirror =
+        tc.name === 'explore_subagent' ? createSubAgentMirrorHook(agent, tc) : undefined;
       try {
         output = await tool.executeAsync(
           args,
           agent.cfg.workspace,
           configWithSecurity,
           signal,
-          subHooks
+          mirror?.hooks
         );
       } finally {
-        for (const id of syntheticSaIds) agent.backgroundSubAgents.delete(id);
+        if (mirror) {
+          for (const id of mirror.handleIds) agent.backgroundSubAgents.delete(id);
+        }
       }
     } else {
       output = tool
@@ -302,12 +253,21 @@ export async function executeToolSequential(
   agent.currentTool = undefined;
 }
 
-/**
- * Max `explore_subagent` dispatches honoured from a single assistant message.
- * Matches the "call this up to 4 times" guidance in the tool description and the
- * default `maxBackgroundSubAgents`.
- */
+/** Hard ceiling on `explore_subagent` dispatches per assistant message. */
 export const MAX_PARALLEL_SUBAGENT_DISPATCH = 4;
+
+/**
+ * How many `explore_subagent` calls one assistant message may actually run.
+ *
+ * Bounded by the hard ceiling AND by the configured concurrency. Honouring only
+ * the ceiling was wrong in the other direction: with concurrency set to 1, four
+ * dispatches in one message meant three workers queued on `scheduler.acquire`
+ * for up to 60s each and then failed with "all sub-agent workers are busy",
+ * stalling the whole tool round.
+ */
+export function subAgentDispatchLimit(maxBackgroundSubAgents: number | undefined): number {
+  return Math.min(MAX_PARALLEL_SUBAGENT_DISPATCH, Math.max(1, maxBackgroundSubAgents ?? 4));
+}
 
 export async function executeToolsParallel(
   agent: AgentCore,
@@ -319,6 +279,7 @@ export async function executeToolsParallel(
   const permissionResults = new Map<string, 'allow' | 'always_allow' | 'deny'>();
   const blockedByRepeat = new Map<string, string>();
   let subAgentBudget = 0;
+  const dispatchLimit = subAgentDispatchLimit(agent.maxBackgroundSubAgents);
   for (const tc of parallelTools) {
     if (signal?.aborted) {
       agent.setState('idle');
@@ -367,7 +328,7 @@ export async function executeToolsParallel(
       const consent = await checkSubAgentConsent(agent, tc.id);
       if (consent === 'deny') {
         permissionResults.set(tc.id, 'deny');
-      } else if (subAgentBudget++ >= MAX_PARALLEL_SUBAGENT_DISPATCH) {
+      } else if (subAgentBudget++ >= dispatchLimit) {
         // `explore_subagent` is parallel-safe, so one assistant message could
         // fan out 12 remote generations against a pool of 4. The extras then
         // queued on scheduler.acquire for up to 60s each and failed with
@@ -377,7 +338,7 @@ export async function executeToolsParallel(
           tc.id,
           JSON.stringify({
             ok: false,
-            error: `Too many explore_subagent calls in one turn (limit ${MAX_PARALLEL_SUBAGENT_DISPATCH}). Dispatch the rest after reading these results.`,
+            error: `Too many explore_subagent calls in one turn (limit ${dispatchLimit}). Dispatch the rest after reading these results.`,
           })
         );
       }
@@ -486,60 +447,20 @@ export async function executeToolsParallel(
       if (tool?.executeAsync) {
         // Synthetic UI-mirror handles for sync explore_subagent runs — removed
         // when the parent tool call completes so they don't leak.
-        const syntheticSaIds = new Set<string>();
-        const subHooks: ToolExecutionHooks | undefined =
-          tc.name === 'explore_subagent'
-            ? {
-                onSubAgentProgress: (progress) => {
-                  // Key the mirror handle by TOOL CALL id, not progress.agent:
-                  // agent is the endpoint name, and with multi-slot endpoints
-                  // several concurrent workers share it — their events would
-                  // all collapse into one handle.
-                  const saId = `sa-sync-${tc.id}`;
-                  syntheticSaIds.add(saId);
-                  let handle = agent.backgroundSubAgents.get(saId);
-                  if (!handle) {
-                    let pPrompt = tc.arguments;
-                    try {
-                      pPrompt = JSON.parse(tc.arguments).prompt || tc.arguments;
-                    } catch {
-                      /* not JSON */
-                    }
-                    handle = {
-                      id: saId,
-                      prompt: progress.task || pPrompt,
-                      status: 'running',
-                      promise: Promise.resolve(),
-                      resolve: () => {},
-                      reject: () => {},
-                      log: [],
-                    };
-                    agent.backgroundSubAgents.set(saId, handle);
-                  }
-                  handle.log = handle.log ?? [];
-                  if (handle.log.length < 200) handle.log.push(progress);
-                  if (progress.type === 'subagent_done') {
-                    handle.status = progress.ok ? 'done' : 'error';
-                  }
-                  agent.currentTool = {
-                    name: tc.name,
-                    args: tc.arguments,
-                    subAgentProgress: progress,
-                  };
-                  agent.onUpdate?.();
-                },
-              }
-            : undefined;
+        const mirror =
+          tc.name === 'explore_subagent' ? createSubAgentMirrorHook(agent, tc) : undefined;
         try {
           output = await tool.executeAsync(
             args,
             agent.cfg.workspace,
             configWithSecurity,
             signal,
-            subHooks
+            mirror?.hooks
           );
         } finally {
-          for (const id of syntheticSaIds) agent.backgroundSubAgents.delete(id);
+          if (mirror) {
+            for (const id of mirror.handleIds) agent.backgroundSubAgents.delete(id);
+          }
         }
       } else {
         output = tool

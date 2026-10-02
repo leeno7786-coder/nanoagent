@@ -265,7 +265,7 @@ describe('run-loop review fixes', () => {
     expect(agent.messages.at(-1)?.content).toContain('Findings');
   }, 20000);
 
-  it('stops an unbounded read-only review after the read budget', async () => {
+  it('does not cut off a long read-only review after a fixed number of rounds', async () => {
     const agent = newAgent();
     await agent.init();
 
@@ -286,9 +286,14 @@ describe('run-loop review fixes', () => {
 
     await agent.run('review the codebase');
 
+    // Every read round gets a real tool result — no injected budget error.
+    const readResults = agent.messages.filter(
+      (message) => typeof message.toolCallId === 'string' && message.toolCallId.startsWith('read-')
+    );
+    expect(readResults).toHaveLength(8);
     expect(
       agent.messages.some((message) => message.content.includes('Review read budget reached'))
-    ).toBe(true);
+    ).toBe(false);
     expect(agent.messages.at(-1)?.content).toContain('Findings');
   }, 20000);
 

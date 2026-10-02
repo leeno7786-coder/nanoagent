@@ -1,3 +1,5 @@
+import { resolve } from 'path';
+
 import { streamChat } from '../../llm/index.js';
 import type { ChatMessage } from '../../llm/index.js';
 import { normalizeStrictChatTemplate } from '../../llm/chat-template.js';
@@ -45,6 +47,9 @@ Make it specific. File paths and line numbers are critical.`;
 
 const DEFAULT_TURN_TIMEOUT_MS = 600000;
 
+/** Hard ceiling on worker turns regardless of what the pool configures. */
+const MAX_WORKER_ITERATIONS = 24;
+
 /** Canonicalize nested argument objects without dropping nested keys. */
 export function canonicalizeToolArguments(value: unknown): string {
   const visit = (input: unknown): unknown => {
@@ -61,8 +66,21 @@ export function canonicalizeToolArguments(value: unknown): string {
 }
 
 /**
+ * Canonical identity for the worker's "already read" set.
+ *
+ * Only used as a dedupe key — the raw argument is still what reaches the tool.
+ * Resolving against the workspace collapses `src/a.ts`, `./src/a.ts`,
+ * `a/../src/a.ts` and the absolute form onto one entry, which the raw string
+ * did not. Normalization is pure string work, so this adds no I/O to the turn.
+ */
+export function readDedupKey(workspace: string, p: string): string {
+  return resolve(workspace || process.cwd(), p.replace(/\\/g, '/'));
+}
+
+/**
  * Per-turn inactivity timeout for worker streams. Resolved per dispatch:
- * pool.turnTimeoutMs → NANOGENT_SUBAGENT_TURN_TIMEOUT_MS → 120s default.
+ * pool.turnTimeoutMs → NANOGENT_SUBAGENT_TURN_TIMEOUT_MS → 600s default
+ * (matching the 600s local-provider HTTP timeout).
  * Resets on every streamed chunk, so it only fires when the server goes
  * quiet (slow hosts need headroom for model load + prefill).
  */
@@ -98,7 +116,10 @@ async function runSingleSubAgent(
   const readPaths = new Set<string>();
   const toolCallCounts = new Map<string, number>();
   const DISCOVERY_TOOLS = new Set(['list_dir', 'map_project_tree', 'stat_path', 'find_files']);
-  const TOOL_BUDGET = wctx.cfg.subagents?.toolBudget ?? 18;
+  // Budgets live on the RESOLVED pool, not base.subagents — on the
+  // auto-discovery path those are different objects.
+  const TOOL_BUDGET = wctx.pool?.toolBudget ?? 18;
+  const maxIter = Math.min(wctx.cfg.maxIterations ?? 12, MAX_WORKER_ITERATIONS);
   const triedFallbacks = initialWorkerTriedFallbacks(wctx.cfg);
   const failoverNotices: string[] = [];
   const withNotices = (output: string): string => {
@@ -114,7 +135,7 @@ async function runSingleSubAgent(
     task,
   });
 
-  const maxIter = Math.min(wctx.cfg.maxIterations ?? 12, 24);
+  let nudgedSummarize = false;
 
   for (let i = 0; i < maxIter; i++) {
     if (signal?.aborted) {
@@ -138,7 +159,11 @@ async function runSingleSubAgent(
       };
     }
 
-    if (i === Math.floor(maxIter * 0.6) && toolCallCount > 0) {
+    // Two nudges can land on the same turn (e.g. maxIter 10 puts both the 60%
+    // and the last-4 triggers on turn 7), which stacked two identical `user`
+    // messages into the worker's history. Fire each at most once.
+    if (!nudgedSummarize && i === Math.floor(maxIter * 0.6) && toolCallCount > 0) {
+      nudgedSummarize = true;
       messages.push({
         role: 'user',
         content: `You are on turn ${i + 1} of ${maxIter}. Start writing your final report now. Use batch_read_files if you need to read more files, then summarize.`,
@@ -396,8 +421,15 @@ async function runSingleSubAgent(
             toolCallCounts.set(tc.function.name, prev + 1);
           }
 
-          if (tc.function.name === 'read_file' && typeof filePath === 'string') {
-            if (readPaths.has(filePath)) {
+          // Key re-read detection on the RESOLVED path, not the raw argument string.
+          // `src/a.ts`, `./src/a.ts` and the absolute form are one file but
+          // three strings, so the raw-string key let a worker re-read a file it
+          // already had — burning budget on a duplicate and confusing a 2B
+          // model that is told it never re-reads.
+          const readFileKey =
+            typeof filePath === 'string' ? readDedupKey(wctx.cfg.workspace, filePath) : undefined;
+          if (tc.function.name === 'read_file' && readFileKey) {
+            if (readPaths.has(readFileKey)) {
               duplicateStrikes++;
               const reReadResult = JSON.stringify({
                 ok: false,
@@ -415,16 +447,19 @@ async function runSingleSubAgent(
               });
               return { role: 'tool' as const, content: reReadResult, tool_call_id: tc.id };
             }
-            readPaths.add(filePath);
+            readPaths.add(readFileKey);
           }
           if (tc.function.name === 'batch_read_files') {
             const batchPaths: string[] = (args?.paths as string[] | undefined) ?? [];
-            for (const bp of batchPaths) {
-              if (readPaths.has(bp)) {
+            const batchKeys = batchPaths
+              .filter((bp): bp is string => typeof bp === 'string')
+              .map((bp) => readDedupKey(wctx.cfg.workspace, bp));
+            for (let i = 0; i < batchKeys.length; i++) {
+              if (readPaths.has(batchKeys[i]!)) {
                 duplicateStrikes++;
                 const reReadResult = JSON.stringify({
                   ok: false,
-                  error: `File '${bp}' in batch_read_files was already read. Include its current content from conversation history.`,
+                  error: `File '${batchPaths[i]}' in batch_read_files was already read. Include its current content from conversation history.`,
                 });
                 emit({
                   type: 'subagent_tool_result',
@@ -439,7 +474,7 @@ async function runSingleSubAgent(
                 return { role: 'tool' as const, content: reReadResult, tool_call_id: tc.id };
               }
             }
-            for (const bp of batchPaths) readPaths.add(bp);
+            for (const key of batchKeys) readPaths.add(key);
           }
 
           if (duplicateStrikes >= 3) {
@@ -644,7 +679,7 @@ export async function exploreWithSubAgent(
     };
   }
   try {
-    const wctx = buildWorkerContext(ep, base);
+    const wctx = buildWorkerContext(ep, base, pool);
     try {
       return await runSingleSubAgent(wctx, task, signal, hooks, resolveTurnTimeoutMs(pool));
     } finally {
