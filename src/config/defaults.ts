@@ -1,20 +1,27 @@
 import type { Config } from '../types.js';
 
+/**
+ * Fill in sub-agent defaults from config.
+ *
+ * This does NOT decide which model serves sub-agents. The endpoint, model and
+ * lane count are user choices (settings panel or `subagents.endpoints`), and
+ * `resolveSubAgentPool` derives availability from them. What lives here is only
+ * the "convenience seed": a configured endpoint pre-fills the flat fields the
+ * panel edits, and `REMOTE_LMSTUDIO_URL` seeds the base URL when nothing is set.
+ */
 export function applySubAgentDefaults(cfg: Config): void {
   const pool = cfg.subagents;
   if (pool?.enabled && pool.endpoints.length > 0) {
-    cfg.subAgentEnabled = true;
     const ep = pool.endpoints[0];
+    cfg.subAgentEnabled = cfg.subAgentEnabled ?? true;
     cfg.subAgentModel = cfg.subAgentModel ?? ep.model;
     cfg.subAgentBaseURL = cfg.subAgentBaseURL ?? ep.baseURL;
     cfg.subAgentApiKey = cfg.subAgentApiKey ?? ep.apiKey;
     return;
   }
-  if (process.env.REMOTE_LMSTUDIO_URL) {
-    cfg.subAgentEnabled = true;
-    cfg.subAgentBaseURL = cfg.subAgentBaseURL ?? process.env.REMOTE_LMSTUDIO_URL;
-    return;
-  }
+  // A remote runtime is a useful default endpoint, nothing more: without a model
+  // there is nothing to dispatch, so this must not enable sub-agents on its own.
+  cfg.subAgentBaseURL = cfg.subAgentBaseURL ?? process.env.REMOTE_LMSTUDIO_URL;
   cfg.subAgentEnabled = cfg.subAgentEnabled ?? false;
 }
 

@@ -2,8 +2,31 @@ import { existsSync, readFileSync } from 'fs';
 import { saveConfigFile } from '../config/index.js';
 import { cycleEffort, DEFAULT_EFFORT, parseEffort } from '../config/effort.js';
 import { GLOBAL_CONFIG_FILE } from '../config/paths.js';
-import type { Config, McpServerConfig } from '../types.js';
+import {
+  DEFAULT_SUB_AGENT_FANOUT,
+  DEFAULT_SUB_AGENT_LANES,
+  lanesFor,
+  readSubAgentEndpoint,
+} from '../subagents/pool.js';
+import { normalizeEndpointBaseURL } from '../subagents/catalog.js';
+import type { Config, McpServerConfig, SubAgentEndpoint } from '../types.js';
 import { THEMES } from './theme.js';
+
+/** Upper bound on parallel lanes through one sub-agent model. */
+export const MAX_SUB_AGENT_LANES = 16;
+
+/**
+ * UI-only row that loads the endpoint's model list. Not a config field, so it
+ * is deliberately absent from `SettingsKey` and reached via a cast — same trick
+ * as the `showAdvanced` toggle. Everything that indexes `cfg[key]` must skip
+ * it before doing so.
+ */
+export const SUB_AGENT_REFRESH_KEY = 'subAgentRefresh' as SettingsKey;
+
+/** True for the non-config "Fetch models" row. */
+export function isSubAgentRefreshKey(key: SettingsKey): boolean {
+  return (key as string) === 'subAgentRefresh';
+}
 
 export type SettingsKey =
   | 'provider'
@@ -40,6 +63,8 @@ export type SettingsKey =
   | 'subAgentModel'
   | 'subAgentBaseURL'
   | 'subAgentApiKey'
+  | 'subAgentEnabled'
+  | 'subAgentLanes'
   | 'maxBackgroundSubAgents'
   | 'verbose'
   | 'theme';
@@ -81,10 +106,13 @@ const SIMPLE_SECTIONS: readonly { title: string; rows: readonly SettingsRow[] }[
   {
     title: 'Sub-agents',
     rows: [
-      { key: 'maxBackgroundSubAgents', label: 'Max concurrent', mode: 'cycle' },
-      { key: 'subAgentBaseURL', label: 'Base URL', mode: 'edit' },
-      { key: 'subAgentApiKey', label: 'API key', mode: 'edit' },
+      { key: 'subAgentEnabled', label: 'Enabled', mode: 'cycle' },
+      { key: 'subAgentBaseURL', label: 'Endpoint', mode: 'edit' },
+      { key: SUB_AGENT_REFRESH_KEY, label: 'Fetch models', mode: 'edit', persist: false },
       { key: 'subAgentModel', label: 'Model', mode: 'edit' },
+      { key: 'subAgentApiKey', label: 'API key', mode: 'edit' },
+      { key: 'maxBackgroundSubAgents', label: 'Avenues per turn', mode: 'cycle' },
+      { key: 'subAgentLanes', label: 'Parallel lanes', mode: 'cycle' },
     ],
   },
   {
@@ -271,7 +299,9 @@ export function nextSelectableIndex(
 
 const PERMISSION_MODES = ['read_only', 'ask', 'allow_edits', 'always_allow'] as const;
 const TOOL_CHOICE_MODES = ['auto', 'any', 'none'] as const;
-const SUB_AGENT_CONCURRENCY = [1, 2, 3, 4] as const;
+// Lane presets cycled with left/right; 16 is the ceiling. The row can also be
+// typed directly for any value in between.
+const SUB_AGENT_CONCURRENCY = [1, 2, 3, 4, 6, 8, 12, 16] as const;
 const THEME_NAMES = Object.keys(THEMES);
 
 const BOOLEAN_KEYS = new Set<SettingsKey>([
@@ -280,19 +310,67 @@ const BOOLEAN_KEYS = new Set<SettingsKey>([
   'contextManagementEnabled',
   'toolCacheEnabled',
   'verbose',
+  'subAgentEnabled',
 ]);
 
-export function displaySettingsValue(key: SettingsKey, cfg: Config): string {
+/**
+ * Read a settings row's current value off the config.
+ *
+ * `SettingsKey` deliberately contains UI-only keys that are NOT `Config` fields
+ * (`subAgentLanes` lives in `subagents.endpoints[].concurrency`, `subAgentRefresh`
+ * is an action), so indexing `cfg[key]` directly does not typecheck. Everything
+ * that needs a raw scalar goes through here.
+ */
+/**
+ * The scalar a settings row holds. Deliberately not `Config[SettingsKey]`:
+ * `SettingsKey` contains UI-only keys that are NOT `Config` fields
+ * (`subAgentLanes` lives in `subagents.endpoints[].concurrency`,
+ * `subAgentRefresh` is an action), so that indexed type cannot be formed.
+ */
+export type SettingValue = string | number | boolean | undefined;
+
+/**
+ * Read a settings row's current value off the config. Everything that needs a
+ * raw scalar goes through here rather than indexing `cfg[key]` directly.
+ */
+export function configSettingValue(cfg: Config, key: SettingsKey): SettingValue {
+  return (cfg as unknown as Record<string, SettingValue>)[key];
+}
+
+export function displaySettingsValue(
+  key: SettingsKey,
+  cfg: Config,
+  flags?: { subAgentListing?: boolean }
+): string {
+  if (isSubAgentRefreshKey(key)) {
+    return flags?.subAgentListing ? 'loading…' : 'enter to load';
+  }
+  // Sub-agent rows read the single effective endpoint, so the panel shows what
+  // will actually be dispatched from rather than a possibly-stale flat field.
+  if (key === 'subAgentEnabled') {
+    return cfg.subAgentEnabled === false ? 'off' : 'on';
+  }
+  if (key === 'subAgentBaseURL') {
+    const v = readSubAgentEndpoint(cfg)?.baseURL;
+    return v ? v : 'not set';
+  }
+  if (key === 'subAgentModel') {
+    const v = readSubAgentEndpoint(cfg)?.model;
+    return v ? v : 'not set';
+  }
   // Sub-agent API key — masked
   if (key === ('subAgentApiKey' as SettingsKey)) {
-    const k = cfg.subagents?.endpoints?.[0]?.apiKey ?? cfg.subAgentApiKey;
+    const k = readSubAgentEndpoint(cfg)?.apiKey ?? cfg.subAgentApiKey;
     return k ? `****${k.slice(-4)}` : 'not set';
   }
-  // Max concurrent — read from config
-  if (key === 'maxBackgroundSubAgents') {
-    return String(cfg.maxBackgroundSubAgents ?? 4);
+  // Parallel lanes (hardware) and fan-out (strategy) are separate values.
+  if (key === ('subAgentLanes' as SettingsKey)) {
+    return String(readSubAgentEndpoint(cfg)?.concurrency ?? DEFAULT_SUB_AGENT_LANES);
   }
-  const value = cfg[key];
+  if (key === 'maxBackgroundSubAgents') {
+    return String(cfg.maxBackgroundSubAgents ?? DEFAULT_SUB_AGENT_FANOUT);
+  }
+  const value = configSettingValue(cfg, key);
   if (value === undefined) {
     if (key === 'promptCache') return 'auto';
     if (key === 'effort') return DEFAULT_EFFORT;
@@ -307,9 +385,9 @@ export function displaySettingsValue(key: SettingsKey, cfg: Config): string {
 
 export function cycleSettingsValue(
   key: SettingsKey,
-  current: Config[SettingsKey],
+  current: SettingValue,
   delta: 1 | -1
-): Config[SettingsKey] {
+): SettingValue {
   if (key === 'effort') {
     return cycleEffort(parseEffort(current) ?? DEFAULT_EFFORT, delta);
   }
@@ -325,13 +403,13 @@ export function cycleSettingsValue(
     const index = found >= 0 ? found : PERMISSION_MODES.indexOf('ask');
     return PERMISSION_MODES[(index + delta + PERMISSION_MODES.length) % PERMISSION_MODES.length];
   }
-  if (key === 'maxBackgroundSubAgents') {
+  if (key === 'maxBackgroundSubAgents' || key === ('subAgentLanes' as SettingsKey)) {
     const cur = typeof current === 'number' ? current : 4;
-    const idx = SUB_AGENT_CONCURRENCY.indexOf(cur as 1 | 2 | 3 | 4);
-    const i = idx >= 0 ? idx : SUB_AGENT_CONCURRENCY.indexOf(4);
-    return SUB_AGENT_CONCURRENCY[
-      (i + delta + SUB_AGENT_CONCURRENCY.length) % SUB_AGENT_CONCURRENCY.length
-    ];
+    const idx = (SUB_AGENT_CONCURRENCY as readonly number[]).indexOf(cur);
+    const fallback = (SUB_AGENT_CONCURRENCY as readonly number[]).indexOf(4);
+    const i = idx >= 0 ? idx : fallback;
+    const list = SUB_AGENT_CONCURRENCY as readonly number[];
+    return list[(i + delta + list.length) % list.length];
   }
   if (BOOLEAN_KEYS.has(key)) {
     return current !== true;
@@ -374,7 +452,7 @@ const INTEGER_RULES: Partial<Record<SettingsKey, NumberRule>> = {
   toolCacheMaxSize: { label: 'Cache size', min: 1, max: 10_000 },
   contextKeepCount: { label: 'Keep count', min: 1, max: 100 },
   contextMaxHistoryTokens: { label: 'Max history', min: 100, max: 1_000_000 },
-  maxBackgroundSubAgents: { label: 'Max sub-agents', min: 1, max: 16 },
+  maxBackgroundSubAgents: { label: 'Parallel lanes', min: 1, max: MAX_SUB_AGENT_LANES },
 };
 
 const FLOAT_RULES: Partial<Record<SettingsKey, NumberRule>> = {
@@ -423,6 +501,74 @@ function parseNumber(
   return { ok: true, patch: { [key]: number } };
 }
 
+const SUB_AGENT_ENDPOINT_KEYS = new Set<SettingsKey>([
+  'subAgentBaseURL',
+  'subAgentModel',
+  'subAgentApiKey',
+  'subAgentEnabled',
+  'subAgentLanes',
+  'maxBackgroundSubAgents',
+]);
+
+function isSubAgentEndpointKey(key: SettingsKey): boolean {
+  return SUB_AGENT_ENDPOINT_KEYS.has(key);
+}
+
+/**
+ * Write one sub-agent field and keep every representation in agreement.
+ *
+ * The panel is the single writer for these values, so this is the only place
+ * that mutates them. It updates the flat fields (what the panel reads back and
+ * what older configs use) AND `subagents.endpoints[0]` (what the pool resolver
+ * dispatches from), which is what stops the two from drifting apart again.
+ */
+function patchSubAgentEndpoint(
+  cfg: Config | undefined,
+  key: SettingsKey,
+  value: string
+): Partial<Config> {
+  const current = readSubAgentEndpoint(cfg ?? ({} as Config));
+  const next: SubAgentEndpoint = {
+    name: current?.name ?? 'sub-agent-1',
+    baseURL: current?.baseURL ?? '',
+    model: current?.model ?? '',
+    apiKey: current?.apiKey,
+    concurrency: lanesFor(cfg ?? ({} as Config), current),
+  };
+
+  const patch: Partial<Config> = {};
+  if (key === 'subAgentBaseURL') {
+    // Store the normalized form so the panel does not show a URL that would
+    // post to the wrong path.
+    next.baseURL = normalizeEndpointBaseURL(value);
+    patch.subAgentBaseURL = next.baseURL;
+  } else if (key === 'subAgentModel') {
+    next.model = value;
+    patch.subAgentModel = value;
+  } else if (key === 'subAgentApiKey') {
+    next.apiKey = value;
+    patch.subAgentApiKey = value;
+  } else if (key === 'maxBackgroundSubAgents') {
+    // FAN-OUT: avenues per assistant message. Strategy only — it does not
+    // touch endpoint concurrency, so it no longer caps how many workers run at
+    // once and is no longer capped by it.
+    patch.maxBackgroundSubAgents = Number(value);
+  } else if (key === 'subAgentLanes') {
+    // LANES: workers running simultaneously. Hardware only.
+    const lanes = Number(value);
+    next.concurrency = lanes;
+  }
+
+  patch.subagents = {
+    ...(cfg?.subagents ?? { enabled: true, endpoints: [] }),
+    // An endpoint with a base URL and a model is what makes sub-agents usable,
+    // so filling either one is enough to enable them.
+    enabled: true,
+    endpoints: [next],
+  };
+  return patch;
+}
+
 export function applySettingsPatch(
   key: SettingsKey,
   raw: string,
@@ -430,45 +576,49 @@ export function applySettingsPatch(
 ): SettingsPatchResult {
   const value = raw.trim();
 
-  // Sub-agent API key — nested in subagents.endpoints[0].apiKey
-  if (key === ('subAgentApiKey' as SettingsKey)) {
-    if (!value) return { ok: false, error: 'API key cannot be empty' };
-    const currentEndpoints = cfg?.subagents?.endpoints ?? [];
-    const ep = currentEndpoints[0] ?? { name: 'sub-agent-1', baseURL: '', model: '' };
-    return {
-      ok: true,
-      patch: {
-        subagents: {
-          ...(cfg?.subagents ?? { enabled: true, endpoints: [] }),
-          enabled: true,
-          endpoints: [{ ...ep, apiKey: value }],
-        },
-      },
-    };
+  if (isSubAgentRefreshKey(key)) {
+    // UI-only trigger handled by the overlay; never persisted.
+    return { ok: false, error: 'Press Enter on "Fetch models" to load the endpoint model list.' };
   }
 
-  // Max concurrent sub-agents — also sync to subagents.endpoints[0].concurrency
   if (key === 'maxBackgroundSubAgents') {
+    // FAN-OUT is a plain Config scalar, NOT an endpoint field. Route it past the
+    // endpoint writer entirely so setting it neither creates an endpoint nor
+    // touches endpoint concurrency — tuning avenues must not disturb hardware.
     const num = Number(value);
-    if (!Number.isInteger(num) || num < 1 || num > 16) {
-      return { ok: false, error: 'Max sub-agents must be between 1 and 16' };
+    if (!Number.isInteger(num) || num < 1 || num > MAX_SUB_AGENT_LANES) {
+      return { ok: false, error: `Avenues per turn must be between 1 and ${MAX_SUB_AGENT_LANES}` };
     }
-    const currentEndpoints = cfg?.subagents?.endpoints ?? [];
-    const ep = currentEndpoints[0];
-    const updatedEndpoints = ep
-      ? [{ ...ep, concurrency: num }]
-      : [{ name: 'sub-agent-1', baseURL: '', model: '', concurrency: num }];
-    return {
-      ok: true,
-      patch: {
-        maxBackgroundSubAgents: num,
-        subagents: {
-          ...(cfg?.subagents ?? { enabled: true, endpoints: [] }),
-          enabled: true,
-          endpoints: updatedEndpoints,
-        },
-      },
-    };
+    return { ok: true, patch: { maxBackgroundSubAgents: num } };
+  }
+
+  // The remaining sub-agent rows write through ONE helper. Previously the API
+  // key and lane count updated `subagents.endpoints[0]` while Endpoint and Model
+  // wrote only flat fields the pool resolver never reads — so a user who filled
+  // in every row ended up with an endpoint whose baseURL and model were empty
+  // strings and every dispatch failed with "no remote sub-agent endpoints".
+  if (isSubAgentEndpointKey(key)) {
+    if (key === 'subAgentEnabled') {
+      const next = value !== 'false' && value !== 'off' && value !== '0';
+      return { ok: true, patch: { subAgentEnabled: next } };
+    }
+    if (key === 'subAgentApiKey' && !value) {
+      return { ok: false, error: 'API key cannot be empty' };
+    }
+    if (key === 'subAgentModel' && !value) {
+      return { ok: false, error: 'Model cannot be empty' };
+    }
+    if (key === 'subAgentBaseURL') {
+      const parsed = parseHttpUrl(value, 'Endpoint');
+      if (!parsed.ok) return parsed;
+    }
+    if (key === ('subAgentLanes' as SettingsKey)) {
+      const num = Number(value);
+      if (!Number.isInteger(num) || num < 1 || num > MAX_SUB_AGENT_LANES) {
+        return { ok: false, error: `Parallel lanes must be between 1 and ${MAX_SUB_AGENT_LANES}` };
+      }
+    }
+    return { ok: true, patch: patchSubAgentEndpoint(cfg, key, value) };
   }
 
   const stringLabel = STRING_LABELS[key];

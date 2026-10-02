@@ -45,11 +45,15 @@ describe('cycleSettingsValue', () => {
     expect(cycleSettingsValue('promptCache', false, -1)).toBe(true);
   });
 
-  it('cycles maxBackgroundSubAgents 1-4', () => {
+  it('cycles maxBackgroundSubAgents through the lane presets', () => {
+    // Presets are 1,2,3,4,6,8,12,16 — the user can also type any value 1-16.
     expect(cycleSettingsValue('maxBackgroundSubAgents', 1, 1)).toBe(2);
-    expect(cycleSettingsValue('maxBackgroundSubAgents', 4, 1)).toBe(1);
+    expect(cycleSettingsValue('maxBackgroundSubAgents', 4, 1)).toBe(6);
     expect(cycleSettingsValue('maxBackgroundSubAgents', 4, -1)).toBe(3);
-    expect(cycleSettingsValue('maxBackgroundSubAgents', 1, -1)).toBe(4);
+    expect(cycleSettingsValue('maxBackgroundSubAgents', 1, -1)).toBe(16);
+    expect(cycleSettingsValue('maxBackgroundSubAgents', 16, 1)).toBe(1);
+    // A value between presets snaps to the next preset above it.
+    expect(cycleSettingsValue('maxBackgroundSubAgents', 5, 1)).toBe(6);
   });
 });
 
@@ -189,12 +193,22 @@ describe('applySettingsPatch', () => {
     });
   });
 
-  it('handles maxBackgroundSubAgents with subagents sync', () => {
-    const result = applySettingsPatch('maxBackgroundSubAgents', '2', {} as Config);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.patch.maxBackgroundSubAgents).toBe(2);
-      expect(result.patch.subagents?.endpoints?.[0]?.concurrency).toBe(2);
+  it('keeps fan-out and lanes separate', () => {
+    // Fan-out = avenues per turn (strategy). Lanes = endpoint concurrency
+    // (hardware). They used to be one value, so tuning lanes for a small
+    // machine silently stopped the agent fanning out at all.
+    const fanOut = applySettingsPatch('maxBackgroundSubAgents', '2', {} as Config);
+    expect(fanOut.ok).toBe(true);
+    if (fanOut.ok) {
+      expect(fanOut.patch.maxBackgroundSubAgents).toBe(2);
+      expect(fanOut.patch.subagents?.endpoints?.[0]?.concurrency).toBeUndefined();
+    }
+
+    const lanes = applySettingsPatch('subAgentLanes' as never, '3', {} as Config);
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.patch.subagents?.endpoints?.[0]?.concurrency).toBe(3);
+      expect(lanes.patch.maxBackgroundSubAgents).toBeUndefined();
     }
   });
 

@@ -397,7 +397,9 @@ describe('tools', () => {
     expect(names).not.toContain('explore_subagent');
   });
 
-  it('toOpenAI keeps explore_subagent when a pool is explicitly enabled', () => {
+  it('toOpenAI hides explore_subagent when enabled but no endpoint is set', () => {
+    // A bare flag is not a pool: without an endpoint and model there is
+    // nothing to dispatch to, so the tool must not be advertised.
     const cfg = {
       baseURL: 'http://127.0.0.1:1234/v1',
       model: 'qwen3-8b',
@@ -407,6 +409,39 @@ describe('tools', () => {
       smallModelMode: true,
       maxTokens: 4096,
       subAgentEnabled: true,
+    };
+    const names = toOpenAI(tools, cfg).map((t) => t.function.name);
+    expect(names).not.toContain('explore_subagent');
+  });
+
+  it('toOpenAI keeps explore_subagent when an endpoint and model are configured', () => {
+    const cfg = {
+      baseURL: 'http://127.0.0.1:1234/v1',
+      model: 'qwen3-8b',
+      apiKey: '',
+      maxIterations: 10,
+      workspace: ws,
+      smallModelMode: true,
+      maxTokens: 4096,
+      subAgentBaseURL: 'http://127.0.0.1:1234/v1',
+      subAgentModel: 'some-local-model',
+    };
+    const names = toOpenAI(tools, cfg).map((t) => t.function.name);
+    expect(names).toContain('explore_subagent');
+  });
+
+  it('toOpenAI keeps explore_subagent for a hand-written endpoints pool', () => {
+    const cfg = {
+      baseURL: 'https://api.openai.com/v1',
+      model: 'gpt-5',
+      apiKey: 'sk-main',
+      maxIterations: 10,
+      workspace: ws,
+      maxTokens: 4096,
+      subagents: {
+        enabled: true,
+        endpoints: [{ name: 'a', baseURL: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3-2b' }],
+      },
     };
     const names = toOpenAI(tools, cfg).map((t) => t.function.name);
     expect(names).toContain('explore_subagent');

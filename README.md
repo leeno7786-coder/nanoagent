@@ -39,7 +39,7 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 - **Message queue** — type while the agent runs; messages enqueue (up to 20), drain automatically when idle, edit with ↑, persist across sessions; `/queue` to list, remove, or clear
 - **Ask-user questions** — the `question` tool is a first-class clarifying picker: when the request is ambiguous (stack, features, approach), the agent calls it and a TUI overlay collects the answer. It is not an error path and is not tied to consecutive tool rounds.
 - **Permissions** — `read_only` / `ask` / `allow_edits` / `always_allow`, plus Shift+Tab to cycle in the TUI
-- **Remote sub-agents** — `explore_subagent` workers against a configured pool or `REMOTE_LMSTUDIO_URL`
+- **Remote sub-agents** - `explore_subagent` workers against a pool you configure in `/settings` → Sub-agents (endpoint + model + parallel lanes); no model is assumed for you
 - **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`); only the canonical global config is trusted by default
 - **Skills** — bundled + user skills under `NANOAGENT_ROOT/skills/`, auto-load on triggers, `/skills` overlay (F8)
 - **Memory graph** — `/graph build|stats|report` for codebase structure
@@ -169,7 +169,36 @@ Set `NANOAGENT_ROOT` before invoking to point at a different writable state loca
 - **Model**: `Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-GGUF` (or another Qwen 3.5 2B–8B)
 - **Runtime**: [LM Studio](https://lmstudio.ai/) at `http://127.0.0.1:1234/v1`, [Lemonade Server](https://lemonade-server.ai/) at `http://127.0.0.1:13305/api/v1`, or Ollama at `http://127.0.0.1:11434/v1`
 
-When LM Studio has extra Qwen3.5 2B models loaded (up to 4 instances), NanoAgent uses them as an exploration sub-agent pool — one worker per loaded 2B, dispatched with `explore_subagent` (max 4 in parallel). You can also point at a remote pool with `REMOTE_LMSTUDIO_URL` or a `subagents` block in config.
+Sub-agents are opt-in and fully user-configured — nothing is auto-detected. Open `/settings` → **Sub-agents** and set:
+
+- **Enabled** — on/off
+- **Endpoint** — base URL of any OpenAI-compatible server (`http://127.0.0.1:1234/v1` for LM Studio, `https://openrouter.ai/api/v1` for cloud, …)
+- **Fetch models** — queries that endpoint and lists what it serves (LM Studio reports loaded state and context window); then cycle the **Model** row to pick one, or type any id by hand
+- **API key** — only for endpoints that need one
+- **Parallel lanes** — workers running *simultaneously* through that one model, 1–16. Match it to the endpoint's prediction slots and your memory: more lanes on one local model costs more VRAM and each lane gets slower.
+- **Avenues per turn** — how many *separate* investigations the agent may dispatch in one message. Deliberately independent of lanes: with 4 avenues and 1 lane it still dispatches four differently-prompted workers, they just queue, so you get breadth without the memory cost.
+
+`explore_subagent` only appears once an endpoint *and* a model are set. Give it a `paths` list to scope the work — each named path is expanded into a real listing placed ahead of the workspace tree, so a deep directory can never be truncated out of reach:
+
+```json
+{ "prompt": "How does the retry/backoff path work? Cite line numbers.",
+  "paths": ["src/llm/rate-limit.ts", "src/agent/run.ts"] }
+```
+
+Workers run **synchronously** and return structured findings. A worker that returns a report without calling a single tool is flagged `UNGROUNDED` in the result — treat its claims as unverified.
+
+To tune the worker itself, add `subagents.instructions` to the config, or drop prose in `<NANOAGENT_ROOT>/config/subagent-instructions.md`. Both are **appended** to the built-in prompt, which always keeps the read-first and grounding rules.
+
+The same values can be written by hand as a `subagents` block (which also supports several endpoints):
+
+```json
+"subagents": {
+  "enabled": true,
+  "endpoints": [
+    { "name": "local", "baseURL": "http://127.0.0.1:1234/v1", "model": "<id from Fetch models>", "concurrency": 4 }
+  ]
+}
+```
 
 First-run: type `/connect` in the TUI to pick a provider (Local first, then Cloud), enter an API key if needed, and choose a model.
 

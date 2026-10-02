@@ -146,15 +146,17 @@ export function spawnBackgroundSubAgent(
       }
       // Enrich only the worker task with shared context (workspace root +
       // listing). The model sees it; the TUI stream shows `handle.prompt`.
-      const { enrichTaskWithContext } = await import('./subagents/index.js');
-      const task = await enrichTaskWithContext(prompt, agent.cfg, focusPath);
+      const { enrichTaskWithContext, normalizeScopePaths } = await import('./subagents/index.js');
+      const scope = normalizeScopePaths([focusPath]);
+      const task = await enrichTaskWithContext(prompt, agent.cfg, scope);
       handle.result = await exploreWithSubAgent(
         agent.cfg,
         pool,
         undefined,
         task,
         controller.signal,
-        buildSubAgentHooks(agent, id)
+        buildSubAgentHooks(agent, id),
+        { scope }
       );
       // Prefer a human-readable prompt label when the worker only returned an id.
       if (

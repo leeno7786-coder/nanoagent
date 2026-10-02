@@ -1,171 +1,144 @@
 /**
- * Sub-agent pool resolution: LM Studio discovery of remote Qwen endpoints.
+ * Sub-agent pool resolution.
+ *
+ * Pure and synchronous by design. Which model serves sub-agents, on which
+ * endpoint, and how many parallel lanes run through it are all USER decisions
+ * (settings panel or hand-written config). Nothing here probes a runtime or
+ * pattern-matches model ids — an earlier version recruited `qwen3.5-2b` from
+ * whatever LM Studio had loaded, which meant the advertised model was a
+ * hardcoded guess and the "pool" was one endpoint per loaded instance instead
+ * of one model with N lanes.
  */
-import { fetchLMStudioModels } from '../model-runtime.js';
 import type { Config, SubAgentEndpoint, SubAgentPoolConfig } from '../types.js';
+import { normalizeEndpointBaseURL } from './catalog.js';
+
+/** Default lanes when the user has not chosen a count. */
+export const DEFAULT_SUB_AGENT_LANES = 4;
+/** Default fan-out (avenues per assistant message) when unset. */
+export const DEFAULT_SUB_AGENT_FANOUT = 4;
 
 /**
- * Default base URL for sub-agents: this machine's LM Studio, which proxies to
- * the other device's models automatically.
- */
-export const LOCAL_LMSTUDIO_URL = 'http://127.0.0.1:1234/v1';
-
-/**
- * Parallel prediction slots assumed per discovered LM Studio model.
- * Default 1: load N separate Qwen3.5 2B instances for N parallel workers.
- * Override with NANOGENT_SUBAGENT_SLOTS (1–8) only if one instance should
- * take multiple workers.
- */
-const DEFAULT_SLOTS_PER_MODEL = 1;
-
-export function discoveredSlotsPerModel(): number {
-  const raw = Number(process.env.NANOGENT_SUBAGENT_SLOTS);
-  if (Number.isInteger(raw) && raw >= 1 && raw <= 8) return raw;
-  return DEFAULT_SLOTS_PER_MODEL;
-}
-
-/**
- * Sub-agent-suitable Qwen3.5 2B instruct builds (bare ids like `qwen3.5-2b`
- * and publisher-prefixed like `qwen/qwen3.5-2b`).
- */
-export function isSubAgentModelId(id: string): boolean {
-  const m = /qwen3\.5[-.]?(\d+)b/i.exec(id);
-  return !!m && Number(m[1]) === 2;
-}
-
-/**
- * Keep only models that are actually loaded in memory. /api/v0/models lists
- * every DOWNLOADED model; recruiting an unloaded one yields "Failed to load
- * model" 400s at dispatch time. When the runtime reports no loaded state at
- * all (older LM Studio), keep everything — same behavior as before.
- */
-export function filterLoadedModels<T extends { isLoaded?: boolean }>(models: T[]): T[] {
-  const stateKnown = models.some((m) => m.isLoaded !== undefined);
-  if (!stateKnown) return models;
-  return models.filter((m) => m.isLoaded === true);
-}
-
-function toV1BaseURL(baseURL: string): string {
-  return baseURL.replace(/\/+$/, '').replace(/\/v1\/?$/i, '') + '/v1';
-}
-
-/** Map loaded Qwen3.5 2B catalog rows to named pool endpoints. */
-export function subAgentEndpointsFromModels(
-  models: Array<{ id: string; isLoaded?: boolean }>,
-  baseURL: string,
-  slots = discoveredSlotsPerModel()
-): SubAgentEndpoint[] {
-  const v1 = toV1BaseURL(baseURL);
-  return filterLoadedModels(models.filter((m) => isSubAgentModelId(m.id))).map((m, i) => ({
-    name: `qwen-remote-${i + 1}`,
-    baseURL: v1,
-    model: m.id,
-    concurrency: slots,
-  }));
-}
-
-/**
- * Discover loaded Qwen3.5 2B sub-agent models from a given LM Studio base URL.
- */
-async function discoverQwenEndpoints(baseURL: string): Promise<SubAgentEndpoint[] | undefined> {
-  try {
-    const models = await fetchLMStudioModels(baseURL);
-    const found = subAgentEndpointsFromModels(models, baseURL);
-    return found.length > 0 ? found : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Resolve a pool config from the base config.
+ * Apply the endpoint normalization every dispatch path needs.
  *
- * Priority:
- *   1. Explicit `cfg.subagents` (enabled + endpoints) — user-tuned. Per-endpoint
- *      `concurrency` maps to the server's parallel prediction slots.
- *   2. `REMOTE_LMSTUDIO_URL` env var — auto-discover Qwen3.5 2B models there.
- *   3. This machine's LM Studio (127.0.0.1:1234) — auto-discover loaded
- *      qwen3.5-2b* instances (one worker each unless NANOGENT_SUBAGENT_SLOTS
- *      is set). LM Studio forwards to the linked device.
+ * Users type the host they see in their runtime's UI (`http://127.0.0.1:1234`),
+ * not `.../v1`. Without this the worker posts to `/chat/completions`, which some
+ * servers answer with HTTP 200 and an error body — so the failure surfaces as a
+ * silent empty response instead of a diagnosable error.
  */
-export async function resolveSubAgentPool(base: Config): Promise<SubAgentPoolConfig | undefined> {
-  if (base.subagents) {
-    if (base.subagents.enabled && base.subagents.endpoints.length > 0) {
-      return base.subagents;
-    }
-    if (base.subagents.enabled === false) {
-      return undefined;
-    }
-  }
-
-  const candidates = [process.env.REMOTE_LMSTUDIO_URL, LOCAL_LMSTUDIO_URL].filter(
-    Boolean
-  ) as string[];
-
-  for (const url of candidates) {
-    const endpoints = await discoverQwenEndpoints(url);
-    if (endpoints && endpoints.length > 0) {
-      return { enabled: true, endpoints, maxIterations: 12 };
-    }
-  }
-  return undefined;
+function normalizeEndpoint(ep: SubAgentEndpoint): SubAgentEndpoint {
+  return { ...ep, baseURL: normalizeEndpointBaseURL(ep.baseURL) };
 }
 
 /**
- * Cache lifetime for `resolveSubAgentPoolCached`.
+ * The sub-agent endpoint the settings panel shows and edits.
  *
- * Short enough that loading or unloading a 2B instance mid-session is picked up
- * without a restart, long enough that four parallel dispatches in one turn
- * share a single resolution.
- */
-const POOL_CACHE_TTL_MS = 30_000;
-
-let poolCache: { key: string; at: number; pool: SubAgentPoolConfig | undefined } | undefined;
-
-/** Everything `resolveSubAgentPool` reads that can change its answer. */
-export function subAgentPoolCacheKey(base: Config): string {
-  return JSON.stringify({
-    s: base.subagents,
-    sb: base.subAgentBaseURL,
-    b: base.baseURL,
-    r: process.env.REMOTE_LMSTUDIO_URL,
-  });
-}
-
-/**
- * Memoized `resolveSubAgentPool`.
+ * Best effort: returns a partially-filled endpoint so a half-configured value
+ * (say the endpoint typed but no model yet) still displays instead of
+ * silently reading "not set". Dispatchability is a separate concern — see
+ * `resolveSubAgentPool`, which requires BOTH a base URL and a model.
  *
- * Discovery costs up to two HTTP probes of `/api/v0/models`. The agent, the
- * `explore_subagent` tool and the init-time availability probe must all agree,
- * so the cache lives here rather than in any one caller.
+ * Config is accepted in two shapes so nothing breaks:
+ *   - `subagents.endpoints[]` — hand-written, may hold several endpoints.
+ *   - flat `subAgentBaseURL` / `subAgentModel` / `subAgentApiKey` — what the
+ *     settings panel writes.
+ * Nested wins when it has anything set, because that is the explicit form.
  */
-export async function resolveSubAgentPoolCached(
-  base: Config
-): Promise<SubAgentPoolConfig | undefined> {
-  const key = subAgentPoolCacheKey(base);
-  const cached = poolCache;
-  if (cached && cached.key === key && Date.now() - cached.at < POOL_CACHE_TTL_MS) {
-    return cached.pool;
-  }
-  const pool = await resolveSubAgentPool(base);
-  poolCache = { key, at: Date.now(), pool };
-  return pool;
+export function readSubAgentEndpoint(cfg: Config): SubAgentEndpoint | undefined {
+  const nested = (cfg.subagents?.endpoints ?? []).find((e) => e.baseURL || e.model || e.apiKey);
+  if (nested) return { ...normalizeEndpoint(nested), concurrency: lanesFor(cfg, nested) };
+
+  const baseURL = cfg.subAgentBaseURL?.trim();
+  const model = cfg.subAgentModel?.trim();
+  const apiKey = cfg.subAgentApiKey?.trim();
+  if (!baseURL && !model && !apiKey) return undefined;
+
+  return {
+    name: 'sub-agent-1',
+    baseURL: baseURL ? normalizeEndpointBaseURL(baseURL) : '',
+    model: model ?? '',
+    apiKey: apiKey || undefined,
+    concurrency: lanesFor(cfg),
+  };
 }
 
 /**
- * The memoized resolution for this config, without triggering a probe.
- * Returns `undefined` when nothing has been resolved yet (or the last
- * resolution found no pool). Used when building the system prompt, which must
- * agree with whatever discovery already decided rather than starting its own
- * lookup.
+ * Parallel LANES: how many workers may run simultaneously against the endpoint.
+ *
+ * A hardware limit, independent of fan-out (`maxBackgroundSubAgents`, the
+ * avenues the main agent may dispatch per turn). `cfg` is accepted for call-site
+ * symmetry but deliberately NOT consulted: falling back to the fan-out value
+ * re-couples the two, and a machine that can only run one worker at a time
+ * would then also be unable to explore more than one avenue per turn.
  */
-export function peekSubAgentPoolCached(base: Config): SubAgentPoolConfig | undefined {
-  const cached = poolCache;
-  if (!cached || cached.key !== subAgentPoolCacheKey(base)) return undefined;
-  return cached.pool;
+export function lanesFor(_cfg: Config, ep?: SubAgentEndpoint): number {
+  const lanes = ep?.concurrency ?? DEFAULT_SUB_AGENT_LANES;
+  return Number.isInteger(lanes) && (lanes as number) >= 1 && (lanes as number) <= 64
+    ? (lanes as number)
+    : DEFAULT_SUB_AGENT_LANES;
 }
 
-/** Drop the memoized resolution (config reloads, `/connect`, tests). */
-export function clearSubAgentPoolCache(): void {
-  poolCache = undefined;
+/** Total simultaneous workers the whole pool can host across all endpoints. */
+export function totalLanes(pool: SubAgentPoolConfig | undefined): number {
+  if (!pool) return 0;
+  return pool.endpoints.reduce((sum, ep) => sum + Math.max(1, ep.concurrency ?? 1), 0);
+}
+
+/**
+ * Fan-out: how many avenues of investigation the main agent may dispatch in a
+ * single message. Strategy, not hardware — see `maxBackgroundSubAgents`.
+ */
+export function fanoutFor(cfg: Config, pool?: SubAgentPoolConfig): number {
+  const raw = cfg.maxBackgroundSubAgents ?? pool?.fanOut ?? DEFAULT_SUB_AGENT_FANOUT;
+  return Number.isInteger(raw) && raw >= 1 ? raw : DEFAULT_SUB_AGENT_FANOUT;
+}
+
+/**
+ * Resolve the pool from configuration alone.
+ *
+ * Returns `undefined` when the user has not configured a usable endpoint, which
+ * is what keeps `explore_subagent` out of the tool schema — advertising a tool
+ * that cannot dispatch is worse than not offering it.
+ *
+ * Order:
+ *   1. `subagents.enabled: false` / `subAgentEnabled: false` — opt-out wins.
+ *   2. `subagents.endpoints[]` — hand-written config, one entry per endpoint.
+ *      Entries missing a base URL or a model are dropped: they cannot dispatch.
+ *   3. flat `subAgentBaseURL` + `subAgentModel` — the settings panel's shape,
+ *      resolved to ONE endpoint with `maxBackgroundSubAgents` lanes.
+ */
+export function resolveSubAgentPool(base: Config): SubAgentPoolConfig | undefined {
+  if (base.subagents?.enabled === false) return undefined;
+  if (base.subAgentEnabled === false) return undefined;
+
+  const endpoints = (base.subagents?.endpoints ?? []).filter((e) => e.baseURL && e.model);
+  if (endpoints.length > 0) {
+    return {
+      ...base.subagents,
+      enabled: true,
+      endpoints: endpoints.map((e) => ({
+        ...normalizeEndpoint(e),
+        concurrency: lanesFor(base, e),
+      })),
+    };
+  }
+
+  const flat = readSubAgentEndpoint(base);
+  if (!flat?.baseURL || !flat.model) return undefined;
+  return {
+    enabled: true,
+    endpoints: [{ ...flat, concurrency: lanesFor(base, flat) }],
+    maxIterations: 12,
+  };
+}
+
+/**
+ * Whether sub-agents are usable. Gates the tool schema and the system prompt.
+ *
+ * Exact now that resolution is pure: no probe, no cache, no flag to drift out
+ * of sync with what the pool actually contains.
+ */
+export function subAgentAvailable(cfg?: Config): boolean {
+  if (!cfg) return false;
+  const pool = resolveSubAgentPool(cfg);
+  return pool !== undefined && pool.endpoints.length > 0;
 }

@@ -1,4 +1,7 @@
 import type { Config } from '../types.js';
+// Direct module import, not the subagents barrel: the barrel pulls in the
+// worker, which imports this file.
+import { subAgentAvailable } from '../subagents/pool.js';
 
 import type { Tool } from './shared.js';
 import { checkSmallModel } from './shared.js';
@@ -188,18 +191,12 @@ export const SEQUENTIAL_ONLY_TOOLS = new Set([
 /**
  * Whether the remote sub-agent pool is available for the given config.
  * Used by the agent to decide whether to advertise sub-agents in the system
- * prompt. A pool is available when an explicit `subagents` config is enabled
- * with endpoints, or a remote LM Studio URL is set for auto-discovery.
+ * prompt, and by the registry to decide whether to expose the tool.
+ *
+ * Delegates to the resolver so the answer is exactly "is there a dispatchable
+ * endpoint" — the tool is never advertised for a pool that cannot run.
  */
-export function subAgentAvailable(cfg?: Config): boolean {
-  if (!cfg) return false;
-  const pool = (cfg as Config & { subagents?: { enabled?: boolean; endpoints?: unknown[] } })
-    .subagents;
-  if (pool?.enabled && pool.endpoints && pool.endpoints.length > 0) {
-    return true;
-  }
-  return Boolean(cfg.subAgentEnabled);
-}
+export { subAgentAvailable };
 
 export const GRAPH_TOOLS = new Set([
   'build_memory_graph',

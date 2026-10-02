@@ -45,7 +45,7 @@ export const manageTodosTool: Tool = {
 export const exploreSubagentTool: Tool = {
   name: 'explore_subagent',
   description:
-    'Dispatch ONE remote sub-agent with a focused, context-rich prompt. It has read-only exploration tools against this workspace. Sub-agents run SYNCHRONOUSLY — when this tool returns, execution is 100% finished. Do NOT wait for sub-agents or reason that they are still running. Synthesize their findings immediately. Emit several calls in ONE message to run them in parallel, up to the sub-agent concurrency cap stated in the system prompt.',
+    'Dispatch ONE remote sub-agent with a focused, context-rich prompt. It has read-only exploration tools against this workspace. Sub-agents run SYNCHRONOUSLY — when this tool returns, execution is 100% finished. Do NOT wait for sub-agents or reason that they are still running. Synthesize their findings immediately. Emit SEVERAL calls in ONE message, each with a DIFFERENT prompt and paths, to pursue several lines of inquiry at once — the number allowed per message is the "avenues per turn" figure in the system prompt, which is independent of how many run concurrently.',
   parameters: {
     type: 'object',
     properties: {
@@ -62,6 +62,12 @@ export const exploreSubagentTool: Tool = {
       focus_path: {
         type: 'string',
         description: "Optional file or directory to scope the sub-agent's investigation.",
+      },
+      paths: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Optional list of concrete directories or files to investigate. Their real contents are listed first in the sub-agent context, ahead of the workspace tree. Use this INSTEAD of guessing which files matter — it guarantees they are enumerated. Max 8.',
       },
     },
     required: ['prompt'],
@@ -81,14 +87,13 @@ export const exploreSubagentTool: Tool = {
       // inside spawnBackgroundSubAgent so the live TUI stream shows only the
       // original prompt, not the injected context block.
       const {
-        resolveSubAgentPoolCached,
+        resolveSubAgentPool,
         exploreWithSubAgent,
         formatSubAgentResults,
         enrichTaskWithContext,
+        normalizeScopePaths,
       } = await import('../subagents/index.js');
-      // Memoized: discovery costs up to two HTTP probes of /api/v0/models, and
-      // a parallel batch of dispatches would otherwise probe once per call.
-      const pool = await resolveSubAgentPoolCached(cfg!);
+      const pool = resolveSubAgentPool(cfg!);
       if (!pool) {
         return JSON.stringify({
           ok: false,
@@ -96,13 +101,20 @@ export const exploreSubagentTool: Tool = {
             'No remote sub-agent pool configured. Set subagents in config/nanogent.json or REMOTE_LMSTUDIO_URL.',
         });
       }
+      // The caller names the files that matter; each is expanded into a real
+      // listing so a scoped sub-agent never has to guess what is in scope.
+      const scope = normalizeScopePaths([
+        ...(Array.isArray(args.paths) ? (args.paths as string[]) : []),
+        typeof args.focus_path === 'string' ? args.focus_path : undefined,
+      ]);
       const result = await exploreWithSubAgent(
         cfg!,
         pool,
         args.endpoint,
-        await enrichTaskWithContext(task, cfg!, args.focus_path),
+        await enrichTaskWithContext(task, cfg!, scope),
         signal,
-        hooks
+        hooks,
+        { scope }
       );
       return formatSubAgentResults([result]);
     } catch (e: unknown) {

@@ -9,15 +9,23 @@ import { THEMES, type Theme } from './theme.js';
 import {
   flattenSettingsItems,
   applySettingsPatch,
+  configSettingValue,
   cycleSettingsValue,
   displaySettingsValue,
   firstSelectableIndex,
+  isSubAgentRefreshKey,
   nextSelectableIndex,
   persistGlobalSetting,
   type SettingsItem,
   type SettingsKey,
 } from './settings.js';
 import { buildModelCatalog, type CatalogModel } from '../providers/index.js';
+import {
+  describeEndpointModel,
+  listEndpointModels,
+  readSubAgentEndpoint,
+  type EndpointModel,
+} from '../subagents/index.js';
 
 interface SettingsOverlayProps {
   theme: Theme;
@@ -49,6 +57,49 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
   const [, setRevision] = useState(0);
   const [availableModels, setAvailableModels] = useState<CatalogModel[]>([]);
   const [modelCatalogIndex, setModelCatalogIndex] = useState(-1);
+  // Models served by the SUB-AGENT endpoint, fetched on demand. This is what
+  // lets the user pick a real model id instead of the pool guessing one.
+  const [subAgentModels, setSubAgentModels] = useState<EndpointModel[]>([]);
+  const [subAgentModelIndex, setSubAgentModelIndex] = useState(-1);
+  const [subAgentListing, setSubAgentListing] = useState(false);
+
+  const subAgentEndpoint = readSubAgentEndpoint(agent.cfg);
+  const subAgentBaseURL = subAgentEndpoint?.baseURL ?? '';
+
+  /** Load the model list for the configured sub-agent endpoint. */
+  const fetchSubAgentModels = useCallback(async () => {
+    const url = subAgentBaseURL.trim();
+    if (!url) {
+      setNotice('Set the sub-agent Endpoint first, then fetch its models.');
+      return;
+    }
+    setSubAgentListing(true);
+    setNotice('Loading models…');
+    const result = await listEndpointModels(url, subAgentEndpoint?.apiKey);
+    setSubAgentListing(false);
+    if (!result.ok) {
+      setSubAgentModels([]);
+      setSubAgentModelIndex(-1);
+      setNotice(`Fetch failed: ${result.error}`);
+      return;
+    }
+    setSubAgentModels(result.models);
+    const currentId = subAgentEndpoint?.model;
+    const idx = currentId ? result.models.findIndex((m) => m.id === currentId) : -1;
+    setSubAgentModelIndex(idx >= 0 ? idx : 0);
+    setNotice(
+      `${result.models.length} model${result.models.length === 1 ? '' : 's'} at ${url} — ` +
+        'cycle the Model row to pick one.'
+    );
+  }, [subAgentBaseURL, subAgentEndpoint]);
+
+  // Keep the index in step with the configured model once a list is loaded.
+  useEffect(() => {
+    if (subAgentModels.length === 0) return;
+    const currentId = subAgentEndpoint?.model;
+    const idx = currentId ? subAgentModels.findIndex((m) => m.id === currentId) : -1;
+    setSubAgentModelIndex(idx >= 0 ? idx : 0);
+  }, [subAgentModels, subAgentEndpoint?.model]);
 
   // Fetch available models from all connected providers on mount
   useEffect(() => {
@@ -101,7 +152,7 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
     async (key: SettingsKey, patch: Partial<Config>) => {
       const result = await persistGlobalSetting(agent, patch);
       if (result.ok) {
-        const value = patch[key];
+        const value = (patch as Record<string, unknown>)[key];
         setNotice(`Saved ${key}=${String(value)} to ${result.path}`);
         setRevision((r) => r + 1);
         if (key === 'theme' && typeof value === 'string' && THEMES[value]) {
@@ -206,6 +257,12 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
         return;
       }
 
+      // "Fetch models" — query the sub-agent endpoint for its real model list.
+      if (isSubAgentRefreshKey(item.key)) {
+        void fetchSubAgentModels();
+        return;
+      }
+
       // MCP server row — show remove confirmation
       if (isMcpKey(item.key) && !isMcpAddKey(item.key)) {
         const name = mcpServerName(item.key);
@@ -214,6 +271,31 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
         } else {
           setPendingMcpRemove(name);
           setNotice(`Press Enter again to remove "${name}"`);
+        }
+        return;
+      }
+
+      // Sub-agent model — cycle the models the endpoint actually serves. The
+      // row stays free-text editable (Enter) so a model that is not listed can
+      // still be typed by hand.
+      if (item.key === ('subAgentModel' as SettingsKey) && subAgentModels.length > 0) {
+        const nextIdx =
+          subAgentModelIndex <= 0
+            ? delta > 0
+              ? 0
+              : subAgentModels.length - 1
+            : (subAgentModelIndex + delta + subAgentModels.length) % subAgentModels.length;
+        setSubAgentModelIndex(nextIdx);
+        const picked = subAgentModels[nextIdx];
+        if (picked) {
+          void savePatch(
+            'subAgentModel' as SettingsKey,
+            {
+              subAgentModel: picked.id,
+              subAgentBaseURL: subAgentBaseURL || undefined,
+            } as Partial<Config>
+          );
+          setNotice(`Sub-agent model: ${describeEndpointModel(picked)}`);
         }
         return;
       }
@@ -242,8 +324,20 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
         return;
       }
 
-      const next = cycleSettingsValue(item.key, agent.cfg[item.key], delta);
-      void savePatch(item.key, { [item.key]: next });
+      // `subAgentLanes` lives on subagents.endpoints[].concurrency, not on Config
+      // directly, so read it through the resolver rather than indexing cfg.
+      const lanesKey = 'subAgentLanes' as SettingsKey;
+      const current =
+        item.key === lanesKey
+          ? readSubAgentEndpoint(agent.cfg)?.concurrency
+          : configSettingValue(agent.cfg, item.key);
+      const next = cycleSettingsValue(item.key, current, delta);
+      if (item.key === lanesKey) {
+        const res = applySettingsPatch(lanesKey, String(next), agent.cfg);
+        if (res.ok) void savePatch(lanesKey, res.patch);
+        return;
+      }
+      void savePatch(item.key, { [item.key]: next } as Partial<Config>);
     },
     [
       agent,
@@ -254,6 +348,10 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
       handleMcpRemove,
       availableModels,
       modelCatalogIndex,
+      subAgentModels,
+      subAgentModelIndex,
+      subAgentBaseURL,
+      fetchSubAgentModels,
     ]
   );
 
@@ -262,20 +360,35 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
     if (!item || item.type !== 'row') return;
     if (item.mode !== 'edit') return;
 
+    // "Fetch models" is an action, not a text field.
+    if (isSubAgentRefreshKey(item.key)) return;
+
     // MCP add — custom input
     if (isMcpAddKey(item.key)) {
       startMcpAdd();
       return;
     }
 
-    const current =
-      item.key === ('subAgentApiKey' as SettingsKey)
-        ? (agent.cfg.subagents?.endpoints?.[0]?.apiKey ?? agent.cfg.subAgentApiKey ?? '')
-        : agent.cfg[item.key];
+    // Read the sub-agent rows from the effective endpoint so the text the user
+    // edits is the value that will actually be dispatched from.
+    let current: unknown;
+    if (item.key === ('subAgentBaseURL' as SettingsKey)) {
+      current = subAgentEndpoint?.baseURL ?? '';
+    } else if (item.key === ('subAgentModel' as SettingsKey)) {
+      current = subAgentEndpoint?.model ?? '';
+    } else if (item.key === ('subAgentApiKey' as SettingsKey)) {
+      current = subAgentEndpoint?.apiKey ?? '';
+    } else if (item.key === ('subAgentLanes' as SettingsKey)) {
+      current = subAgentEndpoint?.concurrency ?? 4;
+    } else if (item.key === ('maxBackgroundSubAgents' as SettingsKey)) {
+      current = agent.maxBackgroundSubAgents ?? 4;
+    } else {
+      current = configSettingValue(agent.cfg, item.key);
+    }
     setEditing(current === undefined ? '' : String(current));
     setNotice(null);
     setPendingMcpRemove(null);
-  }, [agent, items, selectedIndex, startMcpAdd]);
+  }, [agent, items, selectedIndex, startMcpAdd, subAgentEndpoint]);
 
   const commitEditing = useCallback(() => {
     const item = items[selectedIndex];
@@ -395,7 +508,7 @@ export function SettingsOverlay({ theme, agent, onClose, onThemeChange }: Settin
           const rawValue =
             selected && editing !== null
               ? `${editing}▌`
-              : displaySettingsValue(item.key, agent.cfg);
+              : displaySettingsValue(item.key, agent.cfg, { subAgentListing });
 
           // For the model row, show the catalog model name when available
           let value = rawValue;

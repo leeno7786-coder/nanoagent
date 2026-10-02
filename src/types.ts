@@ -224,7 +224,17 @@ export interface Config {
   subAgentBaseURL?: string;
   /** API key for the remote sub-agent provider. */
   subAgentApiKey?: string;
-  /** Maximum number of concurrent background sub-agents (default: 4). */
+  /**
+   * How many `explore_subagent` calls the main agent may emit in ONE message —
+   * i.e. how many separate avenues of investigation it can pursue per turn.
+   *
+   * Deliberately INDEPENDENT of `SubAgentEndpoint.concurrency` (parallel lanes).
+   * Fan-out is a strategy choice; lanes are a hardware limit. With fan-out 4 and
+   * lanes 1 the main agent still dispatches four differently-prompted workers;
+   * they queue and run one at a time, so coverage per turn goes up even though
+   * latency does too. Conflating the two meant that lowering lanes for a small
+   * machine also silently stopped the agent from exploring more than one angle.
+   */
   maxBackgroundSubAgents?: number;
   /** MCP server configurations (local stdio or remote HTTP). */
   mcp?: Record<string, McpServerConfig>;
@@ -288,6 +298,23 @@ export interface SubAgentPoolConfig {
   timeoutMs?: number;
   /** Per-subagent max tool calls before forcing a final report (default: 18). */
   toolBudget?: number;
+  /**
+   * Force small/large model treatment for the WORKER.
+   * Unset (the default) means "classify the sub-agent's own model id" — the
+   * main session's size is irrelevant to a worker running a different model.
+   */
+  smallModelMode?: boolean;
+  /**
+   * Fan-out: avenues the main agent may dispatch per message. Defaults to
+   * `maxBackgroundSubAgents`; set here to tune it per pool.
+   */
+  fanOut?: number;
+  /**
+   * Extra worker instructions, APPENDED after the invariant prompt core.
+   * Cannot remove the grounding rules — they are not advisory. Also read from
+   * `<NANOAGENT_ROOT>/config/subagent-instructions.md` for long-form text.
+   */
+  instructions?: string;
 }
 
 /** Possible states of the agent lifecycle. */

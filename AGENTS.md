@@ -143,26 +143,110 @@ These exist because breaking them has caused real incidents. Do not violate them
   `explore_subagent` is dispatched straight from the model's tool call. Widening
   that is a permissions decision, not a bug fix; keep this list and the
   tool-runner error message in sync (the message is derived from the set).
-- Pool auto-discovery order (`resolveSubAgentPool`, `src/subagents/pool.ts`): explicit
-  `cfg.subagents` → `REMOTE_LMSTUDIO_URL` → local LM Studio Qwen3.5 **2B** models
-  (`isSubAgentModelId`). Discovered models each get `NANOGENT_SUBAGENT_SLOTS`
-  workers (default **1** — load 4 separate 2B instances for 4-wide parallel).
-  Preserve this order.
-- **`cfg.subAgentEnabled` gates the `explore_subagent` tool** — false means the
-  tool is stripped from the schema *and* omitted from the system prompt, so the
-  sub-agent system is unreachable. It is derived from three sources, not config
-  alone: `applySubAgentDefaults` (`config/defaults.ts`) handles tiers 1–2, and
-  `publishSubAgentAvailability` (`agent-lifecycle.ts`, called from `initAgent`
-  and `reconfigureAgent`) resolves the pool so **tier 3** works with no config
-  at all. Any new discovery tier must publish here or it stays invisible.
-  Resolution is memoized in `pool.ts` (`resolveSubAgentPoolCached`, 30s TTL)
-  and shared by init, `agent.getSubAgentPool()` and the tool — do not call the
-  uncached `resolveSubAgentPool` from a hot path.
+- Pool resolution is **user configuration only** (`resolveSubAgentPool`,
+  `src/subagents/pool.ts`) and is **pure and synchronous** — no HTTP probe, no
+  cache, no boot cost. Which model serves sub-agents, at which endpoint, with
+  how many parallel lanes is a user decision made in the settings panel
+  (`/settings` → Sub-agents) or in `subagents.endpoints`. Do NOT reintroduce
+  runtime probing or model-id pattern matching (`qwen3.5-2b`-style regexes) to
+  "auto-discover" a model — that was removed deliberately.
+- **Parallel lanes, not parallel models.** One endpoint + one model + N lanes
+  (`SubAgentEndpoint.concurrency`, surfaced as "Parallel lanes"). N workers run
+  against that single model via the endpoint's prediction slots. An earlier
+  design recruited one endpoint *per loaded model instance*, which meant the
+  advertised model was a hardcoded guess and the pool size depended on what
+  happened to be loaded.
+- `cfg.subAgentEnabled` gates the `explore_subagent` tool — false means the tool
+  is stripped from the schema *and* omitted from the system prompt. Availability
+  is derived by `subAgentAvailable(cfg)` from whether the config resolves to at
+  least one dispatchable endpoint, so the tool is never advertised for a pool
+  that cannot run. `subAgentEnabled: false` (or `subagents.enabled: false`) is an
+  explicit opt-out and always wins.
+- The settings panel is the **single writer** for sub-agent config. All of
+  `subAgentBaseURL` / `subAgentModel` / `subAgentApiKey` /
+  `maxBackgroundSubAgents` route through `patchSubAgentEndpoint`
+  (`opentui/settings.ts`), which updates the flat fields *and*
+  `subagents.endpoints[0]` together. They previously diverged — Endpoint and
+  Model wrote flat fields the resolver never read, so a user who filled in every
+  row got an endpoint with empty `baseURL`/`model` and every dispatch failed.
+  Add new sub-agent fields to that helper, never to one row alone.
+- **"Fetch models"** in the Sub-agents section (`listEndpointModels`,
+  `src/subagents/catalog.ts`) queries the configured endpoint — LM Studio REST
+  (loaded state + context) or OpenAI-compatible `/models` — and the Model row
+  then cycles that list. The row stays free-text editable so an unlisted model
+  can still be typed.
+- **Endpoint URLs are normalized to a `/v1` root** (`normalizeEndpointBaseURL`,
+  `src/subagents/catalog.ts`) both when the panel stores them and when the pool
+  resolves them. This is load-bearing: a user types the host their runtime UI
+  shows (`http://127.0.0.1:1234`), and the un-normalized form posts to
+  `/chat/completions` — LM Studio answers **HTTP 200** with
+  `{"error":"Unexpected endpoint or method"}`, so nothing throws and the worker
+  silently reports an empty response. A path already ending in `/vN` is left
+  alone. `lmStudioRestBase` strips `/v1` back off, so the "Fetch models" REST
+  catalog still works on a normalized URL.
+- **The worker prompt is assembled, not hardcoded** (`buildWorkerSystemPrompt`,
+  `src/subagents/worker/prompt.ts`) in four layers: (1) INVARIANT CORE — tool
+  allowlist, grounding rules, report shape — which every real run proved
+  necessary and which is therefore NOT editable away; (2) ENVIRONMENT — tunes the
+  advice by endpoint kind (a small local model gets budget-thrift + "mark the
+  gap" guidance; a cloud model gets a precision-first prompt); (3) SCOPE — the
+  paths the caller named; (4) CUSTOM — operator instructions, appended last from
+  `subagents.instructions` and/or `<NANOAGENT_ROOT>/config/subagent-instructions.md`.
+  Keep new rules in the core unless they are genuinely operator-specific.
+- **`explore_subagent` takes `paths: string[]`** (max 8, plus the older
+  `focus_path`). Each supplied path is **expanded into a real listing** placed
+  AHEAD of the root file tree (`expandScopePath`, `context-block.ts`). This fixes
+  a silent failure: the root walk is depth-3 and capped at 150 files, so in a
+  large repo a focused directory could be truncated away entirely — the worker
+  was told to look somewhere it could not enumerate, and small models filled the
+  gap with invention. Paths containing `..` are dropped, not normalized, because
+  the list is injected verbatim into a prompt.
+- **Grounding is reported to the calling agent.** A worker can answer on turn 1
+  having read nothing; `ok` means only "the dispatch completed", so
+  `formatSubAgentResults` marks those `UNGROUNDED`, counts them in `ungrounded`,
+  and adds a directive to verify before citing. Observed in practice: workers
+  that read nothing produced a confident table of every tool in a codebase and
+  were reported as 1/1 successful. Keep "completed" and "trustworthy" separate.
+- **Fan-out and lanes are INDEPENDENT knobs.** `maxBackgroundSubAgents` = fan-out,
+  how many avenues the main agent may dispatch per assistant message (strategy).
+  `SubAgentEndpoint.concurrency` = parallel lanes, how many workers run
+  simultaneously (hardware). They were one value, so tuning lanes down for a
+  small machine silently stopped the agent dispatching more than one avenue at
+  all — the exact opposite of the intent. Fan-out > lanes is valid and useful:
+  the extra dispatches queue and still return in the same turn. Settings rows:
+  "Avenues per turn" (fan-out, `maxBackgroundSubAgents`) and "Parallel lanes"
+  (`subAgentLanes` → endpoint concurrency). `lanesFor` must never fall back to
+  the fan-out value, and the scheduler's global in-flight cap is total LANES.
+  The per-message cap is `min(16, fan-out)` (`subAgentDispatchLimit`).
+- **Queue waits must be bounded by the worker's own request budget** (was a flat
+  60s). A flat timeout was only safe while nothing ever queued; with fan-out above
+  lanes, a queued worker can wait longer than any single worker legitimately runs
+  and would fail with "all sub-agent workers are busy".
+- **Worker model size is the WORKER's, not the main session's.** `buildWorkerContext`
+  derives `modelParamBillions` from `endpoint.model` and sets
+  `smallModelMode` from the pool override or that classification — it must NEVER
+  inherit `base.smallModelMode` / `base.modelParamBillions`, which describe a
+  different model. This was hardcoded `smallModelMode: true` for months:
+  `isSmallModelFromConfig` short-circuits on that flag, so EVERY sub-agent was
+  classified small, `read_file` capped at `SMALL_MODEL_READ_LIMIT` (100 lines)
+  instead of `LARGE_MODEL_READ_LIMIT` (2000), and workers reasoned about
+  half-read files. Surfaced when a 27B worker reported its reads "came back
+  truncated". A 27B sub-agent then took 1 batched read instead of 15 tool calls.
+  Set `subagents.smallModelMode` only to override this deliberately.
+- **Hallucination here was model capability, not prompt wording.** Measured on the
+  same task/prompt/tools: `ibm/granite-4-h-tiny` fabricated a code block with a
+  `#L54-L62` citation for code that does not exist; `prism-ml/bonsai-27b` (Q1_0,
+  ~4GB) read the files and found a real bug. Prompt rails reduce confabulation but
+  cannot create capability — if reports come back plausible and wrong, check the
+  configured sub-agent model before touching the prompt.
 - Pool limits (`maxIterations`, `toolBudget`, `maxTokens`, `temperature`,
   `timeoutMs`) are read off the **resolved pool** passed into
-  `buildWorkerContext(endpoint, base, pool)`, never off `base.subagents` — on
-  the discovery path those are different objects and the latter silently falls
-  back to defaults.
+  `buildWorkerContext(endpoint, base, pool)`, never off `base.subagents` — when
+  the pool came from the flat panel fields those are different objects, and
+  reading the latter silently falls back to defaults.
+- `REMOTE_LMSTUDIO_URL` is only a **default endpoint seed** for the panel. It
+  does not enable sub-agents by itself: without a model there is nothing to
+  dispatch to.
 - OpenRouter sub-agents reuse `OPENROUTER_API_KEY` when the main agent uses OpenRouter.
 - Default local backend: LM Studio at `http://127.0.0.1:1234/v1`. Handle unreachable/
   slow endpoints with timeouts and clear user-facing errors — never hang silently.
@@ -216,11 +300,13 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Remote sub-agents run on loaded Qwen3.5 **2B** models in this machine's LM Studio.
   Load 4 separate 2B instances (one worker each). Sub-agents hit `http://127.0.0.1:1234/v1`.
 - Sub-agents get the read-only exploration tool set (see §6 for the exact list) against the shared workspace, so they can actually investigate — not just answer prompts. Write/shell/git are excluded by design; the main agent does the mutating.
-- Pool is auto-discovered: `resolveSubAgentPool` (src/subagents/pool.ts) prefers explicit `cfg.subagents`, then `REMOTE_LMSTUDIO_URL`, then local LM Studio's `qwen3.5-2b*` models. No manual config needed — tier 3 is resolved at `initAgent` and publishes `cfg.subAgentEnabled`, so `explore_subagent` appears in the schema with zero config.
+- Pool is user-configured, not discovered: `resolveSubAgentPool` (src/subagents/pool.ts) is pure and synchronous, reading `subagents.endpoints[]` or the flat panel fields written by `/settings` → Sub-agents. There is no model-id regex and no runtime probe left. `REMOTE_LMSTUDIO_URL` only seeds the endpoint field.
+- Sub-agent model choice is the user's, by memory budget or cloud preference: `/settings` → Sub-agents sets Enabled / Endpoint / Fetch models / Model / API key / Parallel lanes. "Fetch models" hits LM Studio REST (loaded state + context) or OpenAI-compat `/models`; the Model row then cycles that list and stays free-text editable.
+- Parallel lanes, not parallel models: N workers run through the ONE chosen model via `SubAgentEndpoint.concurrency` (1–16). On LM Studio, raise the server's max concurrent predictions to match; on a small local model more lanes costs more VRAM and each lane gets slower.
 - Main agent calls `explore_subagent` in parallel with narrow, file-specific prompts;
   concurrency default 4 (configurable 1–16 via `maxBackgroundSubAgents`). It synthesizes results itself.
-  The per-message cap is `min(4, maxBackgroundSubAgents)` (`subAgentDispatchLimit`,
-  `src/agent-tools/execute.ts`); overflow is rejected immediately rather than queued —
+  The per-message cap is the configured lane count (`subAgentDispatchLimit`,
+  `src/agent-tools/execute.ts`, ceiling 16); overflow is rejected immediately rather than queued —
   `explore_subagent` is parallel-safe, so extra calls otherwise queued on the scheduler for up
   to 60s each and failed with "all workers busy", stalling the whole tool round. The system
   prompt states the configured number; the tool description points at it rather than hard-coding 4.
@@ -235,7 +321,7 @@ These exist because breaking them has caused real incidents. Do not violate them
 - Skills are read from exactly one place: `<NANOAGENT_ROOT>/skills/`. Bundled markdown skills (`SKILL.md` with YAML frontmatter) are installed to that directory by the launcher on first run; user `.json` and `<name>/SKILL.md` skills dropped in there are auto-enabled. There is no `<cwd>/skills`, no `~/.agents/skills`, no `~/.claude/skills`, no legacy `~/.qwen-agent-tui/skills`.
 - The `question` tool is a first-class clarifying picker for ambiguous user requests (missing stack, features, constraints, conflicting requirements). It opens the TUI overlay when the model calls it — not on consecutive tool rounds, stuck-loop, or API errors. If the model lists A/B/C/D in chat instead, the TUI harness promotes that quiz into a real `question` call so the overlay still opens. Headless `nanogent run` has no overlay, so that promotion is skipped. Do not use `question` to stall after `git_status`/`list_dir` on review tasks.
 - Main-loop guardrails: default `maxIterations` is 50, and the run loop breaks after 3 consecutive identical tool-call rounds (stuck-loop guard). Duplicate `git_status` / `git_diff` / same-read calls are blocked as tool errors; two fully-duplicate rounds stop the loop so review tasks cannot circle. `git_diff` is `git diff HEAD` plus untracked file contents (not only unstaged tracked hunks). `read_file` without a range returns up to 2000 lines on large/cloud models (100 on ≤8B) and sets `truncated` only when content was actually cut, with `next_start_line`.
-- Streaming requests ask for usage (`stream_options.include_usage`, plus `usage.include` on OpenRouter); API-reported usage drives compaction. Context window is resolved dynamically from the loaded runtime (LM Studio instance context / OpenRouter catalog `context_length` / other OpenAI-compat GET `/models` fields `context_length` · `max_model_len` · `max_context_length`, source `openai-compat`). Missing catalog context leaves the heuristic — never invent a smaller window. Auto-compacts at **80%** of that loaded window: leftover ~20% is a no-tools summary inference, then history is wiped to system prompt + original task + that handoff. Overflow / empty-`length` recovery does not compact below 80%. The original user request is pinned across compaction. Compaction summaries merge into the leading system prompt (`system-compaction`) — never as a trailing assistant turn (Bonsai/Qwen Jinja treats that as a finished response and often emits EOS). Mid-loop UI status uses `notice-*` messages excluded from the LLM payload; recovery notices (`notice-recovery-*`, duplicate-tool blocks, stuck-loop, overflow retry) are also hidden from the main chat panel. `enable_thinking` defaults on for `qwen*` and `bonsai*` model ids unless the catalog explicitly reports no thinking/reasoning; catalog `supportsThinking: true` also enables it for other model ids, while `effort: none` omits it. Catalog capability flags (`supportsTools` / `supportsThinking` / `supportsPromptCache`) stay undefined when unknown and do not change request shape. Tools are still sent if the catalog says no tools (warning only). Cloud prompt-cache extras (`prompt_cache_key`, stable per workspace + model) are sent only when the catalog is explicit true; local providers skip; opt out with `promptCache` / `QWEN_PROMPT_CACHE=0`. Default HTTP timeout is 600s for local providers (LM Studio/Ollama) and 120s for remote. Cloud endpoints share a per-`baseURL` limiter: leaky RPM (burst cap 2), optional in-flight cap, Retry-After cooldown that pauses main + sub-agents. Catalog defaults: OpenRouter 20/2, Groq 30/2, Cerebras 30/2, Hugging Face 15/1. Override with `maxRequestsPerMinute` / `maxConcurrentLlmRequests` or `QWEN_MAX_REQUESTS_PER_MINUTE` / `QWEN_MAX_CONCURRENT_LLM` (`QWEN_MAX_RPM` alias). Optional TPM (`maxTokensPerMinute` / `QWEN_MAX_TOKENS_PER_MINUTE`, alias `QWEN_MAX_TPM`) is opt-in with no catalog default; token-mentioned 429s drain/adapt TPM like RPM. Local providers skip pacing. `rateLimitMs` is only an agent-loop pause, not the cloud limiter. Cloud tool results are capped at 8000 tokens by default after `sanitizeOutput` (`maxToolResultTokens` / `QWEN_MAX_TOOL_RESULT_TOKENS`; 0 = off; local default off). Session `$` uses OpenRouter catalog prices or `promptPricePerMillion` / `completionPricePerMillion` (`QWEN_PROMPT_PRICE_PER_MILLION`, `QWEN_COMPLETION_PRICE_PER_MILLION`); never invent prices. `/usage` prints copy-pasteable tokens + estimated USD when known. Explicit failover (`fallbacks` in config, or `QWEN_FALLBACK_MODEL` + optional `QWEN_FALLBACK_BASE_URL` / `QWEN_FALLBACK_PROVIDER`) runs after LLM retries on 429/502/503/504/timeout/connection errors only — never invented, never on 401/403/400/abort, never reuses provider A's key for B. `explore_subagent` workers honor the same `fallbacks` worker-locally (in-memory model/baseURL/client for that run only; they do not mutate the main session or the shared pool). Named `profiles` apply live with `/profile <name>` or `nanogent run --profile`; persist with `--global` / `--local`. `/config show` and `nanogent doctor --json` include fallback + active profile when set, plus resolved context source and known capability flags. On LM Studio, a placeholder configured id (`model-identifier`, the default) resolves to the currently loaded model for doctor/enrich (in-memory only; not written to disk). A real configured id that exists in the catalog is not replaced by a different loaded model. Doctor JSON then reports `model` as the resolved id, `configured_model` when it differs, and a short warning. `effort` (`none|low|medium|high|extra-high`, default `low`) is set with `/effort` or `/settings` and persisted to `~/.nanogent.json`. `none` omits thinking extras even for qwen/bonsai. Cloud may send `reasoning_effort` (`extra-high` → `xhigh`) only when the catalog lists that parameter; local endpoints never get `reasoning_effort`. Env: `QWEN_EFFORT` (file wins). `/config` and `/settings` open the live scalar overlay and persist globally; `/config show` and `/config set` stay as text. Nested MCP/profiles/fallbacks stay on `/mcp`, `/profile`, `/connect`.
+- Streaming requests ask for usage (`stream_options.include_usage`, plus `usage.include` on OpenRouter); API-reported usage drives compaction. Context window is resolved dynamically from the loaded runtime (LM Studio instance context / OpenRouter catalog `context_length` / other OpenAI-compat GET `/models` fields `context_length` · `max_model_len` · `max_context_length`, source `openai-compat`). Missing catalog context leaves the heuristic — never invent a smaller window. Auto-compacts at **80%** of that loaded window: leftover ~20% is a no-tools summary inference, then history is wiped to system prompt + original task + that handoff. Overflow / empty-`length` recovery does not compact below 80%. The original user request is pinned across compaction. Compaction summaries merge into the leading system prompt (`system-compaction`) — never as a trailing assistant turn (Bonsai/Qwen Jinja treats that as a finished response and often emits EOS). Mid-loop UI status uses `notice-*` messages excluded from the LLM payload; recovery notices (`notice-recovery-*`, duplicate-tool blocks, stuck-loop, overflow retry) are also hidden from the main chat panel. `enable_thinking` defaults on for `qwen*` and `bonsai*` model ids unless the catalog explicitly reports no thinking/reasoning; catalog `supportsThinking: true` also enables it for other model ids, while `effort: none` omits it. Catalog capability flags (`supportsTools` / `supportsThinking` / `supportsPromptCache`) stay undefined when unknown and do not change request shape. Tools are still sent if the catalog says no tools (warning only). Cloud prompt-cache extras (`prompt_cache_key`, stable per workspace + model) are sent only when the catalog is explicit true; local providers skip; opt out with `promptCache` / `QWEN_PROMPT_CACHE=0`. Default HTTP timeout is 600s for local providers (LM Studio/Ollama) and 120s for remote. Cloud endpoints share a per-`baseURL` limiter: leaky RPM (burst cap 2), optional in-flight cap, Retry-After cooldown that pauses main + sub-agents. Catalog defaults: OpenRouter 20/2, Groq 30/2, Cerebras 30/2, Hugging Face 15/1. Override with `maxRequestsPerMinute` / `maxConcurrentLlmRequests` or `QWEN_MAX_REQUESTS_PER_MINUTE` / `QWEN_MAX_CONCURRENT_LLM` (`QWEN_MAX_RPM` alias). Optional TPM (`maxTokensPerMinute` / `QWEN_MAX_TOKENS_PER_MINUTE`, alias `QWEN_MAX_TPM`) is opt-in with no catalog default; token-mentioned 429s drain/adapt TPM like RPM. Local providers skip pacing. `rateLimitMs` is only an agent-loop pause, not the cloud limiter. Cloud tool results are capped at 8000 tokens by default after `sanitizeOutput` (`maxToolResultTokens` / `QWEN_MAX_TOOL_RESULT_TOKENS`; 0 = off; local default off). Session `$` uses OpenRouter catalog prices or `promptPricePerMillion` / `completionPricePerMillion` (`QWEN_PROMPT_PRICE_PER_MILLION`, `QWEN_COMPLETION_PRICE_PER_MILLION`); never invent prices. `/usage` prints copy-pasteable tokens + estimated USD when known. Explicit failover (`fallbacks` in config, or `QWEN_FALLBACK_MODEL` + optional `QWEN_FALLBACK_BASE_URL` / `QWEN_FALLBACK_PROVIDER`) runs after LLM retries on 429/502/503/504/timeout/connection errors only — never invented, never on 401/403/400/abort, never reuses provider A's key for B. `explore_subagent` workers honor the same `fallbacks` worker-locally (in-memory model/baseURL/client for that run only; they do not mutate the main session or the shared pool). Named `profiles` apply live with `/profile <name>` or `nanogent run --profile`; persist with `--global` / `--local`. `/config show` and `nanogent doctor --json` include fallback + active profile when set, plus resolved context source and known capability flags. On LM Studio, a placeholder configured id (`model-identifier`, the default) resolves to the currently loaded model for doctor/enrich (in-memory only; not written to disk). A real configured id that exists in the catalog is not replaced by a different loaded model. Doctor JSON then reports `model` as the resolved id, `configured_model` when it differs, and a short warning. `effort` (`none|low|medium|high|extra-high`, default `low`) is set with `/effort` or `/settings` and persisted to `~/.nanogent.json`. `none` omits thinking extras even for qwen/bonsai. `reasoning_effort` goes to BOTH cloud and local endpoints. Cloud sends it only when the catalog lists the parameter (`extra-high` → `xhigh`); LM Studio / llama.cpp are always sent it, because `none` closes the thinking block and without it local thinking models ignore `/effort` entirely (local branch in `llm/request.ts`). Env: `QWEN_EFFORT` (file wins). `/config` and `/settings` open the live scalar overlay and persist globally; `/config show` and `/config set` stay as text. Nested MCP/profiles/fallbacks stay on `/mcp`, `/profile`, `/connect`.
 - **Tool-call alternation is a hard Qwen/Bonsai requirement.** Their Jinja tool branch raises `Tool message must be responding to a previous tool call.` unless the message *immediately* before a `tool` message is an assistant. The OpenAI-batched shape `assistant(tool_calls=[a,b]) tool(a) tool(b)` is rejected on the **second** result, so any multi-tool round failed the whole request. `normalizeStrictChatTemplate` (`src/llm/chat-template.ts`) re-interleaves each result behind its own single-call assistant turn; it is applied to the main agent payload (`toChatMessages`) and to the sub-agent worker history before `streamChat`. It also drops tool results orphaned by compaction/session edits and strips tool calls a stopped run never answered. Internal `agent.messages` is unchanged — only the wire payload is normalized. When adding any new path that appends messages, keep this invariant: the normalizer is a safety net, not a licence to emit invalid sequences.
 - `dist/` is gitignored (`npm run build` / `prepack`). `scripts/run-nanoagent.mjs` is the **single boot script** — the `nanoagent` / `nanogent` / `nano-agent` / `npx @omega3_0/nanoagent` bin: a git checkout with bun runs `src/main.ts` (same as `bun run start`); `.deb` / Windows zip / npm pack have no `src/` and load `dist/main.js`. The launcher resolves `NANOAGENT_ROOT` (env override → its own `dirname/..`), creates the canonical subdir layout (`config/`, `skills/`, `tools/`, `sessions/`, `workspace/`, `logs/`) on first run, sets `NANOAGENT_ROOT` in the child env, chdirs the child, and prints the resolved layout. The launcher prefers the bundled Bun from the `@oven/bun-*` optionalDependencies (`node_modules/@oven/...`, exec-verified) before any system bun, and falls back to plain Node. There is no network postinstall. `bun.lock` is the canonical lockfile (`bun install --frozen-lockfile` must stay green for CI).
 - `src/main.ts` refuses to run unless `NANOAGENT_ROOT` is set in the environment. Trying to `bun src/main.ts` directly throws. The launcher (`scripts/run-nanoagent.mjs`) is the only supported entry point.

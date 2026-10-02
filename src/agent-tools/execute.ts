@@ -253,17 +253,14 @@ export async function executeToolSequential(
   agent.currentTool = undefined;
 }
 
-/** Hard ceiling on `explore_subagent` dispatches per assistant message. */
-export const MAX_PARALLEL_SUBAGENT_DISPATCH = 4;
+/** Safety ceiling on `explore_subagent` dispatches per assistant message. */
+export const MAX_PARALLEL_SUBAGENT_DISPATCH = 16;
 
 /**
- * How many `explore_subagent` calls one assistant message may actually run.
- *
- * Bounded by the hard ceiling AND by the configured concurrency. Honouring only
- * the ceiling was wrong in the other direction: with concurrency set to 1, four
- * dispatches in one message meant three workers queued on `scheduler.acquire`
- * for up to 60s each and then failed with "all sub-agent workers are busy",
- * stalling the whole tool round.
+ * How many `explore_subagent` calls one assistant message may run: the lane
+ * count the user configured. Extras are rejected immediately rather than queued
+ * — they would sit on `scheduler.acquire` for up to 60s and then fail, stalling
+ * the whole tool round.
  */
 export function subAgentDispatchLimit(maxBackgroundSubAgents: number | undefined): number {
   return Math.min(MAX_PARALLEL_SUBAGENT_DISPATCH, Math.max(1, maxBackgroundSubAgents ?? 4));

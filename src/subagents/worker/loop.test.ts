@@ -82,6 +82,7 @@ mock.module('../../llm/index.js', () => ({
 
 import type { Config, SubAgentPoolConfig } from '../../types.js';
 import { canonicalizeToolArguments, exploreWithSubAgent, readDedupKey } from './loop.js';
+import { formatSubAgentResults, type SubAgentResult } from '../format.js';
 import type { SubAgentProgressEvent } from '../../tools/index.js';
 
 const ws = process.cwd();
@@ -174,6 +175,74 @@ describe('worker argument canonicalization', () => {
     expect(canonicalizeToolArguments({ z: { b: 2, a: 1 }, a: [{ d: 4, c: 3 }] })).toBe(
       '{"a":[{"c":3,"d":4}],"z":{"a":1,"b":2}}'
     );
+  });
+});
+
+describe('grounding: a report with no reads is not an investigation', () => {
+  it('returns text with zero tool calls — the case the formatter must flag', async () => {
+    // Reproduces Lanes 3 and 4 of a real run: the worker answered immediately
+    // with no tool calls at all. "ok" means only "returned text", so a worker
+    // that read nothing and invented a whole codebase map was counted as a
+    // successful investigation (the pool reported 1/1).
+    resetStreamMock();
+    streamTurns = [[{ content: 'shell.ts streams a file with size caps.', reasoningContent: '' }]];
+
+    const result = await exploreWithSubAgent(
+      base,
+      pool,
+      'test-ep',
+      'investigate src/tools/shell.ts'
+    );
+    expect(result.ok).toBe(true);
+    expect(result.toolCalls).toBe(0);
+
+    // The payload must make this unmissable to the calling agent.
+    const formatted = JSON.parse(formatSubAgentResults([result])) as Record<string, unknown>;
+    expect(formatted.ungrounded).toBe(1);
+    expect(String(formatted.summary)).toContain('ungrounded');
+    expect(String(formatted.directive)).toMatch(/verify/i);
+    expect(String(formatted.results)).toContain('UNGROUNDED');
+  });
+
+  it('does not flag a worker that actually used a tool', async () => {
+    resetStreamMock();
+    streamTurns = [
+      [
+        {
+          toolCalls: [
+            { id: 'c1', name: 'read_file', arguments: JSON.stringify({ path: 'src/a.ts' }) },
+          ],
+        },
+      ],
+      [{ content: 'src/a.ts exports a helper.', reasoningContent: '' }],
+    ];
+    const result = await exploreWithSubAgent(base, pool, 'test-ep', 'investigate src/a.ts');
+    expect(result.toolCalls).toBeGreaterThan(0);
+
+    const formatted = JSON.parse(formatSubAgentResults([result])) as Record<string, unknown>;
+    expect(formatted.ungrounded).toBe(0);
+    expect(String(formatted.results)).not.toContain('UNGROUNDED');
+  });
+
+  it('counts grounding per worker in a mixed batch', async () => {
+    const grounded: SubAgentResult = {
+      name: 'a',
+      model: 'm',
+      baseURL: 'u',
+      ok: true,
+      output: 'read it',
+      durationMs: 1,
+      toolCalls: 3,
+    };
+    const ungrounded: SubAgentResult = { ...grounded, name: 'b', output: 'invented', toolCalls: 0 };
+    const formatted = JSON.parse(formatSubAgentResults([grounded, ungrounded])) as Record<
+      string,
+      unknown
+    >;
+    expect(formatted.ungrounded).toBe(1);
+    expect(formatted.successful).toBe(2);
+    // A dispatch that completed is still ok; grounding is a separate signal.
+    expect(formatted.ok).toBe(true);
   });
 });
 

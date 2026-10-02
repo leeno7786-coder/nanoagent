@@ -7,6 +7,7 @@ import { tools, toOpenAI } from '../../tools/index.js';
 import type { ToolExecutionHooks, SubAgentProgressEvent } from '../../tools/index.js';
 import type { SubAgentPoolConfig } from '../../types.js';
 import { summarizeToolResult, type SubAgentResult } from '../format.js';
+import { totalLanes } from '../pool.js';
 import type { WorkerContext } from './context.js';
 import { buildWorkerContext } from './context.js';
 import {
@@ -15,35 +16,8 @@ import {
   workerFailureToFailoverError,
 } from './failover.js';
 import { SUBAGENT_TOOLS, parseWorkerToolArguments, runWorkerTool } from './tool-runner.js';
+import { buildWorkerSystemPrompt } from './prompt.js';
 import { scheduler } from './scheduler.js';
-
-const SUBAGENT_SYSTEM_PROMPT = `You are a sub-agent worker assisting the main coding agent.
-You have a curated READ-ONLY tool set: read_file, batch_read_files, grep_search, search_and_view, search_files.
-
-## YOUR WORKFLOW
-
-1. You have a specific question to answer about a codebase.
-2. The FILE TREE is already provided in your context — DO NOT call list_dir, map_project_tree, or stat_path. Pick the relevant file paths directly from the tree.
-3. Use batch_read_files to read MULTIPLE files in one call. You have a large context window — read entire files.
-4. After reading the key files, write your structured report and STOP.
-
-## RULES
-
-- DO NOT call list_dir, map_project_tree, stat_path, or find_files — the file tree is already in your context.
-- BATCH YOUR READS: call batch_read_files ONCE with all paths, not read_file one at a time.
-- NEVER call read_file on the same file twice.
-- NEVER run the same grep_search twice with minor tweaks. Move on.
-- Use EXACT relative paths from the file tree (e.g. "src/agent.ts").
-- No shell commands. No git. No writes.
-
-## YOUR REPORT (required)
-
-- **Task**: What you were asked to investigate
-- **Key Findings**: Bullet points with file paths and line numbers
-- **Issues**: Problems, bugs, or concerns (if unknown)
-- **Recommendations**: Actionable next steps
-
-Make it specific. File paths and line numbers are critical.`;
 
 const DEFAULT_TURN_TIMEOUT_MS = 600000;
 
@@ -96,12 +70,21 @@ async function runSingleSubAgent(
   task: string,
   signal?: AbortSignal,
   hooks?: ToolExecutionHooks,
-  turnTimeoutMs: number = DEFAULT_TURN_TIMEOUT_MS
+  turnTimeoutMs: number = DEFAULT_TURN_TIMEOUT_MS,
+  scope: string[] = []
 ): Promise<SubAgentResult> {
   const emit = (e: SubAgentProgressEvent) => hooks?.onSubAgentProgress?.(e);
   const start = performance.now();
+  // Assembled per dispatch: the endpoint kind, the model, and the caller's
+  // scope all change what the worker should be told.
+  const systemPrompt = buildWorkerSystemPrompt({
+    model: wctx.cfg.model,
+    baseURL: wctx.cfg.baseURL,
+    scope,
+    pool: wctx.pool,
+  });
   const messages: ChatMessage[] = [
-    { role: 'system', content: SUBAGENT_SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'user', content: task },
   ];
   const toolDefs = toOpenAI(
@@ -635,6 +618,32 @@ async function runSingleSubAgent(
   };
 }
 
+/** Per-dispatch options that shape the worker's prompt. */
+export interface ExploreOptions {
+  /**
+   * Concrete paths the caller named. They are already expanded into the task
+   * context; they are repeated in the system prompt's SCOPE section so the
+   * worker reads them first rather than treating them as one more sentence.
+   */
+  scope?: string[];
+}
+
+/**
+ * How long a dispatch waits for a free lane.
+ *
+ * This used to be a flat 60s, which was fine only while fan-out equalled the
+ * lane count — nothing ever queued. Now that the main agent may dispatch more
+ * avenues than there are lanes, a queued worker can wait longer than any single
+ * worker legitimately runs, and the flat 60s failed it with "all sub-agent
+ * workers are busy". The wait is therefore bounded by the worker's own request
+ * budget: you should never wait longer for a slot than the work you are waiting
+ * for is allowed to take.
+ */
+function resolveQueueWaitMs(pool: SubAgentPoolConfig | undefined): number {
+  const configured = pool?.timeoutMs ?? 900_000;
+  return Math.max(60_000, configured);
+}
+
 /**
  * Run a single remote sub-agent (one endpoint) for a focused investigation.
  */
@@ -644,7 +653,8 @@ export async function exploreWithSubAgent(
   endpointName: string | undefined,
   task: string,
   signal?: AbortSignal,
-  hooks?: ToolExecutionHooks
+  hooks?: ToolExecutionHooks,
+  options?: ExploreOptions
 ): Promise<SubAgentResult> {
   const endpoints = pool.endpoints.filter((e) => e.baseURL && e.model);
   if (endpoints.length === 0) {
@@ -659,12 +669,16 @@ export async function exploreWithSubAgent(
       toolCalls: 0,
     };
   }
+  // Global in-flight cap is the pool's TOTAL LANES (hardware), never the
+  // fan-out count. Passing fan-out here would let N avenues exceed the lanes
+  // and re-introduce the "queued workers time out" problem.
+  const lanes = Math.max(1, totalLanes(pool));
   const ep = await scheduler.acquire(
     endpoints,
     endpointName,
-    60000,
+    resolveQueueWaitMs(pool),
     signal,
-    base.maxBackgroundSubAgents ?? 4
+    lanes
   );
   if (!ep) {
     return {
@@ -681,7 +695,14 @@ export async function exploreWithSubAgent(
   try {
     const wctx = buildWorkerContext(ep, base, pool);
     try {
-      return await runSingleSubAgent(wctx, task, signal, hooks, resolveTurnTimeoutMs(pool));
+      return await runSingleSubAgent(
+        wctx,
+        task,
+        signal,
+        hooks,
+        resolveTurnTimeoutMs(pool),
+        options?.scope ?? []
+      );
     } finally {
       // The per-dispatch ToolCacheManager starts fs.watch handles on cached
       // dependencies — close them so each dispatch doesn't leak watchers.

@@ -1,4 +1,5 @@
 import { createClient } from '../../llm/index.js';
+import { isSmallModelFromConfig, parseParamBillionsFromModelId } from '../../model-runtime.js';
 import { getProviderForBaseURL, resolveRateLimitsForBaseURL } from '../../providers/lookup.js';
 import { createSecurityManager, type SecurityManager } from '../../security/index.js';
 import { createToolCacheManager, type ToolCacheManager } from '../../tools/cache.js';
@@ -44,15 +45,32 @@ export function buildWorkerContext(
   const workerApiKey =
     endpoint.apiKey ||
     (sameEndpoint && base.apiKey ? base.apiKey : 'error' in resolvedKey ? '' : resolvedKey.apiKey);
+
+  // Model size must describe the WORKER's model, never the main session's.
+  //
+  // This used to be hardcoded `smallModelMode: true`, which `isSmallModelFromConfig`
+  // short-circuits on — so every sub-agent was classified small regardless of what
+  // it ran. `read_file` then capped at SMALL_MODEL_READ_LIMIT (100 lines) instead
+  // of 2000, and workers reasoned about half-read files and said so. Observed
+  // live: a 27B worker complaining that its reads came back truncated.
+  const endpointParams = parseParamBillionsFromModelId(endpoint.model);
+  const smallByDefault = isSmallModelFromConfig({
+    model: endpoint.model,
+    modelParamBillions: endpointParams,
+  });
+
   const cfg: Config = {
     ...base,
     baseURL: endpoint.baseURL,
     model: endpoint.model,
     apiKey: workerApiKey,
+    // Explicit pool setting wins; otherwise classify the worker's own model.
+    smallModelMode: limitsCfg?.smallModelMode ?? smallByDefault,
+    // Do not inherit the main session's size — it describes a different model.
+    modelParamBillions: endpointParams,
     maxTokens: limitsCfg?.maxTokens ?? base.maxTokens ?? 1500,
     temperature: limitsCfg?.temperature ?? base.temperature ?? 0.3,
     maxIterations: limitsCfg?.maxIterations ?? 24,
-    smallModelMode: true,
     timeout: limitsCfg?.timeoutMs ?? 900000,
     maxRequestsPerMinute: sameEndpoint
       ? base.maxRequestsPerMinute

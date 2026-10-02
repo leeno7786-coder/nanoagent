@@ -16,7 +16,7 @@ import {
   resetCatalogCapabilitiesForModelChange,
 } from './model-runtime.js';
 import { loadConfig, applySubAgentDefaults } from './config/index.js';
-import { clearSubAgentPoolCache, resolveSubAgentPoolCached } from './subagents/index.js';
+import { resolveSubAgentPool } from './subagents/pool.js';
 import { getRealEnv } from './config/load.js';
 import { createMcpManager } from './mcp/index.js';
 import type { Config } from './types.js';
@@ -116,9 +116,6 @@ export async function reconfigureAgent(
     agent.cfg = resetCatalogCapabilitiesForModelChange(agent.cfg, previousModelId);
   }
   applySubAgentDefaults(agent.cfg);
-  // A profile/model switch can drop the flag; re-publish so the sub-agent tool
-  // does not silently vanish from the schema. No-op when already enabled.
-  if (await publishSubAgentAvailability(agent)) agent.invalidateToolSchemaCache();
 
   // Propagate verbose toggle to environment
   if (newCfg.verbose !== undefined) {
@@ -227,9 +224,6 @@ function extractPreservedFields(cfg: Config) {
  */
 export async function reloadAgentFromDisk(agent: AgentCore, options?: LifecycleMutationOptions) {
   assertLifecycleMutationAllowed(agent, options);
-  // The on-disk pool config may have changed; drop the memoized resolution so
-  // init re-discovers instead of reusing the previous answer.
-  clearSubAgentPoolCache();
   const fresh = loadConfig({ workspace: agent.cfg.workspace });
   // Preserve fields that must not be overwritten by the on-disk config:
   // - workspace: managed by /cd, not config file
@@ -272,59 +266,11 @@ export async function reloadAgentFromDisk(agent: AgentCore, options?: LifecycleM
 }
 
 /**
- * Publish sub-agent availability onto `cfg` so the tool is actually advertised.
- *
- * `applySubAgentDefaults` can only set `subAgentEnabled` from config or the
- * `REMOTE_LMSTUDIO_URL` env var. Tier 3 of `resolveSubAgentPool` — the local
- * LM Studio on 127.0.0.1:1234, which is the documented default and needs no
- * manual config — is only knowable by probing `/api/v0/models`. Without this
- * probe the tool was filtered out of the schema and omitted from the system
- * prompt on the one setup AGENTS.md says needs no manual config.
- *
- * Skipped entirely when the flag is already true (explicit pool or env var), so
- * the common path costs nothing. The probe is a localhost HTTP GET with a 4s
- * timeout that returns null on any failure, and a refused connection is
- * immediate — it does not scale with workspace size.
- *
- * Returns true when the flag changed and the tool schema must be rebuilt.
- */
-async function publishSubAgentAvailability(agent: AgentCore): Promise<boolean> {
-  if (agent.cfg.subAgentEnabled) return false;
-  // An explicit `enabled: false` block is a user decision — never probe past it.
-  if (agent.cfg.subagents?.enabled === false) return false;
-
-  let pool: Awaited<ReturnType<typeof resolveSubAgentPoolCached>>;
-  try {
-    pool = await agent.getSubAgentPool();
-  } catch (err) {
-    logDebug('[init] sub-agent discovery failed:', (err as Error).message);
-    return false;
-  }
-  const first = pool?.endpoints[0];
-  if (!pool || !first) return false;
-
-  agent.cfg.subAgentEnabled = true;
-  agent.cfg.subAgentModel = agent.cfg.subAgentModel ?? first.model;
-  agent.cfg.subAgentBaseURL = agent.cfg.subAgentBaseURL ?? first.baseURL;
-  agent.cfg.subAgentApiKey = agent.cfg.subAgentApiKey ?? first.apiKey;
-  logDebug(
-    `[init] sub-agent pool discovered: ${pool.endpoints.length} endpoint(s), ` +
-      `first ${first.model} @ ${first.baseURL}`
-  );
-  return true;
-}
-
-/**
  * Initialise the agent: detect workspace context, load skills,
  * and push the system message.
  */
 export async function initAgent(agent: AgentCore) {
   await agent.applyRuntimeProfile();
-
-  // Must run before rebuildSystemPrompt: the prompt and the tool schema both
-  // gate the sub-agent tool on cfg.subAgentEnabled.
-  const subAgentsDiscovered = await publishSubAgentAvailability(agent);
-  if (subAgentsDiscovered) agent.invalidateToolSchemaCache();
 
   // Connect to MCP servers if configured.
   // SECURITY: MCP servers defined in a PROJECT-LOCAL config (a repo the user
@@ -467,11 +413,11 @@ export function rebuildSystemPrompt(
     system += `\n\n## Runtime\n${ctxK}k context loaded${param}.`;
   }
   if (subAgentAvailable(agent.cfg) && !agent._smallModel) {
-    // Describe the pool that was actually resolved. `cfg.subAgentModel` is
-    // optional and used to render as literal "undefined" whenever the pool came
-    // from discovery rather than an explicit config block.
-    const pool = agent.cachedSubAgentPool;
-    const subBase = agent.cfg.subAgentBaseURL ?? pool?.endpoints[0]?.baseURL ?? agent.cfg.baseURL;
+    // Describe what the user actually configured: one endpoint, one model, and
+    // how many parallel lanes that model runs. Never a guessed model name.
+    const pool = resolveSubAgentPool(agent.cfg);
+    const ep = pool?.endpoints[0];
+    const subBase = ep?.baseURL ?? agent.cfg.baseURL;
     const providerName = subBase.toLowerCase().includes('mistral.ai')
       ? 'Mistral'
       : subBase.toLowerCase().includes('openrouter.ai')
@@ -479,17 +425,24 @@ export function rebuildSystemPrompt(
         : isLocalProvider(subBase)
           ? 'Local'
           : 'Cloud';
-    const workers = pool?.endpoints.length;
-    const modelLabel =
-      agent.cfg.subAgentModel ??
-      pool?.endpoints[0]?.model ??
-      (workers ? `${workers} remote endpoint${workers === 1 ? '' : 's'}` : 'remote endpoints');
-    const dispatchCap = Math.max(1, agent.maxBackgroundSubAgents);
-    const fanOut =
-      dispatchCap > 1
-        ? ` You may emit up to ${dispatchCap} explore_subagent calls in ONE message to run them in parallel.`
+    const lanes = Math.max(1, ep?.concurrency ?? 1);
+    const endpointCount = pool?.endpoints.length ?? 0;
+    const where = endpointCount > 1 ? ` across ${endpointCount} endpoints` : '';
+    // Fan-out and lanes are separate: the agent may dispatch N avenues even when
+    // fewer than N run at once — the rest queue. Say so, or it will serialize its
+    // own investigation because it assumes one call = one worker.
+    const fanOut = Math.max(1, agent.maxBackgroundSubAgents);
+    const fanOutNote =
+      fanOut > 1
+        ? ` Emit up to ${fanOut} explore_subagent calls in ONE message, each with a DIFFERENT prompt and different paths — pursue ${fanOut} separate lines of inquiry at once rather than one question per turn.`
         : '';
-    system += `\nSub-agents: ${providerName} \`${modelLabel}\` — explore_subagent.${fanOut} Give each a NARROW task naming specific files; they batch-read and return structured findings. Dispatches are synchronous — when explore_subagent returns, that worker is finished. Do not wait or poll; synthesize the returned findings immediately.`;
+    const laneNote =
+      lanes > 1
+        ? ` Up to ${lanes} run concurrently on that one model${lanes === 1 ? '' : ''}; extras queue and still return this turn.`
+        : lanes === 1
+          ? ' Only one runs at a time here, but you may still dispatch several per message — they queue and all return before the turn ends.'
+          : '';
+    system += `\nSub-agents: ${providerName} \`${ep?.model ?? 'configured model'}\`${where}, ${lanes} parallel lane${lanes === 1 ? '' : 's'} — explore_subagent.${fanOutNote}${laneNote} Give each a NARROW task naming specific files; they batch-read and return structured findings. Dispatches are synchronous — when explore_subagent returns, that worker is finished. Do not wait or poll; synthesize the returned findings immediately.`;
   }
   if (agent.mcpManager.totalTools > 0) {
     const serverNames = agent.mcpStates

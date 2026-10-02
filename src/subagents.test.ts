@@ -12,12 +12,6 @@ import {
   resolveSubAgentPool,
   type SubAgentResult,
 } from './subagents/index.js';
-import {
-  isSubAgentModelId,
-  filterLoadedModels,
-  discoveredSlotsPerModel,
-  subAgentEndpointsFromModels,
-} from './subagents/pool.js';
 import type { Config } from './types.js';
 
 const mockConfig: Config = {
@@ -71,9 +65,10 @@ describe('subagents.ts - Sub-agent Management', () => {
       expect(enriched.length).toBeGreaterThan(0);
     });
 
-    it('should include focus path when provided', async () => {
-      const enriched = await enrichTaskWithContext('test task', mockConfig, '/path/to/file');
-      expect(enriched).toContain('/path/to/file');
+    it('should include focus paths when provided', async () => {
+      const enriched = await enrichTaskWithContext('test task', mockConfig, ['src/tools']);
+      expect(enriched).toContain('src/tools');
+      expect(enriched).toContain('SCOPE');
     });
 
     it('should include context header', async () => {
@@ -177,111 +172,31 @@ describe('subagents.ts - Sub-agent Management', () => {
     });
 
     it('should match the AgentCore maxBackgroundSubAgents default', () => {
-      // AGENTS.md documents the concurrency cap as 4; keep the constant in
-      // sync with core.ts (maxBackgroundSubAgents default) and the prompt.
+      // This is only the FALLBACK lane count. The user picks the real value in
+      // the settings panel (Sub-agents → Parallel lanes).
       expect(MAX_CONCURRENT_SUBAGENTS).toBe(4);
     });
   });
 
-  describe('isSubAgentModelId', () => {
-    it('matches Qwen3.5 2B models, bare or publisher-prefixed', () => {
-      expect(isSubAgentModelId('qwen3.5-2b')).toBe(true);
-      expect(isSubAgentModelId('qwen/qwen3.5-2b')).toBe(true);
-      expect(isSubAgentModelId('Qwen3.5-2B-Instruct')).toBe(true);
-    });
-
-    it('rejects 4B+ Qwen3.5, older-generation, and non-Qwen models', () => {
-      expect(isSubAgentModelId('qwen3.5-4b')).toBe(false);
-      expect(isSubAgentModelId('qwen/qwen3.5-9b')).toBe(false);
-      expect(isSubAgentModelId('qwen/qwen3.5-27b')).toBe(false);
-      expect(isSubAgentModelId('qwen2.5-3b')).toBe(false);
-      expect(isSubAgentModelId('gemma-4-12b-coder')).toBe(false);
-      expect(isSubAgentModelId('text-embedding-nomic-embed-text-v1.5')).toBe(false);
-    });
-  });
-
-  describe('discoveredSlotsPerModel', () => {
-    it('defaults to one worker per loaded model', () => {
-      const prev = process.env.NANOGENT_SUBAGENT_SLOTS;
-      delete process.env.NANOGENT_SUBAGENT_SLOTS;
-      try {
-        expect(discoveredSlotsPerModel()).toBe(1);
-      } finally {
-        if (prev === undefined) delete process.env.NANOGENT_SUBAGENT_SLOTS;
-        else process.env.NANOGENT_SUBAGENT_SLOTS = prev;
-      }
-    });
-  });
-
-  describe('subAgentEndpointsFromModels', () => {
-    it('recruits each loaded 2B as its own worker and ignores a loaded 4B', () => {
-      const prev = process.env.NANOGENT_SUBAGENT_SLOTS;
-      delete process.env.NANOGENT_SUBAGENT_SLOTS;
-      try {
-        const endpoints = subAgentEndpointsFromModels(
-          [
-            { id: 'qwen3.5-4b', isLoaded: true },
-            { id: 'qwen3.5-2b', isLoaded: true },
-            { id: 'qwen3.5-2b-instruct', isLoaded: true },
-            { id: 'Qwen3.5-2B-Instruct-q4', isLoaded: true },
-            { id: 'qwen3.5-2b-claude', isLoaded: false },
-          ],
-          'http://127.0.0.1:1234/v1'
-        );
-        expect(endpoints.map((e) => e.model)).toEqual([
-          'qwen3.5-2b',
-          'qwen3.5-2b-instruct',
-          'Qwen3.5-2B-Instruct-q4',
-        ]);
-        expect(endpoints.map((e) => e.name)).toEqual([
-          'qwen-remote-1',
-          'qwen-remote-2',
-          'qwen-remote-3',
-        ]);
-        expect(endpoints.every((e) => e.concurrency === 1)).toBe(true);
-      } finally {
-        if (prev === undefined) delete process.env.NANOGENT_SUBAGENT_SLOTS;
-        else process.env.NANOGENT_SUBAGENT_SLOTS = prev;
-      }
-    });
-  });
-
-  describe('filterLoadedModels', () => {
-    it('keeps only loaded models when loaded state is known', () => {
-      const models = [
-        { id: 'qwen3.5-4b', isLoaded: true },
-        { id: 'qwen/qwen3.5-9b', isLoaded: false },
-        { id: 'qwen3.5-2b', isLoaded: true },
-      ];
-      expect(filterLoadedModels(models).map((m) => m.id)).toEqual(['qwen3.5-4b', 'qwen3.5-2b']);
-    });
-
-    it('keeps everything when the runtime reports no loaded state', () => {
-      const models = [{ id: 'qwen3.5-4b' }, { id: 'qwen3.5-2b' }];
-      expect(filterLoadedModels(models)).toHaveLength(2);
-    });
-
-    it('returns empty when state is known but nothing is loaded', () => {
-      const models = [{ id: 'qwen3.5-4b', isLoaded: false }];
-      expect(filterLoadedModels(models)).toHaveLength(0);
-    });
-  });
-
   describe('resolveSubAgentPool', () => {
-    it('should return undefined for config with disabled subagents', async () => {
+    it('should return undefined for config with disabled subagents', () => {
       const cfg: Partial<Config> = { subagents: { enabled: false, endpoints: [] } };
-      const result = await resolveSubAgentPool(cfg as Config);
-      expect(result).toBeUndefined();
+      expect(resolveSubAgentPool(cfg as Config)).toBeUndefined();
     });
 
-    it('should return explicit pool config when provided', async () => {
+    it('should return explicit pool config when provided', () => {
       const explicitPool = {
         enabled: true,
         endpoints: [{ name: 'test', model: 'test-m', baseURL: 'http://localhost:1234' }],
       };
       const cfg: Partial<Config> = { subagents: explicitPool };
-      const result = await resolveSubAgentPool(cfg as Config);
-      expect(result).toEqual(explicitPool);
+      const result = resolveSubAgentPool(cfg as Config);
+      expect(result?.enabled).toBe(true);
+      expect(result?.endpoints).toHaveLength(1);
+      expect(result?.endpoints[0]?.name).toBe('test');
+      expect(result?.endpoints[0]?.model).toBe('test-m');
+      // Lanes are always populated so the scheduler never has to guess.
+      expect(result?.endpoints[0]?.concurrency).toBe(4);
     });
   });
 });

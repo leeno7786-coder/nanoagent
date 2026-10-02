@@ -3,15 +3,8 @@ import type { ChatMessage } from '../llm/index.js';
 import { toOpenAI, ToolCacheManager, createToolCacheManager, getAllTools } from '../tools/index.js';
 import type { SubAgentProgressEvent } from '../tools/index.js';
 import { SkillManager } from '../skill-manager.js';
-import type {
-  Config,
-  Message,
-  ToolResult,
-  AgentState,
-  Todo,
-  SubAgentPoolConfig,
-} from '../types.js';
-import { peekSubAgentPoolCached, resolveSubAgentPoolCached } from '../subagents/index.js';
+import type { Config, Message, ToolResult, AgentState, Todo } from '../types.js';
+import { resolveSubAgentPool } from '../subagents/index.js';
 import { ContextManager, createContextManager } from '../context/manager.js';
 import {
   SecurityManager,
@@ -149,22 +142,12 @@ export class AgentCore {
   }
 
   /**
-   * Resolve the remote sub-agent pool. Memoization lives in
-   * `src/subagents/pool.ts` so the init-time availability probe, this method
-   * and the `explore_subagent` tool all share one resolution.
-   * @internal Used by the agent-subagents module and initAgent.
+   * Resolve the configured sub-agent pool. Pure and synchronous — resolution
+   * reads config only, so there is no probe, no cache, and nothing to stale.
+   * @internal Used by the agent-subagents module and the /subagents command.
    */
-  async getSubAgentPool() {
-    return resolveSubAgentPoolCached(this.cfg);
-  }
-
-  /**
-   * The most recently resolved pool, without triggering a network probe.
-   * Used when building the system prompt so discovery at init and the prompt
-   * cannot disagree.
-   */
-  get cachedSubAgentPool(): SubAgentPoolConfig | undefined {
-    return peekSubAgentPoolCached(this.cfg);
+  getSubAgentPool() {
+    return resolveSubAgentPool(this.cfg);
   }
 
   /** Called after a tool finishes executing. */
