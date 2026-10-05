@@ -109,7 +109,6 @@ function makeConfig(workspace: string, extra: Partial<Config> = {}): Config {
     baseURL,
     apiKey: 'test-key',
     workspace,
-    maxIterations: 20,
     temperature: 0.3,
     maxTokens: 4096,
     retryCount: 0,
@@ -240,7 +239,7 @@ describe('run-loop review fixes', () => {
     expect(agent.state).toBe('idle');
   }, 20000);
 
-  it('nudges a plan-only review response into repository inspection', async () => {
+  it('does not nudge a plan-only turn back into tool use', async () => {
     const agent = newAgent();
     await agent.init();
 
@@ -251,18 +250,19 @@ describe('run-loop review fixes', () => {
       },
     ]);
     scripted.push([{ toolCalls: [{ id: 'plan-gs', name: 'git_status', arguments: '{}' }] }]);
-    scripted.push([{ content: '## Findings\nThe repository was inspected.' }]);
 
     await agent.run('review the codebase');
 
-    expect(sentMessages.length).toBe(3);
+    // The plan-only reply has no tool calls, so the run stops after one turn.
+    expect(sentMessages.length).toBe(1);
     expect(
-      (sentMessages[1] as Array<{ role: string; content?: string }>).some((message) =>
+      (sentMessages[0] as Array<{ role: string; content?: string }>).some((message) =>
         message.content?.includes('Continue the task now')
       )
-    ).toBe(true);
-    expect(agent.messages.some((message) => message.toolCallId === 'plan-gs')).toBe(true);
-    expect(agent.messages.at(-1)?.content).toContain('Findings');
+    ).toBe(false);
+    // The unused second script entry was never consumed.
+    expect(agent.messages.some((message) => message.toolCallId === 'plan-gs')).toBe(false);
+    expect(agent.state).toBe('idle');
   }, 20000);
 
   it('does not cut off a long read-only review after a fixed number of rounds', async () => {
@@ -529,7 +529,7 @@ describe('run-loop review fixes', () => {
   }, 20000);
 
   it('still terminates alternating reasoning-only loops via the cumulative cap', async () => {
-    const agent = newAgent(makeConfig(ws, { maxIterations: 100 }));
+    const agent = newAgent(makeConfig(ws, {}));
     await agent.init();
 
     // Reasoning-only turns interrupted by tool rounds reset the consecutive

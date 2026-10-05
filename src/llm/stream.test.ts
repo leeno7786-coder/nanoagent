@@ -71,7 +71,6 @@ function makeCfg(baseURL: string): Config {
     model: 'test-model',
     baseURL,
     apiKey: 'k',
-    maxIterations: 1,
     workspace: process.cwd(),
     retryCount: 0,
   } as Config;

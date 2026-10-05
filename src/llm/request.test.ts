@@ -13,7 +13,6 @@ function cfg(extra: Partial<Config> = {}): Config {
     model: 'qwen3.5-4b',
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey: 'k',
-    maxIterations: 1,
     workspace: '/tmp/ws',
     retryCount: 0,
     ...extra,

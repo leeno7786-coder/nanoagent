@@ -109,7 +109,6 @@ function makeConfig(workspace: string, extra: Partial<Config> = {}): Config {
     baseURL,
     apiKey: 'test-key',
     workspace,
-    maxIterations: 10,
     temperature: 0.3,
     maxTokens: 4096,
     retryCount: 0,
@@ -216,12 +215,50 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(agent.totalUsage.input_tokens).toBe(20);
   });
 
-  it('auto-continues when a small model check-ins after one shallow tool round', async () => {
+  it('injects task scaffolding before the user message, not after', async () => {
     const agent = newAgent();
     await agent.init();
 
-    // Round 1: git_status. Round 2: premature "let me know what to focus on".
-    // Round 3 (after nudge): real completion.
+    scripted.push([{ content: 'Added the flag.' }]);
+    await agent.run('add a --json flag to the run command');
+
+    // The scaffold is standing context; the real request must stay most recent
+    // so it is what the model acts on.
+    const scaffoldIdx = agent.messages.findIndex((m) => m.id.startsWith('scaffold-'));
+    const userIdx = agent.messages.findIndex(
+      (m) => m.role === 'user' && !m.id.startsWith('scaffold-') && !m.id.startsWith('nudge-')
+    );
+    expect(scaffoldIdx).toBeGreaterThan(-1);
+    expect(userIdx).toBeGreaterThan(-1);
+    expect(scaffoldIdx).toBeLessThan(userIdx);
+
+    // And it must reach the model in that order.
+    const payload = sentMessages[0] as Array<{ content?: string }>;
+    const scaffoldAt = payload.findIndex((m) => m.content?.includes('## Task: implement'));
+    const requestAt = payload.findIndex((m) => m.content?.includes('--json flag'));
+    expect(scaffoldAt).toBeGreaterThan(-1);
+    expect(scaffoldAt).toBeLessThan(requestAt);
+  });
+
+  it('hides scaffolding from the chat panel', async () => {
+    const agent = newAgent();
+    await agent.init();
+    scripted.push([{ content: 'Added the flag.' }]);
+    await agent.run('add a --json flag to the run command');
+
+    expect(agent.messages.some((m) => m.id.startsWith('scaffold-'))).toBe(true);
+    // getVisibleMessages is the single source of truth for the chat panel.
+    const { getVisibleMessages } = await import('./opentui/chat-screen.js');
+    const visible = getVisibleMessages(agent.messages, 'idle');
+    expect(visible.some((m) => m.content?.includes('## Task: implement'))).toBe(false);
+  });
+
+  it('stops when the model asks a question instead of overriding it', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    // Round 1: git_status. Round 2: the model stops to ask for direction.
+    // The harness must NOT nudge it back into the loop.
     scripted.push([
       {
         toolCalls: [{ id: 'call-1', name: 'git_status', arguments: '{}' }],
@@ -233,34 +270,21 @@ describe('AgentCore run loop (behavioral)', () => {
           "The repo looks clean. Let me know if you have specific files or sections you'd like me to focus on.",
       },
     ]);
-    scripted.push([
-      {
-        toolCalls: [
-          {
-            id: 'call-2',
-            name: 'list_dir',
-            arguments: JSON.stringify({ path: '.' }),
-          },
-        ],
-      },
-    ]);
-    scripted.push([{ content: 'Reviewed top-level layout: src/, docs/, tests/ present.' }]);
 
     await agent.run('lets review the codebase');
 
-    expect(sentMessages.length).toBe(4);
-    // Nudge was injected for the model
-    const nudge = agent.messages.find((m) => m.id.startsWith('nudge-'));
-    expect(nudge).toBeDefined();
-    expect(nudge!.role).toBe('user');
-    // Recovery notice is stored (hidden from the chat panel)
-    expect(
-      agent.messages.some(
-        (m) => m.id.startsWith('notice-recovery-') && /continuing the task/i.test(m.content)
-      )
-    ).toBe(true);
+    // Two turns: the tool round, then the model stopping on its own.
+    expect(sentMessages.length).toBe(2);
+    // No auto-continue nudge was injected — the model decided to stop.
+    expect(agent.messages.find((m) => m.id.startsWith('nudge-'))).toBeUndefined();
+    expect(agent.messages.some((m) => m.id.startsWith('notice-recovery-'))).toBe(false);
+    // Task scaffolding IS expected: this turn routed to codebase-review.
+    const scaffold = agent.messages.find((m) => m.id.startsWith('scaffold-'));
+    expect(scaffold).toBeDefined();
+    expect(scaffold!.content).toContain('open-ended codebase review');
+    // The question is the final assistant message and the run is idle.
     const last = agent.messages[agent.messages.length - 1];
-    expect(last.content).toContain('Reviewed top-level layout');
+    expect(last.content).toContain('Let me know if you have specific files');
     expect(agent.state).toBe('idle');
   });
 

@@ -19,7 +19,6 @@ const mockConfig: Config = {
   baseURL: 'http://localhost:1234',
   apiKey: 'test-key',
   workspace: process.cwd(),
-  maxIterations: 5,
   temperature: 0.3,
   maxTokens: 4096,
 };

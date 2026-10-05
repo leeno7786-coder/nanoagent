@@ -36,9 +36,6 @@ export function validateConfig(cfg: Config): {
     errors.push(`baseURL is not a valid URL: ${cfg.baseURL}`);
   }
 
-  if (cfg.maxIterations < 0 || cfg.maxIterations > 10000) {
-    errors.push(`maxIterations must be between 0 (unlimited) and 10000, got ${cfg.maxIterations}`);
-  }
   if (
     cfg.maxReasoningOnlyRounds !== undefined &&
     (cfg.maxReasoningOnlyRounds < 1 || cfg.maxReasoningOnlyRounds > 50)

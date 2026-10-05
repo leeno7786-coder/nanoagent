@@ -84,7 +84,6 @@ function makeConfig(workspace: string, extra: Partial<Config> = {}): Config {
     baseURL,
     apiKey: 'test-key',
     workspace,
-    maxIterations: 10,
     temperature: 0.3,
     maxTokens: 4096,
     retryCount: 0,
@@ -175,11 +174,16 @@ describe('Qwen Jinja tool-call contract on the wire', () => {
     expect(toolMsgs.map((m) => m.tool_call_id)).toEqual(['c1', 'c2']);
   }, 30000);
 
-  it('stays valid when a run stops on the tool-iteration limit', async () => {
+  it('stays valid when a run is aborted mid tool round', async () => {
     writeFileSync(join(ws, 'a.txt'), 'aaa', 'utf-8');
-    const agent = newAgent(makeConfig(ws, { maxIterations: 1 }));
+    const agent = newAgent();
     await agent.init();
 
+    // A round with TWO tool calls, then abort before the model answers.
+    // The regression this guards: an aborted run must not leave an assistant
+    // turn whose tool_calls have no matching tool results — Qwen rejects the
+    // whole request with "Tool message must be responding to a previous tool
+    // call."
     scripted.push([
       {
         toolCalls: [
@@ -188,13 +192,10 @@ describe('Qwen Jinja tool-call contract on the wire', () => {
         ],
       },
     ]);
-    scripted.push([
-      {
-        toolCalls: [{ id: 'r3', name: 'read_file', arguments: JSON.stringify({ path: 'a.txt' }) }],
-      },
-    ]);
 
-    await agent.run('do it');
+    const controller = new AbortController();
+    controller.abort();
+    await agent.run('do it', controller.signal);
 
     for (const payload of sentMessages as Wire[]) {
       expect(qwenTemplateViolations(payload)).toEqual([]);

@@ -39,6 +39,7 @@ import {
   addNoticeMessage,
   addRecoveryNotice,
   addNudgeMessage,
+  addScaffoldMessage,
   addUserMessage,
   checkAndCompactContext,
   forceCompactContext,
@@ -158,9 +159,11 @@ export class AgentCore {
   ) => Promise<'allow' | 'always_allow' | 'deny'>;
   /** Enable streaming mode — assistant content updates in real-time. */
   public streaming = true;
-  /** Round counter and maximum rounds before stopping (0 = unlimited). */
+  /**
+   * Number of model requests issued in the current turn. Purely a display
+   * counter for the TUI — it does not bound the turn.
+   */
   public roundCounter: number = 0;
-  public maxRounds: number = 0;
   /** Whether the current model is a small/quantized model (stored from init). */
   /** @internal Written by agent-lifecycle; read publicly via isSmallModel. */
   _smallModel: boolean = false;
@@ -342,6 +345,11 @@ export class AgentCore {
   /** @internal Hidden continue-nudge for the model (TUI-filtered). */
   public addNudgeMessage(content: string) {
     addNudgeMessage(this, content);
+  }
+
+  /** @internal Task-type scaffolding for the turn (TUI-filtered). */
+  public addScaffoldMessage(content: string) {
+    addScaffoldMessage(this, content);
   }
 
   /** @internal Accessed by agent/run.ts. */

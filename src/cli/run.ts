@@ -14,17 +14,6 @@ import { isLocalProvider } from '../llm/index.js';
 
 const PERMISSION_MODES: PermissionMode[] = ['read_only', 'ask', 'allow_edits', 'always_allow'];
 
-function parseCliLimit(raw: string, flag: string): number {
-  if (!/^\d+$/.test(raw)) {
-    cliError(`Invalid ${flag} "${raw}". Expected a non-negative integer.`);
-  }
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value)) {
-    cliError(`Invalid ${flag} "${raw}". Expected a safe non-negative integer.`);
-  }
-  return value;
-}
-
 export interface RunResult {
   ok: boolean;
   answer: string;
@@ -43,8 +32,6 @@ export async function cmdRun(argv: string[]): Promise<number> {
       workspace: { type: 'string', short: 'w' },
       model: { type: 'string', short: 'm' },
       'base-url': { type: 'string' },
-      'max-rounds': { type: 'string' },
-      'max-iterations': { type: 'string' },
       json: { type: 'boolean', default: false },
       quiet: { type: 'boolean', default: false },
       verbose: { type: 'boolean', default: false },
@@ -122,9 +109,6 @@ export async function cmdRun(argv: string[]): Promise<number> {
       cfg.apiKey = resolveApiKeyFromEnv(cfg.baseURL) ?? null;
     }
   }
-  if (values['max-iterations']) {
-    cfg.maxIterations = parseCliLimit(values['max-iterations'], '--max-iterations');
-  }
   // Config-level verbose fallback: if --verbose not passed, use config setting
   if (!values.verbose && cfg.verbose) {
     values.verbose = true;
@@ -153,9 +137,6 @@ export async function cmdRun(argv: string[]): Promise<number> {
     abortController.abort();
     return shutdown();
   });
-  if (values['max-rounds']) {
-    agent.maxRounds = parseCliLimit(values['max-rounds'], '--max-rounds');
-  }
   agent.streaming = false;
 
   // Headless runs can't prompt interactively: auto-deny anything that needs

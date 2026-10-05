@@ -160,7 +160,7 @@ Set `NANOAGENT_ROOT` before invoking to point at a different writable state loca
 | `nanoagent doctor`                 | Config + runtime health check                            |
 | `nanoagent todo`                   | CLI todo list (`add`, `list`, `done`, `delete`, `clear`) |
 
-`run` flags: `--prompt` / `--stdin`, `--workspace`, `--model`, `--base-url`, `--profile`, `--max-rounds`, `--max-iterations`, `--json`, `--quiet`, `--verbose`, `--yes` (auto-approve permissions), `--permission-mode <read_only\|ask\|allow_edits\|always_allow>`.
+`run` flags: `--prompt` / `--stdin`, `--workspace`, `--model`, `--base-url`, `--profile`, `--json`, `--quiet`, `--verbose`, `--yes` (auto-approve permissions), `--permission-mode <read_only\|ask\|allow_edits\|always_allow>`.
 
 ---
 

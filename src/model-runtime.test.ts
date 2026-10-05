@@ -223,7 +223,6 @@ describe('enrichConfigWithRuntime OpenRouter', () => {
       model: 'qwen/qwen3-next-80b-a3b-instruct',
       baseURL: 'https://openrouter.ai/api/v1',
       workspace: '/tmp',
-      maxIterations: 10,
       apiKey: 'test-key',
     });
     expect(enriched.modelContextLength).toBe(262144);
@@ -248,7 +247,6 @@ describe('enrichConfigWithRuntime OpenRouter', () => {
       model: 'qwen/qwen3-next-80b-a3b-instruct',
       baseURL: 'https://openrouter.ai/api/v1',
       workspace: '/tmp',
-      maxIterations: 10,
       apiKey: 'test-key',
       modelContextLength: 256000,
     });
@@ -354,7 +352,6 @@ describe('enrichConfigWithRuntime LM Studio loaded fallback', () => {
       model: 'model-identifier',
       baseURL: 'http://127.0.0.1:1234/v1',
       workspace: '/tmp',
-      maxIterations: 10,
       apiKey: null,
       supportsTools: true,
       supportsThinking: true,
@@ -395,7 +392,6 @@ describe('enrichConfigWithRuntime LM Studio loaded fallback', () => {
       model: 'qwen3.5-4b',
       baseURL: 'http://127.0.0.1:1234/v1',
       workspace: '/tmp',
-      maxIterations: 10,
       apiKey: null,
     });
     expect(enriched.model).toBe('qwen3.5-4b');
@@ -550,7 +546,6 @@ describe('enrichConfigWithRuntime OpenAI-compat catalog', () => {
       model: 'llama-3.1-70b-versatile',
       baseURL: 'https://api.groq.com/openai/v1',
       workspace: '/tmp',
-      maxIterations: 10,
       apiKey: 'test-key',
     };
     const enriched = await enrichConfigWithRuntime(cfg);
@@ -571,7 +566,6 @@ describe('enrichConfigWithRuntime OpenAI-compat catalog', () => {
       model: 'qwen3.5-4b',
       baseURL: 'https://api.together.xyz/v1',
       workspace: '/tmp',
-      maxIterations: 10,
       apiKey: 'test-key',
     });
     expect(enriched.modelContextLength).toBeUndefined();
@@ -596,7 +590,6 @@ describe('enrichConfigWithRuntime OpenAI-compat catalog', () => {
       model: 'gpt-4o',
       baseURL: 'https://api.openai.com/v1',
       workspace: '/tmp',
-      maxIterations: 10,
       apiKey: 'test-key',
     });
     expect(enriched.modelContextLength).toBeUndefined();
@@ -618,7 +611,6 @@ describe('enrichConfigWithRuntime OpenAI-compat catalog', () => {
       model: 'llama-3.1-8b',
       baseURL: 'https://api.fireworks.ai/inference/v1',
       workspace: '/tmp',
-      maxIterations: 10,
       apiKey: 'k',
     });
     expect(enriched.modelContextLength).toBe(16384);

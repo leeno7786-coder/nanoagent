@@ -64,8 +64,11 @@ function spinnerFrame(ms: number): string {
 export function getVisibleMessages(messages: Message[], state: AgentState): Message[] {
   return messages.filter((msg, idx) => {
     if (msg.role === 'system' || msg.role === 'tool') return false;
-    // Auto-continue nudges and mid-loop recovery status stay off the chat panel.
-    if (msg.id.startsWith('nudge-') || isRecoveryNotice(msg)) return false;
+    // Auto-continue nudges, task scaffolding, and mid-loop recovery status
+    // stay off the chat panel.
+    if (msg.id.startsWith('nudge-') || msg.id.startsWith('scaffold-') || isRecoveryNotice(msg)) {
+      return false;
+    }
     if (isRecoveryOnlyAssistant(msg, messages)) return false;
     const isLastMessage = idx === messages.length - 1;
     if (isLastMessage && state !== 'idle') return true;

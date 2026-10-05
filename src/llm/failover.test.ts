@@ -20,7 +20,6 @@ function cfg(extra: Partial<Config> = {}): Config {
     model: 'local-4b',
     baseURL: 'http://127.0.0.1:1234/v1',
     apiKey: 'lm-studio',
-    maxIterations: 5,
     workspace: process.cwd(),
     ...extra,
   } as Config;

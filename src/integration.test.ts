@@ -13,7 +13,6 @@ const testConfig: Partial<Config> = {
   baseURL: 'http://localhost:9999',
   apiKey: 'test-key',
   workspace: process.cwd(),
-  maxIterations: 1,
   temperature: 0.3,
   maxTokens: 4096,
   retryCount: 0,

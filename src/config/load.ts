@@ -583,10 +583,6 @@ export function loadConfig(pathOrConfig?: string | Partial<Config>): Config {
       cfg.maxConcurrentLlmRequests = limits.maxInFlight;
     }
   }
-  if (process.env.QWEN_MAX_ITERATIONS) {
-    const n = parseIntegerEnv(process.env.QWEN_MAX_ITERATIONS);
-    if (!Number.isNaN(n)) cfg.maxIterations = n;
-  }
   // A CLI/programmatic workspace must win over every environment source. The
   // workspace .env is scrubbed above, so a trusted process/canonical-env value
   // is safe to use only when no explicit workspace option was supplied.

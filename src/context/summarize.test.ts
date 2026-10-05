@@ -11,7 +11,6 @@ function cfg(): Config {
     baseURL: 'http://127.0.0.1:1234/v1',
     model: 'qwen3.5-4b',
     apiKey: null,
-    maxIterations: 10,
     workspace: process.cwd(),
     modelContextLength: 120,
   };

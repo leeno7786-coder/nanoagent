@@ -39,8 +39,6 @@ export type SettingsKey =
   | 'smallModelMode'
   | 'timeout'
   | 'retryCount'
-  | 'maxIterations'
-  | 'maxToolRoundsBeforeCheckin'
   | 'maxReasoningOnlyRounds'
   | 'rateLimitMs'
   | 'maxRequestsPerMinute'
@@ -137,8 +135,6 @@ const ADVANCED_SECTIONS: readonly { title: string; rows: readonly SettingsRow[] 
   {
     title: 'Limits',
     rows: [
-      { key: 'maxIterations', label: 'Max iters', mode: 'edit' },
-      { key: 'maxToolRoundsBeforeCheckin', label: 'Tool check-in', mode: 'edit' },
       { key: 'maxReasoningOnlyRounds', label: 'Reasoning rounds', mode: 'edit' },
       { key: 'rateLimitMs', label: 'Rate limit ms', mode: 'edit' },
       { key: 'maxRequestsPerMinute', label: 'RPM', mode: 'edit' },
@@ -439,8 +435,6 @@ const INTEGER_RULES: Partial<Record<SettingsKey, NumberRule>> = {
   timeout: { label: 'Timeout ms', min: 1_000, max: 900_000 },
   retryCount: { label: 'Retries', min: 0, max: 10 },
   maxTokens: { label: 'Max tokens', min: 0 },
-  maxIterations: { label: 'Max iters', min: 0, max: 10_000 },
-  maxToolRoundsBeforeCheckin: { label: 'Tool check-in', min: 0 },
   maxReasoningOnlyRounds: { label: 'Reasoning rounds', min: 1, max: 50 },
   rateLimitMs: { label: 'Rate limit ms', min: 0 },
   maxRequestsPerMinute: { label: 'RPM', min: 0, max: 10_000 },

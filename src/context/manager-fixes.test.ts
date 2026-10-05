@@ -14,7 +14,6 @@ function makeCfg(extra: Partial<Config> = {}): Config {
     model: 'test-model',
     baseURL: 'http://127.0.0.1:1234/v1',
     apiKey: null,
-    maxIterations: 10,
     workspace: process.cwd(),
     ...extra,
   } as Config;

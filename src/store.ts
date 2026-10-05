@@ -119,8 +119,6 @@ export function buildConfigSnapshot(cfg: Config): Partial<Config> {
     effort: cfg.effort,
     timeout: cfg.timeout,
     retryCount: cfg.retryCount,
-    maxIterations: cfg.maxIterations,
-    maxToolRoundsBeforeCheckin: cfg.maxToolRoundsBeforeCheckin,
     maxReasoningOnlyRounds: cfg.maxReasoningOnlyRounds,
     smallModelMode: cfg.smallModelMode,
     modelParamBillions: cfg.modelParamBillions,

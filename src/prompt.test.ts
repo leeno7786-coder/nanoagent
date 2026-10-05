@@ -23,14 +23,19 @@ describe('tool-batching prompt lines', () => {
     );
   });
 
-  it('tells large models to run git_status/git_diff once on review tasks', () => {
+  it('leaves review-task guidance to the task router, not the base prompt', () => {
+    // Review scaffolding (git_status/git_diff scope, report ordering) is
+    // per-turn and injected by src/task-router.ts. Keeping it in the base
+    // prompt would apply review rules to coding and research turns too.
     const prompt = buildLargeModelPrompt(ctx);
-    expect(prompt).toMatch(/git_diff \/ git_status first/i);
-    expect(prompt).toMatch(/once/i);
-    expect(prompt).toMatch(/do not repeat/i);
+    expect(prompt).not.toMatch(/git_diff \/ git_status first/i);
+    expect(prompt).not.toMatch(/Critical → High → Medium → Low/);
+    expect(prompt).not.toMatch(/## Review \/ audit output/);
   });
 
-  it('tells models that repeating discovery tools is not progress', () => {
+  it('still keeps the no-repeat rule in the shared prompt extras', () => {
+    // The anti-circularity rule is universal, not review-specific, so it
+    // stays in appendPromptExtras where every turn sees it.
     const extras = appendPromptExtras('Base prompt', ctx);
     expect(extras).toMatch(/Repeating git_status/);
     expect(extras).toMatch(/stop calling tools/i);

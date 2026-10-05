@@ -145,7 +145,6 @@ describe('getDoctorReport LM Studio placeholder', () => {
       model: 'model-identifier',
       baseURL: 'http://127.0.0.1:1234/v1',
       workspace: process.cwd(),
-      maxIterations: 10,
       apiKey: null,
     });
     expect(report.model).toBe('nvidia/nemotron-3-nano-4b');
@@ -180,7 +179,6 @@ describe('getModelsList endpoint overrides', () => {
       provider: 'lmstudio',
       model: 'model-identifier',
       apiKey: null,
-      maxIterations: 10,
       workspace: process.cwd(),
     });
 

@@ -9,7 +9,6 @@ function cfg(extra: Partial<Config> = {}): Config {
     baseURL: 'http://127.0.0.1:1234/v1',
     apiKey: 'test-key',
     workspace: process.cwd(),
-    maxIterations: 5,
     retryCount: 0,
     ...extra,
   } as Config;

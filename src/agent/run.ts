@@ -6,8 +6,8 @@ import { SkillManager } from '../skill-manager.js';
 import type { Config, Message } from '../types.js';
 import { rnd, now } from '../agent-utils.js';
 import { logError } from '../log.js';
-import { EARLY_STOP_CONTINUE_NUDGE, looksLikePrematureCheckin } from './early-stop.js';
 import { createToolRepeatState, DUPLICATE_TOOL_NUDGE } from './tool-repeat.js';
+import { routeTask } from '../task-router.js';
 import {
   capToolArgumentsForLlm,
   resolveToolCallArgumentTokenBudget,
@@ -29,10 +29,6 @@ const REASONING_ONLY_NUDGE =
   'Your last reply contained only internal reasoning — no visible answer and no tool calls. ' +
   'Respond now with normal message content: either make the tool calls needed to continue ' +
   'the task, or write the actual answer. Do not repeat the analysis.';
-/** Only recover when the model barely started (≤ N tool rounds). */
-const EARLY_STOP_MAX_TOOL_ROUNDS = 2;
-/** Cap auto-continues per run so we never loop forever on check-ins. */
-const EARLY_STOP_MAX_CONTINUES = 2;
 /**
  * Output-cap escalation ceiling for reasoning-only turns. A thinking model
  * that burns the whole completion budget mid-thought (finish_reason=length,
@@ -94,12 +90,6 @@ export async function agentRun(
   agent.setState('thinking');
   agent.roundCounter = 0;
 
-  // Per-turn state. Declared up front so the user-message reset path can
-  // clear them safely before the first loop iteration.
-  let earlyStopContinues = 0;
-  const isOpenEndedInspectionTask =
-    /\b(?:review|audit|codebase|repository|repo|inspect|explore|investigate)\b/i.test(userText);
-
   const maxReasoningOnly =
     agent.cfg.maxReasoningOnlyRounds !== undefined
       ? agent.cfg.maxReasoningOnlyRounds > 0
@@ -123,6 +113,17 @@ export async function agentRun(
     if (autoLoaded.length > 0) {
       const names = autoLoaded.map((s) => s.name).join(', ');
       agent.addAssistantMessage(`Auto-loaded skills: ${names} — these are now active in context.`);
+    }
+  }
+
+  // Classify the turn and inject task-specific scaffolding. Injected BEFORE the
+  // user message (added further down) so the actual request stays the most
+  // recent instruction — recency is what the model acts on, and the scaffold
+  // is standing context for it, not an override.
+  if (!userText.trim().startsWith('/')) {
+    const route = routeTask(userText);
+    if (route.scaffold) {
+      agent.addScaffoldMessage(route.scaffold);
     }
   }
 
@@ -161,7 +162,6 @@ export async function agentRun(
       skipUserMessage = true;
       agent.consecutiveToolRounds = 0;
       agent.toolRepeat = createToolRepeatState();
-      earlyStopContinues = 0;
     } else if (skill) {
       agent.addAssistantMessage(`Skill "${skillName}" is already loaded.`);
       agent.setState('idle');
@@ -325,12 +325,10 @@ export async function agentRun(
   if (!skipUserMessage) {
     agent.consecutiveToolRounds = 0;
     agent.toolRepeat = createToolRepeatState();
-    earlyStopContinues = 0;
     agent.addUserMessage(userText);
   }
 
   let iterationCount = 0;
-  let toolRoundCount = 0;
   let reasoningOnlyStreak = 0;
   let reasoningOnlyTotal = 0;
   /** Raised only for requests in this user turn; never mutates cfg.maxTokens. */
@@ -378,21 +376,6 @@ export async function agentRun(
     },
     reconfigure: (patch: Partial<Config>) => agent._reconfigureDuringRun(patch),
     addNoticeMessage: (content: string) => agent.addNoticeMessage(content),
-  };
-
-  const tryContinueAfterPrematureCheckin = (content: string): boolean => {
-    if (earlyStopContinues >= EARLY_STOP_MAX_CONTINUES) return false;
-    if (agent.consecutiveToolRounds <= 0 && !isOpenEndedInspectionTask) return false;
-    if (agent.consecutiveToolRounds > EARLY_STOP_MAX_TOOL_ROUNDS) return false;
-    if (!looksLikePrematureCheckin(content)) return false;
-    earlyStopContinues++;
-    agent.addRecoveryNotice(
-      `↻ Model paused to ask for direction after ${agent.consecutiveToolRounds} tool round(s) — continuing the task…`
-    );
-    agent.addNudgeMessage(EARLY_STOP_CONTINUE_NUDGE);
-    agent.setState('thinking');
-    agent.onUpdate?.();
-    return true;
   };
 
   /**
@@ -463,18 +446,6 @@ export async function agentRun(
   while (true) {
     if (signal?.aborted) {
       finishAbortedRun(agent);
-      return;
-    }
-
-    // Max rounds limits model requests; maxIterations limits executed tool
-    // rounds and still permits the follow-up answer after the final round.
-    const maxIter = agent.cfg.maxIterations > 0 ? agent.cfg.maxIterations : Infinity;
-    const maxRnd = agent.maxRounds > 0 ? agent.maxRounds : Infinity;
-    if (Number.isFinite(maxRnd) && iterationCount > maxRnd) {
-      const label = `Round limit reached (${maxRnd} rounds)`;
-      agent.addNoticeMessage(`${label}. Resuming on your next prompt.`);
-      agent.setState('idle');
-      agent.onUpdate?.();
       return;
     }
 
@@ -809,13 +780,6 @@ export async function agentRun(
           // Same as the tool-call branch: a visible reply breaks the
           // reasoning-only streak, but the force-thinking-off escalation
           // (if active) persists for the rest of the user turn.
-          if (
-            !isEndpointRateLimited(agent.cfg.baseURL) &&
-            tryContinueAfterPrematureCheckin(assistantMsg.content)
-          ) {
-            await new Promise((r) => setTimeout(r, 0));
-            continue;
-          }
           agent.setState('idle');
           agent.onUpdate?.();
           return;
@@ -1108,13 +1072,6 @@ export async function agentRun(
           await new Promise((r) => setTimeout(r, 0));
           continue;
         }
-        if (
-          !isEndpointRateLimited(agent.cfg.baseURL) &&
-          tryContinueAfterPrematureCheckin(msg.content || '')
-        ) {
-          await new Promise((r) => setTimeout(r, 0));
-          continue;
-        }
         agent.setState('idle');
         agent.onUpdate?.();
         return;
@@ -1127,16 +1084,6 @@ export async function agentRun(
     }
 
     const tcs = assistantMsg.toolCalls || [];
-
-    if (tcs.length > 0 && Number.isFinite(maxIter) && toolRoundCount >= maxIter) {
-      agent.addNoticeMessage(
-        `Tool iteration limit reached (${maxIter} iterations). Resuming on your next prompt.`
-      );
-      reconcileAssistantToolCalls(agent, assistantMsg);
-      agent.setState('idle');
-      agent.onUpdate?.();
-      return;
-    }
 
     if (tcs.length === 0) {
       agent.consecutiveToolRounds = 0;
@@ -1161,25 +1108,6 @@ export async function agentRun(
             `Stopping here to avoid an infinite loop — rephrase your request or take over manually.`
         );
         reconcileAssistantToolCalls(agent, assistantMsg);
-        agent.setState('idle');
-        agent.onUpdate?.();
-        return;
-      }
-
-      const checkinLimit = agent.cfg.maxToolRoundsBeforeCheckin ?? 0;
-      if (checkinLimit > 0 && agent.consecutiveToolRounds >= checkinLimit) {
-        agent.consecutiveToolRounds = 0;
-        reconcileAssistantToolCalls(agent, assistantMsg);
-        const todoSummary =
-          agent.todos.length > 0
-            ? '\n\n**Task status:**\n' +
-              agent.todos.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n')
-            : '';
-        agent.addAssistantMessage(
-          `🔄 **Check-in with User** (${checkinLimit} continuous tool rounds completed):\n` +
-            `I've completed several execution steps on your request.${todoSummary}\n\n` +
-            `Pausing to confer with you before continuing. Would you like me to keep going, or do you have any feedback/adjustments?`
-        );
         agent.setState('idle');
         agent.onUpdate?.();
         return;
@@ -1217,8 +1145,6 @@ export async function agentRun(
     }
     await flushParallel();
 
-    if (tcs.length > 0) toolRoundCount++;
-
     if (signal?.aborted) {
       finishAbortedRun(agent, assistantMsg);
       return;
@@ -1254,7 +1180,6 @@ export async function agentRun(
     // Yield so abort signals and TUI updates can process between tool rounds.
     await new Promise((r) => setTimeout(r, 0));
   }
-
   agent.setState('idle');
   agent.onUpdate?.();
 }

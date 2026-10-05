@@ -11,7 +11,6 @@ function fakeAgent(cfg: Partial<Config>): AgentCore {
       model: 'test',
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey: null,
-      maxIterations: 5,
       workspace: process.cwd(),
       ...cfg,
     } as Config,

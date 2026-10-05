@@ -12,7 +12,6 @@ function cfg(baseURL: string, extra: Partial<Config> = {}): Config {
     model: 'test-model',
     baseURL,
     apiKey: 'k',
-    maxIterations: 10,
     workspace: process.cwd(),
     ...extra,
   } as Config;

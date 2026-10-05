@@ -14,7 +14,6 @@ const defaultConfig: Partial<Config> = {
   baseURL: 'http://localhost:1234',
   apiKey: 'test-key',
   workspace: process.cwd(),
-  maxIterations: 5,
   temperature: 0.3,
   maxTokens: 4096,
   retryCount: 3,
@@ -151,7 +150,7 @@ describe('AgentCore', () => {
 
   describe('Error Handling', () => {
     it('should handle invalid configuration without throwing', () => {
-      const invalidConfig = { ...defaultConfig, maxIterations: -1 };
+      const invalidConfig = { ...defaultConfig, retryCount: 999 };
       expect(() => new AgentCore(invalidConfig as Config)).not.toThrow();
     });
 
@@ -164,22 +163,22 @@ describe('AgentCore', () => {
 
   describe('Configuration', () => {
     it('should reconfigure agent', async () => {
-      await agent.reconfigure({ maxIterations: 10 });
-      expect(agent.cfg.maxIterations).toBe(10);
+      await agent.reconfigure({ maxTokens: 8192 });
+      expect(agent.cfg.maxTokens).toBe(8192);
     });
 
     it('should maintain critical config fields on reconfigure', async () => {
       const originalWorkspace = agent.cfg.workspace;
-      await agent.reconfigure({ maxIterations: 10 });
+      await agent.reconfigure({ maxTokens: 4096 });
       // Workspace should be preserved
       expect(agent.cfg.workspace).toBe(originalWorkspace);
     });
 
     it('should allow multiple reconfigurations', async () => {
-      await agent.reconfigure({ maxIterations: 10 });
-      expect(agent.cfg.maxIterations).toBe(10);
-      await agent.reconfigure({ maxIterations: 20 });
-      expect(agent.cfg.maxIterations).toBe(20);
+      await agent.reconfigure({ maxTokens: 2048 });
+      expect(agent.cfg.maxTokens).toBe(2048);
+      await agent.reconfigure({ maxTokens: 16384 });
+      expect(agent.cfg.maxTokens).toBe(16384);
     });
   });
 
@@ -245,8 +244,13 @@ describe('AgentCore', () => {
       expect(agent.roundCounter).toBe(5);
     });
 
-    it('should default maxRounds to 0 (unlimited)', () => {
-      expect(agent.maxRounds).toBe(0);
+    it('should not expose a round cap', () => {
+      // The loop has no turn budget: a turn ends when the model emits no tool
+      // calls. maxRounds / maxIterations were removed — nothing may reintroduce
+      // a cap here, or the agent will cut off legitimate long tasks.
+      expect('maxRounds' in agent).toBe(false);
+      expect('maxIterations' in agent.cfg).toBe(false);
+      expect('maxToolRoundsBeforeCheckin' in agent.cfg).toBe(false);
     });
   });
 

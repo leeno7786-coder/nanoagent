@@ -257,6 +257,27 @@ export function addNudgeMessage(agent: AgentCore, content: string): void {
 }
 
 /**
+ * Inject task-type scaffolding for the model (id prefix `scaffold-`).
+ *
+ * Distinct from `nudge-` on purpose: a nudge is a mid-loop recovery signal
+ * pushed because the model stalled, while scaffolding is the standing brief
+ * for the turn's task type. Both are hidden from the chat panel and both go to
+ * the model as a user turn, but only scaffolding is expected on every turn —
+ * so tests and debugging must be able to tell them apart.
+ */
+export function addScaffoldMessage(agent: AgentCore, content: string): void {
+  const msg: Message = {
+    id: `scaffold-${rnd()}`,
+    role: 'user',
+    content,
+    timestamp: now(),
+  };
+  agent.messages.push(msg);
+  agent.contextManager.addMessage(msg);
+  agent.onUpdate?.();
+}
+
+/**
  * Add a tool message to the conversation.
  */
 export function addToolMessage(agent: AgentCore, content: string, toolCallId?: string): void {

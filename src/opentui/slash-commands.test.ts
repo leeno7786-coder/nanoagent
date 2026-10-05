@@ -26,7 +26,6 @@ function makeConfig(ws: string): Config {
     baseURL: 'http://localhost:1234/v1',
     apiKey: 'test-key',
     workspace: ws,
-    maxIterations: 5,
     temperature: 0.3,
     maxTokens: 4096,
   } as Config;

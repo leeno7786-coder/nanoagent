@@ -102,7 +102,10 @@ async function runSingleSubAgent(
   // Budgets live on the RESOLVED pool, not base.subagents — on the
   // auto-discovery path those are different objects.
   const TOOL_BUDGET = wctx.pool?.toolBudget ?? 18;
-  const maxIter = Math.min(wctx.cfg.maxIterations ?? 12, MAX_WORKER_ITERATIONS);
+  // A worker is a bounded background task, not an autonomous turn: it MUST
+  // have a hard iteration ceiling or a looping model would run forever with
+  // no user watching. This is the one place a turn budget belongs.
+  const maxIter = Math.min(wctx.pool?.maxIterations ?? 24, MAX_WORKER_ITERATIONS);
   const triedFallbacks = initialWorkerTriedFallbacks(wctx.cfg);
   const failoverNotices: string[] = [];
   const withNotices = (output: string): string => {

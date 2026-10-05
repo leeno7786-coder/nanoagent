@@ -70,7 +70,6 @@ export function buildWorkerContext(
     modelParamBillions: endpointParams,
     maxTokens: limitsCfg?.maxTokens ?? base.maxTokens ?? 1500,
     temperature: limitsCfg?.temperature ?? base.temperature ?? 0.3,
-    maxIterations: limitsCfg?.maxIterations ?? 24,
     timeout: limitsCfg?.timeoutMs ?? 900000,
     maxRequestsPerMinute: sameEndpoint
       ? base.maxRequestsPerMinute

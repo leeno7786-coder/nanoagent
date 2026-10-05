@@ -42,11 +42,15 @@ export interface Config {
   model: string;
   /** API key for authentication (null when not configured). */
   apiKey: string | null;
-  /** Maximum number of tool-call iterations per turn. */
-  maxIterations: number;
-  /** Maximum consecutive tool execution rounds before pausing to confer with user. */
-  maxToolRoundsBeforeCheckin?: number;
-  /** Max consecutive reasoning-only LLM responses before the run loop stops (default: 5, or 3 for small models). */
+  /**
+   * Max consecutive reasoning-only LLM responses before the run loop stops
+   * (default: 5, or 3 for small models).
+   *
+   * This is a liveness guard, not a budget. A turn that produces thinking but
+   * no content and no tool calls cannot make progress on its own, so without a
+   * cap the loop would spin forever. Everything else about turn length is
+   * decided by the model: it stops when it emits no tool calls.
+   */
   maxReasoningOnlyRounds?: number;
   /** Working directory for file and shell operations. */
   workspace: string;
