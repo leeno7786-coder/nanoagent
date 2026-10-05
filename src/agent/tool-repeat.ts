@@ -21,10 +21,19 @@ export interface ToolRepeatState {
   seenSignatures: Set<string>;
   /** Duplicate blocks since the last round reset (set by the run loop). */
   blockedThisRound: number;
+  /**
+   * Incremented every time a mutation clears the dedup baseline.
+   *
+   * The run loop watches this to tell "the model is stuck re-reading the same
+   * things" apart from "the model moved on". A mutation invalidates every
+   * prior read, so a re-read after an edit is legitimate progress and must not
+   * count toward the stuck-loop budget.
+   */
+  invalidations: number;
 }
 
 export function createToolRepeatState(): ToolRepeatState {
-  return { seenSignatures: new Set(), blockedThisRound: 0 };
+  return { seenSignatures: new Set(), blockedThisRound: 0, invalidations: 0 };
 }
 
 /** Hidden nudge after a duplicate block — the model should write findings. */
@@ -93,6 +102,7 @@ export function evaluateToolRepeat(
     // A mutation invalidates every read/search result, not only git state.
     // Reading a file again after editing it is a valid verification step.
     state.seenSignatures.clear();
+    state.invalidations++;
   }
   state.seenSignatures.add(sig);
   return { blocked: false };

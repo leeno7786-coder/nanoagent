@@ -322,6 +322,114 @@ describe('run-loop review fixes', () => {
     expect(agent.state).toBe('idle');
   }, 20000);
 
+  it('stops a fresh-read + blocked-repeat loop that never makes progress', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    // This is the hole the consecutive-round guard cannot see. Every round
+    // mixes ONE fresh read (so the round is NOT all-duplicate, and the
+    // all-duplicate streak resets) with a git_status that is already
+    // blocked. Each round looks productive, so both the signature guard and
+    // the streak guard stay silent forever.
+    //
+    // round 1: read(a) + git_status   -> git_status allowed (first call)
+    // round 2: read(b) + git_status   -> git_status BLOCKED, new read ok
+    // round 3: read(c) + git_status   -> BLOCKED, new read ok  (repeats forever)
+    scripted.push([
+      {
+        toolCalls: [
+          { id: 'r1', name: 'read_file', arguments: JSON.stringify({ path: 'a.txt' }) },
+          { id: 'g1', name: 'git_status', arguments: '{}' },
+        ],
+      },
+    ]);
+    for (let i = 0; i < 12; i++) {
+      scripted.push([
+        {
+          toolCalls: [
+            {
+              id: `r${i + 2}`,
+              name: 'read_file',
+              arguments: JSON.stringify({ path: `file-${i}.txt` }),
+            },
+            { id: `g${i + 2}`, name: 'git_status', arguments: '{}' },
+          ],
+        },
+      ]);
+    }
+    scripted.push([{ content: 'should not be reached' }]);
+
+    await agent.run('review the codebase');
+
+    const notice = agent.messages.find(
+      (m) => m.role === 'assistant' && /no real progress|Stuck loop detected/i.test(m.content)
+    );
+    expect(notice).toBeDefined();
+    // The loop must terminate without draining all 13 scripted rounds.
+    expect(agent.messages.some((m) => m.content === 'should not be reached')).toBe(false);
+    expect(agent.state).toBe('idle');
+    // Bounded: the cumulative guard fires at 6 blocks, so ~7 rounds max.
+    expect(sentMessages.length).toBeLessThan(10);
+  }, 20000);
+
+  it('does not count a post-edit re-read as circling', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    writeFileSync(join(ws, 'target.txt'), 'v1', 'utf-8');
+
+    // read + edit, then read the SAME file again to verify, five times over.
+    // A mutation invalidates the dedup baseline, so the repeated read is
+    // legitimate progress and must never trip the stuck-loop guard.
+    scripted.push([
+      {
+        toolCalls: [
+          { id: 'rd-0', name: 'read_file', arguments: JSON.stringify({ path: 'target.txt' }) },
+          {
+            id: 'ed-1',
+            name: 'edit_file',
+            arguments: JSON.stringify({
+              path: 'target.txt',
+              old_text: 'v1',
+              new_text: 'v2',
+            }),
+          },
+        ],
+      },
+    ]);
+    for (let i = 2; i <= 5; i++) {
+      scripted.push([
+        {
+          toolCalls: [
+            {
+              id: `rd-${i}`,
+              name: 'read_file',
+              arguments: JSON.stringify({ path: 'target.txt' }),
+            },
+            {
+              id: `ed-${i}`,
+              name: 'edit_file',
+              arguments: JSON.stringify({
+                path: 'target.txt',
+                old_text: `v${i - 1}`,
+                new_text: `v${i}`,
+              }),
+            },
+          ],
+        },
+      ]);
+    }
+    scripted.push([{ content: 'Verification complete: 5 edit cycles, no circling.' }]);
+
+    await agent.run('edit target.txt five times');
+
+    expect(agent.messages.at(-1)?.content).toContain('Verification complete');
+    expect(
+      agent.messages.some((m) => /no real progress|Stuck loop detected/i.test(m.content))
+    ).toBe(false);
+    expect(agent.state).toBe('idle');
+  }, 20000);
+
   it('breaks the loop after 3 consecutive identical tool-call signatures', async () => {
     const agent = newAgent();
     await agent.init();

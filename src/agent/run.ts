@@ -367,6 +367,26 @@ export async function agentRun(
   /** Consecutive rounds where every tool was a duplicate block. */
   let allDuplicateRoundStreak = 0;
   const MAX_ALL_DUPLICATE_ROUNDS = 2;
+  /**
+   * Cumulative duplicate blocks since the last real progress marker.
+   *
+   * The consecutive-round streak above cannot see this failure mode:
+   *
+   *   round 1: read_file(new.ts)   -> allowed, streak resets to 0
+   *   round 2: git_status          -> BLOCKED, but round wasn't all-dupes
+   *   round 3: read_file(newer.ts) -> allowed, streak resets to 0 again
+   *
+   * Each round looks productive, so the agent can interleave a fresh read with
+   * an already-blocked call indefinitely. There is no round budget to stop it
+   * (the model owns turn length), so this cumulative count is the backstop.
+   *
+   * Reset by any mutation (`toolRepeat.invalidations`) — re-reading after an
+   * edit is legitimate progress — and by a visible reply, which ends the turn.
+   */
+  let duplicateBlocksSinceProgress = 0;
+  const MAX_DUPLICATE_BLOCKS_WITHOUT_PROGRESS = 6;
+  /** `toolRepeat.invalidations` as of the last round — detects a mutation. */
+  let lastInvalidationsSeen = 0;
   let duplicateNudged = false;
   /** Each configured fallback is tried at most once per user turn. */
   const triedFallbacks = new Set<string>();
@@ -1158,6 +1178,16 @@ export async function agentRun(
         );
         agent.addNudgeMessage(DUPLICATE_TOOL_NUDGE);
       }
+
+      // A mutation invalidates the dedup baseline, so re-reading afterwards is
+      // legitimate progress rather than circling. Compare against the value
+      // seen before this round's tools ran (invalidations increments during
+      // execution, which happens above this check).
+      if (agent.toolRepeat.invalidations !== lastInvalidationsSeen) {
+        lastInvalidationsSeen = agent.toolRepeat.invalidations;
+        duplicateBlocksSinceProgress = 0;
+      }
+
       if (agent.toolRepeat.blockedThisRound >= tcs.length) {
         allDuplicateRoundStreak++;
         if (allDuplicateRoundStreak >= MAX_ALL_DUPLICATE_ROUNDS) {
@@ -1173,6 +1203,31 @@ export async function agentRun(
       } else {
         allDuplicateRoundStreak = 0;
       }
+
+      // Cumulative backstop for the interleaved case the streak guard cannot
+      // see: a round where a fresh read passes alongside a blocked repeat
+      // never looks "all duplicate", so the streak above never fires.
+      //
+      // Deliberately NOT reset by a round with zero blocks: alternating
+      // [new read] / [git_status + new read] would reset it every other round
+      // and defeat the guard. Only a mutation clears the budget.
+      if (agent.toolRepeat.blockedThisRound > 0) {
+        duplicateBlocksSinceProgress += agent.toolRepeat.blockedThisRound;
+        if (duplicateBlocksSinceProgress >= MAX_DUPLICATE_BLOCKS_WITHOUT_PROGRESS) {
+          agent.addRecoveryNotice(
+            `⚠️ Stuck loop detected: ${duplicateBlocksSinceProgress} duplicate tool calls ` +
+              `blocked with no real progress (the model keeps re-issuing git_status / ` +
+              `git_diff / the same reads alongside new ones). Stopping here — rephrase your ` +
+              `request or take over manually.`
+          );
+          agent.setState('idle');
+          agent.onUpdate?.();
+          return;
+        }
+      }
+    } else {
+      // No tool calls: the turn is ending on a visible reply.
+      duplicateBlocksSinceProgress = 0;
     }
 
     agent.setState('thinking');
