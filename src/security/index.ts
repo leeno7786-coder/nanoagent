@@ -155,8 +155,41 @@ function secretRun(exclude: string): string {
  * and let an opaque secret through untouched. The optional backslash and quote
  * cover the escaped and bare JSON spellings as well as plain `key=value` text.
  */
-const SECRET_KEY_SEP = String.raw`\\?["']?\s*[=:]`;
-const SECRET_KEY_EQ = String.raw`\\?["']?\s*=`;
+const SECRET_KEY_SEP = String.raw`\\?["']?[ \t]*[=:](?!=)[ \t]*`;
+
+/** Redact literal field values without consuming source syntax or JSON escapes. */
+function redactSecretFields(text: string): string {
+  // JSON-escaped source literals need a separate delimiter and escape grammar.
+  const escaped = String.raw`\\(?<escapedQuote>["'])(?:\\\\(?:\\["'])?|\\(?!\\|\k<escapedQuote>|[nrt])[^\r\n]|(?!\k<escapedQuote>)[^\\\r\n])*\\\k<escapedQuote>`;
+  const literal = String.raw`(?<quote>["'])(?:\\[^\r\n]|(?!\k<quote>)[^\\\r\n])*\k<quote>`;
+  const bare = secretRun("',;(){}\\[\\]&=<>");
+  const fields = new RegExp(
+    String.raw`(?<prefix>(?:password|passwd|secret|token|api[_-]?key|auth)${SECRET_KEY_SEP})(?<value>${escaped}|${literal}|${bare})`,
+    'gi'
+  );
+  return text.replace(fields, (match, ...args: unknown[]) => {
+    const groups = args.at(-1) as Record<string, string | undefined>;
+    const prefix = groups.prefix!;
+    const value = groups.value!;
+    const quote = groups.escapedQuote ? `\\${groups.escapedQuote}` : groups.quote;
+    if (quote) return value === quote + quote ? match : `${prefix}${quote}[REDACTED]${quote}`;
+
+    const offset = args.at(-3) as number;
+    const rest = text.slice(offset + match.length);
+    const declaration = /(?:\b|\\[nr])(?:const|let|var)[ \t]+$/.test(text.slice(0, offset));
+    // Calls, indexing, member access and type annotations are code, not values.
+    if (
+      /^[ \t]*[.([]/.test(rest) ||
+      (declaration && /^[a-z_$][\w$]*(?:\.[a-z_$][\w$]*)+$/i.test(value)) ||
+      /^(?:None|null|undefined|true|false)$/i.test(value) ||
+      (prefix.trimEnd().endsWith(':') &&
+        /^(?:str|string|int|number|bool|boolean|bytes)$/i.test(value))
+    ) {
+      return match;
+    }
+    return `${prefix}[REDACTED]`;
+  });
+}
 
 /**
  * Apply a keyed-secret redaction, skipping matches that are already a
@@ -515,45 +548,16 @@ export class SecurityManager {
 
     // Bearer tokens (check before other auth patterns)
     const TIGHT = secretRun(",;'");
-    const LOOSE = secretRun('');
     sanitized = redactKeyed(sanitized, String.raw`auth:\s*Bearer\s*\\?"?${TIGHT}`, 'auth: Bearer ');
     sanitized = redactKeyed(sanitized, String.raw`bearer\s*\\?"?${TIGHT}`, 'Bearer ');
 
-    // Passwords and secrets
-    sanitized = redactKeyed(
-      sanitized,
-      String.raw`password${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`,
-      'password='
-    );
-    sanitized = redactKeyed(
-      sanitized,
-      String.raw`secret${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`,
-      'secret='
-    );
-    sanitized = redactKeyed(
-      sanitized,
-      String.raw`token${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`,
-      'token='
-    );
-    sanitized = redactKeyed(
-      sanitized,
-      String.raw`api[_-]?key${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`,
-      'api_key='
-    );
-    sanitized = redactKeyed(sanitized, String.raw`auth${SECRET_KEY_SEP}\s*\\?"?${LOOSE}`, 'auth=');
+    sanitized = redactSecretFields(sanitized);
 
     // Credentials embedded in DATABASE_URL/REDIS_URL-style values do not
     // contain the literal word "password" and must be handled separately.
     sanitized = sanitized.replace(
       new RegExp(String.raw`([a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:)${secretRun('/@')}(@)`, 'gi'),
       '$1[REDACTED]$2'
-    );
-    sanitized = sanitized.replace(
-      new RegExp(
-        String.raw`((?:password|passwd|secret|token|api[_-]?key)${SECRET_KEY_EQ}\s*)\\?"?${secretRun('&')}`,
-        'gi'
-      ),
-      '$1[REDACTED]'
     );
 
     // Private keys

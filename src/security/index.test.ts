@@ -312,6 +312,93 @@ describe('SecurityManager', () => {
   });
 
   describe('sanitizeOutput', () => {
+    const streamingCode = [
+      'for event, data in self._stream_events(payload, timeout=timeout):',
+      '    if event != "token":',
+      '        continue',
+      '    token = data.get("token")',
+      '    if token is not None:',
+      '        yield token',
+    ].join('\n');
+
+    it('preserves token event comparisons and streaming expressions', () => {
+      expect(securityManager.sanitizeOutput(streamingCode)).toBe(streamingCode);
+    });
+
+    it('preserves source syntax inside serialized file reads', () => {
+      const output = JSON.stringify({ ok: true, content: streamingCode });
+      expect(securityManager.sanitizeToolOutput(output)).toBe(output);
+    });
+
+    it('does not mistake equality checks, annotations or calls for credentials', () => {
+      const code = [
+        'if token == expected:',
+        '    pass',
+        'def emit(token: Optional[str] = None):',
+        '    send(token=data.get("token"))',
+        'const token: string = response.token;',
+        'const secret = config.secret;',
+      ].join('\n');
+      expect(securityManager.sanitizeOutput(code)).toBe(code);
+      expect(securityManager.sanitizeToolOutput(JSON.stringify({ content: code }))).toBe(
+        JSON.stringify({ content: code })
+      );
+    });
+
+    it('redacts literal credentials without changing quotes, separators or adjacent code', () => {
+      const code = [
+        'token = "opaque-credential-123"',
+        "password = 'test password value'",
+        'secret: "opaque-secret-456", other: "visible"',
+      ].join('\n');
+      const expected = [
+        'token = "[REDACTED]"',
+        "password = '[REDACTED]'",
+        'secret: "[REDACTED]", other: "visible"',
+      ].join('\n');
+      expect(securityManager.sanitizeOutput(code)).toBe(expected);
+      const output = JSON.stringify({ ok: true, content: code });
+      expect(JSON.parse(securityManager.sanitizeToolOutput(output)).content).toBe(expected);
+    });
+
+    it('keeps credential-bearing JSON parseable and preserves other fields', () => {
+      const output = JSON.stringify({ token: 'opaque-credential-123', next: 'visible' });
+      expect(JSON.parse(securityManager.sanitizeToolOutput(output))).toEqual({
+        token: '[REDACTED]',
+        next: 'visible',
+      });
+    });
+
+    it('redacts bare credentials and URL query values without swallowing delimiters', () => {
+      expect(securityManager.sanitizeOutput('token=opaque.value; next=visible')).toBe(
+        'token=[REDACTED]; next=visible'
+      );
+      expect(
+        securityManager.sanitizeOutput('https://example.test/?token=opaque.value&passwd=test-value')
+      ).toBe('https://example.test/?token=[REDACTED]&passwd=[REDACTED]');
+    });
+
+    it('redacts credentials with escaped quotes in serialized source', () => {
+      const content = 'token = "test\\"credential"\nnext = "visible"';
+      const result = JSON.parse(
+        securityManager.sanitizeToolOutput(JSON.stringify({ content }))
+      ) as { content: string };
+      expect(result.content).toBe('token = "[REDACTED]"\nnext = "visible"');
+    });
+
+    it('keeps repeated sanitization stable', () => {
+      const output = JSON.stringify({ content: 'token = "test-value"\nnext = "visible"' });
+      const sanitized = securityManager.sanitizeToolOutput(output);
+      expect(securityManager.sanitizeToolOutput(sanitized)).toBe(sanitized);
+    });
+
+    it('leaves empty literals alone', () => {
+      const code = 'token = ""\npassword = \'\'';
+      expect(securityManager.sanitizeOutput(code)).toBe(code);
+      const output = JSON.stringify({ content: code });
+      expect(securityManager.sanitizeToolOutput(output)).toBe(output);
+    });
+
     it('should sanitize OpenAI API keys', () => {
       const output = 'Using API key sk-abc123def456ghi789jkl012mno345pqr678 to call OpenAI';
       const sanitized = securityManager.sanitizeOutput(output);

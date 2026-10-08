@@ -302,6 +302,11 @@ The following sensitive data is **automatically sanitized** from tool outputs an
 - **Bearer Tokens:** `Bearer [token]` → `Bearer [REDACTED]`
 - **Generic Tokens:** Patterns matching `token=...`, `auth: Bearer ...`, etc.
 
+Generic field redaction preserves quotes, separators, line breaks, and JSON
+structure. Source expressions such as `token = data.get("token")`, equality
+checks, and type annotations remain readable; literal credential values are
+still redacted, including values in file reads and URL query parameters.
+
 #### Secrets
 - **Passwords:** Patterns matching `password=...`, `passwd=...`, etc.
 - **Secrets:** Patterns matching `secret=...`, `api_secret=...`, etc.

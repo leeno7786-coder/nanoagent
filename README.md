@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.16** (`@omega3_0/nanoagent`) — batched tool rounds are re-interleaved so each result follows its own assistant turn, which is what Qwen's Jinja template requires.
+Current release: **2.7.22** (`@omega3_0/nanoagent`) — secret redaction preserves ordinary token expressions and source syntax in file reads.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -506,6 +506,12 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.22 — Source-preserving secret redaction
+
+- **File reads preserve streaming code.** Token event comparisons, calls, equality checks, and type annotations no longer become misleading `[REDACTED]` fragments.
+- **Credential literals remain redacted.** Quotes, separators, line breaks, and JSON structure survive sanitization, including single-file and batch reads.
+- **Regression coverage** checks source preservation, credential redaction, escaped quotes, URL query values, and repeated sanitization.
 
 ### 2.7.16 — Qwen tool-call template fix
 

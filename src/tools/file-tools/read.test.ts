@@ -99,6 +99,31 @@ describe('read_file cursor integrity', () => {
     const r = run({ path: 'nope.ts' });
     expect(r.error as string).not.toContain(ws);
   });
+
+  it.each(['read_file', 'batch_read_files'])(
+    '%s preserves streaming code after sanitization',
+    (name) => {
+      const content = [
+        'if event != "token":',
+        '    continue',
+        'token = data.get("token")',
+        'if token is not None:',
+        '    yield token',
+        'api_key = "test-credential-123"',
+      ].join('\n');
+      writeFileSync(join(ws, 'client.py'), content);
+      const cfg = cfgFor('some-large-cloud-model');
+      const raw =
+        name === 'read_file'
+          ? readFileTool.execute({ path: 'client.py' }, ws, cfg)
+          : batchReadFilesTool.execute({ paths: ['client.py'] }, ws, cfg);
+      const security = createSecurityManager({}, ws);
+      const sanitized = JSON.parse(security.sanitizeToolOutput(raw));
+      const entry = name === 'read_file' ? sanitized : sanitized.results['client.py'];
+      expect(entry.content).toBe(content.replace('test-credential-123', '[REDACTED]'));
+      expect(readFileSync(join(ws, 'client.py'), 'utf-8')).toBe(content);
+    }
+  );
 });
 
 describe('list_dir and stat_path hide secret directories', () => {
