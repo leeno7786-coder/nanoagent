@@ -8,6 +8,15 @@ function looksLikeJsonObject(text: string): boolean {
   return trimmed.startsWith('{') && trimmed.endsWith('}');
 }
 
+/**
+ * True when a fragment looks like serialized tool args (`{"key":"…`), i.e. a
+ * snapshot from a cumulative provider — not a bare brace from file content.
+ */
+function looksLikeArgsSnapshot(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.startsWith('{"') && trimmed.includes('":"');
+}
+
 /** Merge one streamed `function.arguments` fragment into the buffer. */
 export function mergeToolCallArgumentDelta(prev: string, incoming: string): string {
   if (!incoming) return prev;
@@ -15,10 +24,29 @@ export function mergeToolCallArgumentDelta(prev: string, incoming: string): stri
   if (incoming === prev) return prev;
   // Provider sent the full snapshot so far (common on OpenRouter / non-OpenAI).
   if (incoming.startsWith(prev)) return incoming;
-  // Stale shorter snapshot after we already appended a real delta.
-  if (prev.startsWith(incoming) && incoming.length < prev.length) return prev;
+  // Stale shorter snapshot of the same args. Guard on `looksLikeArgsSnapshot`
+  // AND near-equal length: a true-delta provider emitting a `{`/`{"`/`{"x":"`
+  // fragment (file content that echoes JSON shape) also satisfies
+  // prev.startsWith(incoming), and dropping it silently removed content from
+  // written files. A genuine stale snapshot is a near-complete resend.
+  if (
+    prev.startsWith(incoming) &&
+    incoming.length < prev.length &&
+    incoming.length >= prev.length * 0.6 &&
+    looksLikeArgsSnapshot(incoming)
+  ) {
+    return prev;
+  }
   // Two complete objects: latest snapshot wins (key-order / rewrite cases).
-  if (looksLikeJsonObject(prev) && looksLikeJsonObject(incoming)) return incoming;
+  // Require comparable size so a tiny `{…}` fragment that merely LOOKS like a
+  // complete object (content containing braces) cannot replace the buffer.
+  if (
+    looksLikeJsonObject(prev) &&
+    looksLikeJsonObject(incoming) &&
+    incoming.length + 8 >= prev.length
+  ) {
+    return incoming;
+  }
   return prev + incoming;
 }
 
@@ -117,10 +145,26 @@ function extractQuotedField(raw: string, key: string, greedy: boolean): string |
   }
   for (let i = raw.length - 1; i > start; i--) {
     if (raw[i] === '"' && /"\s*[,}]/.test(raw.slice(i))) {
-      return unescapeJsonString(raw.slice(start, i));
+      return unescapeJsonString(trimTrailingFields(raw.slice(start, i)));
     }
   }
   return undefined;
+}
+
+/**
+ * The greedy extractor scans to the LAST quote-like boundary in the raw text,
+ * so on malformed JSON its value swallows the fields that follow it
+ * (`old_text` ending in `","new_text":"…`, `content` ending in
+ * `,"replace_all":true`). Those trailing fields are not file content — trim
+ * them at the first known-argument-key boundary so what reaches write_file is
+ * only what the model meant to write.
+ */
+const TRAILING_ARG_KEY_RE =
+  /,\s*"(?:path|content|old_text|new_text|replace_all|start_line|end_line|numbered)"\s*:/;
+
+function trimTrailingFields(value: string): string {
+  const m = TRAILING_ARG_KEY_RE.exec(value);
+  return m && m.index !== undefined ? value.slice(0, m.index) : value;
 }
 
 function extractFilePayloadFields(raw: string): Record<string, unknown> | undefined {
@@ -143,16 +187,22 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/**
+ * Fill keys the parsed object is MISSING from the regex extraction. A parsed
+ * string always wins over its extracted twin: the greedy extractor scans to
+ * the last quote-like boundary in the raw text, so on malformed JSON its value
+ * can swallow trailing fields (`old_text` ending in `","new_text":"…`) —
+ * preferring it overwrote correct parsed content and corrupted files.
+ */
 function mergeExtractedFields(
   parsed: Record<string, unknown>,
   extracted: Record<string, unknown> | undefined
 ): Record<string, unknown> {
   if (!extracted) return parsed;
   for (const key of ['path', 'content', 'old_text', 'new_text'] as const) {
+    if (typeof parsed[key] === 'string') continue;
     const extractedValue = extracted[key];
-    const parsedValue = parsed[key];
-    if (typeof extractedValue !== 'string') continue;
-    if (typeof parsedValue !== 'string' || extractedValue.length > parsedValue.length) {
+    if (typeof extractedValue === 'string') {
       parsed[key] = extractedValue;
     }
   }

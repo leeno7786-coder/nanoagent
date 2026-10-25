@@ -8,23 +8,33 @@ import { rel, safe, sandboxErrorMessage } from '../shared.js';
 import { recordModelWrite } from '../../workspace-history.js';
 
 /**
- * Match an inserted block's line endings to the host file. A CRLF file that
- * receives raw \n inside new_text ends up with mixed EOLs (git/diff noise),
- * so rewrite the replacement's internal newlines to the file's dominant style.
+ * Match an inserted block's line endings to the host file's DOMINANT style
+ * (majority, not "any CRLF exists"): a mixed-EOL file with one stray CRLF used
+ * to flip every insertion — and every fuzzy/line edit's whole-file join — to
+ * CRLF, churning every line. Also normalizes the replacement the other way
+ * (CRLF payload into an LF-dominant file) so inserts never add mixing.
  */
+export function dominantEol(text: string): '\r\n' | '\n' {
+  const crlf = (text.match(/\r\n/g) ?? []).length;
+  const lf = (text.match(/\n/g) ?? []).length - crlf;
+  return crlf > lf ? '\r\n' : '\n';
+}
+
 function matchEol(hostText: string, value: string): string {
-  return hostText.includes('\r\n') ? value.replace(/\r?\n/g, '\r\n') : value;
+  const eol = dominantEol(hostText);
+  return eol === '\r\n' ? value.replace(/\r?\n/g, '\r\n') : value.replace(/\r\n/g, '\n');
 }
 
 /**
  * read_file prefixes lines with "NNNN| " for small models, and small models
  * frequently echo those prefixes back into write_file/edit_file payloads —
  * corrupting files with line-number garbage ("extra stuff gets added").
- * Strip the prefixes, but ONLY when nearly every content line carries one
- * AND the numbers are strictly increasing (a genuine read_file echo), so
- * legitimate content with an occasional "12| x" line is left untouched.
+ * Strip the prefixes, but ONLY on a shape that exactly matches what read_file
+ * emits (up to 4 padStart spaces, digits, pipe, exactly one space) AND whose
+ * numbers are consecutive — a genuine echo is always a contiguous line window.
+ * Anything looser silently rewrote legitimate `1| alpha`-style data files.
  */
-const LINE_NUMBER_ECHO_RE = /^\s{0,6}\d{1,5}\| ?/;
+const LINE_NUMBER_ECHO_RE = /^ {0,4}\d{1,5}\| /;
 
 export function stripLineNumberEcho(value: string): { text: string; stripped: boolean } {
   if (!value.includes('|')) return { text: value, stripped: false };
@@ -37,7 +47,7 @@ export function stripLineNumberEcho(value: string): { text: string; stripped: bo
   const nums: number[] = [];
   let matching = 0;
   for (const i of nonEmpty) {
-    const m = lines[i].match(/^\s{0,6}(\d{1,5})\| ?/);
+    const m = lines[i].match(/^ {0,4}(\d{1,5})\| /);
     if (m) {
       matching++;
       nums.push(parseInt(m[1], 10));
@@ -45,7 +55,7 @@ export function stripLineNumberEcho(value: string): { text: string; stripped: bo
   }
   if (matching / nonEmpty.length < 0.8) return { text: value, stripped: false };
   for (let i = 1; i < nums.length; i++) {
-    if (nums[i] <= nums[i - 1]) return { text: value, stripped: false };
+    if (nums[i] !== nums[i - 1] + 1) return { text: value, stripped: false };
   }
   return { text: lines.map((l) => l.replace(LINE_NUMBER_ECHO_RE, '')).join('\n'), stripped: true };
 }
@@ -237,7 +247,13 @@ export const editFileTool: Tool = {
               break;
             }
           }
-          if (allMatch) matchStarts.push(i);
+          // Collect only NON-overlapping matches: overlapping regions
+          // double-spliced the same lines under replace_all and silently
+          // dropped content. Skip past the whole matched block.
+          if (allMatch) {
+            matchStarts.push(i);
+            i += oldLines.length - 1;
+          }
         }
 
         if (matchStarts.length > 1 && !args.replace_all) {
@@ -254,13 +270,31 @@ export const editFileTool: Tool = {
           // Splice from the bottom up so earlier indexes stay valid. An empty
           // new_text must DELETE the matched region — spreading it would
           // splice in one empty line per deletion and duplicate blank lines.
-          const inserted = newTextValue.length > 0 ? newTextValue.split(/\r?\n/) : [];
+          const insertedLines = newTextValue.length > 0 ? newTextValue.split(/\r?\n/) : [];
+          // Top up the replacement's base indentation to the matched file
+          // line's. The match was whitespace-insensitive, so new_text may not
+          // carry the file's real indent — inserting it verbatim silently
+          // broke nesting (a syntax error in Python). Reference the inserted
+          // text's own first-line indent so a replacement that already matches
+          // the file is left untouched (no double-indent).
+          const firstInserted = insertedLines.find((l) => l.trim().length > 0) ?? '';
+          const insIndent = firstInserted.match(/^[ \t]*/)?.[0] ?? '';
           for (let m = matchStarts.length - 1; m >= 0; m--) {
+            const fileLine = fileLines[matchStarts[m]!] ?? '';
+            const fileIndent = fileLine.match(/^[ \t]*/)?.[0] ?? '';
+            const delta =
+              fileIndent.length > insIndent.length && fileIndent.startsWith(insIndent)
+                ? fileIndent.slice(insIndent.length)
+                : '';
+            const inserted = delta
+              ? insertedLines.map((l) => (l.trim().length > 0 ? delta + l : l))
+              : insertedLines;
             nextLines.splice(matchStarts[m], oldLines.length, ...inserted);
           }
-          // Preserve the file's line endings — splitting on /\r?\n/ strips
-          // CR, so joining with '\n' would rewrite CRLF files as LF.
-          const eol = text.includes('\r\n') ? '\r\n' : '\n';
+          // Preserve the file's DOMINANT line ending — splitting on /\r?\n/
+          // strips CR, and an "any CRLF exists" check rewrote whole mixed-EOL
+          // files on every fuzzy edit.
+          const eol = dominantEol(text);
           const next = nextLines.join(eol);
           recordModelWrite(ws, p, 'edit');
           writeFileSync(p, next, 'utf-8');
@@ -416,9 +450,10 @@ export const editFileLinesTool: Tool = {
       const echo = stripLineNumberEcho(args.new_text as string);
       const newText = matchEol(text, echo.text);
       const lastLine = Math.min(endLine, lines.length);
-      // Preserve the file's line endings — splitting on /\r?\n/ strips CR,
-      // so joining with '\n' would rewrite CRLF files as LF.
-      const eol = text.includes('\r\n') ? '\r\n' : '\n';
+      // Preserve the file's DOMINANT line ending — splitting on /\r?\n/
+      // strips CR, and an "any CRLF exists" check rewrote whole mixed-EOL
+      // files on every line edit.
+      const eol = dominantEol(text);
       // Splice the range out instead of spreading [before, newText, after]:
       // spreading inserts newText as a single element, so an empty new_text
       // (line deletion) left a blank line behind on every call.

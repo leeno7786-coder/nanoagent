@@ -9,7 +9,7 @@
       ⚡ NanoAgent — Tiny Models, Scalable Intelligence ⚡
 ```
 
-Current release: **2.7.22** (`@omega3_0/nanoagent`) — secret redaction preserves ordinary token expressions and source syntax in file reads.
+Current release: **2.7.23** (`@omega3_0/nanoagent`) — five file-corruption bugs fixed across the streaming tool-call merge and the write tools.
 
 An ultra-lightweight CLI/TUI coding agent built for **tiny local models** (2B–8B, especially Qwen 2.5/3.5) that also scales to supported cloud APIs via its OpenAI-compatible integrations (OpenAI, OpenRouter, DashScope/Model Studio, Azure AI Foundry, Kimi, and similar providers). Run locally, think globally.
 
@@ -175,8 +175,8 @@ Sub-agents are opt-in and fully user-configured — nothing is auto-detected. Op
 - **Endpoint** — base URL of any OpenAI-compatible server (`http://127.0.0.1:1234/v1` for LM Studio, `https://openrouter.ai/api/v1` for cloud, …)
 - **Fetch models** — queries that endpoint and lists what it serves (LM Studio reports loaded state and context window); then cycle the **Model** row to pick one, or type any id by hand
 - **API key** — only for endpoints that need one
-- **Parallel lanes** — workers running *simultaneously* through that one model, 1–16. Match it to the endpoint's prediction slots and your memory: more lanes on one local model costs more VRAM and each lane gets slower.
-- **Avenues per turn** — how many *separate* investigations the agent may dispatch in one message. Deliberately independent of lanes: with 4 avenues and 1 lane it still dispatches four differently-prompted workers, they just queue, so you get breadth without the memory cost.
+- **Parallel lanes** — workers running *simultaneously* through that one model, 1–16. Match it to the endpoint's prediction slots. Lanes do **not** multiply memory (llama.cpp shares one pre-allocated KV cache across slots), but they do contend for compute: each lane gets slower, so more lanes is not automatically faster. Measure it on your own box.
+- **Avenues per turn** — how many *separate* investigations the agent may dispatch in one message. Deliberately independent of lanes: with 4 avenues and 1 lane it still dispatches four differently-prompted workers, they just queue. That is usually the better setting — breadth without paying the contention penalty of running all four at once.
 
 `explore_subagent` only appears once an endpoint *and* a model are set. Give it a `paths` list to scope the work — each named path is expanded into a real listing placed ahead of the workspace tree, so a deep directory can never be truncated out of reach:
 
@@ -506,6 +506,13 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.23 — Five bugs that corrupted files on every edit
+
+- **Streaming argument merge no longer drops content fragments.** Bare-brace/JSON-shaped fragments streamed mid-call are appended instead of discarded, so part of a `content`/`new_text` payload can no longer silently vanish before the tool runs.
+- **Parsed arguments beat greedy regex extraction.** `mergeExtractedFields` no longer lets a longer-but-garbage extracted value overwrite a correct JSON-parsed one, and extraction stops at the trailing-field boundary instead of running into the next key.
+- **Echo-stripping matches `read_file` exactly.** Legitimate data files containing lines like `1| alpha` are no longer rewritten — the shape and consecutive-number checks are now strict.
+- **Fuzzy edits keep indentation, lines, and line endings.** A trimmed `new_text` inherits the matched block's indent (without double-indenting), overlapping `replace_all` matches can no longer drop lines, and mixed-EOL files keep their dominant ending instead of flipping wholesale to CRLF.
 
 ### 2.7.22 — Source-preserving secret redaction
 

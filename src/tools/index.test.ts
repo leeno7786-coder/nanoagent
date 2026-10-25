@@ -513,7 +513,8 @@ describe('tools', () => {
   it('edit_file fuzzy matches when model sends trimmed multi-line block', () => {
     writeFileSync(join(ws, 'fuzzy.txt'), 'line1\n  foo bar\n  baz qux\nline4', 'utf-8');
     const editFile = tools.find((t) => t.name === 'edit_file')!;
-    // Model sends trimmed text (no indentation) but file has indentation
+    // Model sends trimmed text (no indentation) but file has indentation;
+    // the replacement inherits the matched block's indentation.
     const out = JSON.parse(
       editFile.execute(
         { path: 'fuzzy.txt', old_text: 'foo bar\nbaz qux', new_text: 'replaced' },
@@ -522,7 +523,7 @@ describe('tools', () => {
     );
     expect(out.ok).toBe(true);
     expect(out.fuzzy_match).toBe(true);
-    expect(readFileSync(join(ws, 'fuzzy.txt'), 'utf-8')).toBe('line1\nreplaced\nline4');
+    expect(readFileSync(join(ws, 'fuzzy.txt'), 'utf-8')).toBe('line1\n  replaced\nline4');
   });
 
   it('edit_file replace_all replaces all occurrences', () => {
