@@ -27,6 +27,23 @@ describe('mergeToolCallArgumentDelta', () => {
     const b = '{"content":"two","path":"a.html"}';
     expect(mergeToolCallArgumentDelta(a, b)).toBe(b);
   });
+
+  it('appends a bare-brace content fragment instead of dropping it', () => {
+    // A true-delta stream emitting `{` while writing code/JSON content used to
+    // hit the stale-snapshot rule (prev.startsWith(incoming)) and vanish.
+    const prev = '{"path":"a.ts","content":"function f() {';
+    expect(mergeToolCallArgumentDelta(prev, '{')).toBe(prev + '{');
+  });
+
+  it('appends a JSON-shaped content fragment instead of dropping it', () => {
+    const prev = '{"path":"a.json","content":"{';
+    expect(mergeToolCallArgumentDelta(prev, '{"a"')).toBe(prev + '{"a"');
+  });
+
+  it('does not let a tiny brace-y fragment replace a complete buffer', () => {
+    const prev = '{"path":"a","content":"function f() { return 1; }"}';
+    expect(mergeToolCallArgumentDelta(prev, '{ }')).toBe(prev + '{ }');
+  });
 });
 
 describe('parseToolCallArgumentsJson', () => {
@@ -52,6 +69,33 @@ describe('parseToolCallArgumentsJson', () => {
     expect(args.path).toBe('index.html');
     expect(String(args.content)).toContain('Buy milk');
     expect(String(args.content)).toContain('<div class="todo">');
+  });
+
+  it('keeps the parsed old_text when the greedy extractor would swallow new_text', () => {
+    // A raw newline breaks strict JSON.parse; the control-char repair parses
+    // it correctly, but the greedy regex extractor scans old_text to the end
+    // of the raw text. Preferring the longer extracted value used to overwrite
+    // the correct old_text with `…","new_text":"…` garbage.
+    const raw = '{"path":"a.ts","old_text":"const x = 1;","new_text":"line1\nline2"}';
+    const args = parseToolCallArgumentsJson(raw);
+    expect(args.old_text).toBe('const x = 1;');
+    expect(args.new_text).toBe('line1\nline2');
+  });
+
+  it('keeps the parsed content when a trailing field follows it', () => {
+    const raw = '{"path":"a.txt","content":"hel\nlo","note":"fixed typo"}';
+    const args = parseToolCallArgumentsJson(raw);
+    expect(args.content).toBe('hel\nlo');
+  });
+
+  it('trims trailing fields from extracted values when both parses fail', () => {
+    // Unescaped quotes in BOTH fields defeat both parse attempts, so the
+    // extractor output is used directly — it must not carry new_text inside
+    // old_text.
+    const raw = '{"path":"a.ts","old_text":"say "hi"","new_text":"say "bye""}';
+    const args = parseToolCallArgumentsJson(raw);
+    expect(String(args.old_text)).toBe('say "hi""');
+    expect(String(args.new_text)).toBe('say "bye"');
   });
 
   it('returns raw_input when nothing can be recovered', () => {

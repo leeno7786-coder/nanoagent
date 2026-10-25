@@ -252,6 +252,89 @@ describe('edit_file does not corrupt files', () => {
     expect(readFileSync(join(tmpDir, 'fz.ts'), 'utf-8')).toBe('one\nfour\n');
   });
 
+  it('preserves file indentation when a fuzzy-matched old_text is unindented', () => {
+    // Multi-line old_text without the file's indent misses the exact path
+    // (substring split across indented lines) and lands on the whitespace-
+    // insensitive match; inserting new_text verbatim used to delete the
+    // block's indentation and break the code.
+    writeFileSync(
+      join(tmpDir, 'ind.ts'),
+      'function f() {\n  const x = 1;\n  const y = 2;\n}\n',
+      'utf-8'
+    );
+    const result = JSON.parse(
+      editFileTool.execute(
+        {
+          path: 'ind.ts',
+          old_text: 'const x = 1;\nconst y = 2;',
+          new_text: 'const x = 2;\nconst y = 3;',
+        },
+        tmpDir
+      )
+    ) as { ok: boolean; fuzzy_match?: boolean };
+    expect(result.ok).toBe(true);
+    expect(result.fuzzy_match).toBe(true);
+    expect(readFileSync(join(tmpDir, 'ind.ts'), 'utf-8')).toBe(
+      'function f() {\n  const x = 2;\n  const y = 3;\n}\n'
+    );
+  });
+
+  it('does not double-indent a fuzzy replacement that already matches the file', () => {
+    writeFileSync(
+      join(tmpDir, 'ind2.ts'),
+      'function f() {\n  const x = 1;\n  const y = 2;\n}\n',
+      'utf-8'
+    );
+    editFileTool.execute(
+      {
+        path: 'ind2.ts',
+        old_text: 'const x = 1;\nconst y = 2;',
+        new_text: '  const x = 2;\n  const y = 3;',
+      },
+      tmpDir
+    );
+    expect(readFileSync(join(tmpDir, 'ind2.ts'), 'utf-8')).toBe(
+      'function f() {\n  const x = 2;\n  const y = 3;\n}\n'
+    );
+  });
+
+  it('does not drop lines when replace_all fuzzy-matches overlap', () => {
+    // old_text is indented so the exact substring path misses; whitespace-
+    // insensitive matching then sees matches on lines 1-2 AND 2-3
+    // (overlapping). Collecting both and splicing bottom-up silently
+    // deleted a line — matches must be non-overlapping.
+    writeFileSync(join(tmpDir, 'ov.ts'), 'a\na\na\n', 'utf-8');
+    const result = JSON.parse(
+      editFileTool.execute(
+        { path: 'ov.ts', old_text: ' a\n a', new_text: 'X', replace_all: true },
+        tmpDir
+      )
+    ) as { ok: boolean; replacements?: number; fuzzy_match?: boolean };
+    expect(result.ok).toBe(true);
+    expect(result.fuzzy_match).toBe(true);
+    expect(result.replacements).toBe(1);
+    expect(readFileSync(join(tmpDir, 'ov.ts'), 'utf-8')).toBe('X\na\n');
+  });
+
+  it('does not rewrite a mixed-EOL file to CRLF on a fuzzy edit', () => {
+    // One CRLF line used to flip the whole file's re-join to CRLF (every
+    // line rewritten); now the dominant LF wins and only the stray CRLF
+    // normalizes. old_text carries a trailing space so the exact substring
+    // path misses and the fuzzy re-join runs.
+    writeFileSync(join(tmpDir, 'eol.txt'), 'one\r\ntwo\nthree\nfour\n', 'utf-8');
+    editFileTool.execute({ path: 'eol.txt', old_text: 'two\nthree ', new_text: 'TWO' }, tmpDir);
+    expect(readFileSync(join(tmpDir, 'eol.txt'), 'utf-8')).toBe('one\nTWO\nfour\n');
+  });
+
+  it('keeps CRLF endings when CRLF is the dominant style', () => {
+    writeFileSync(join(tmpDir, 'eol2.txt'), 'one\r\ntwo\r\nthree\nfour\r\n', 'utf-8');
+    editFileLinesTool.execute(
+      { path: 'eol2.txt', start_line: 4, end_line: 4, new_text: 'FOUR' },
+      tmpDir
+    );
+    expect(readFileSync(join(tmpDir, 'eol2.txt'), 'utf-8')).toBe('one\r\ntwo\r\nthree\r\nFOUR\r\n');
+  });
+
   it('keeps a multi-line edit_file_lines replacement correct', () => {
     writeFileSync(join(tmpDir, 'ml.txt'), 'one\ntwo\nthree\n', 'utf-8');
     editFileLinesTool.execute(
