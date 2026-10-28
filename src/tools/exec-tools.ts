@@ -641,7 +641,8 @@ export const executeCommandTool: Tool = {
 
 export const runTestsTool: Tool = {
   name: 'run_tests',
-  description: 'Run project tests',
+  description:
+    'Run ALL project tests (not one file) — run after every code edit to catch regressions',
   parameters: { type: 'object', properties: {} },
   execute: () => JSON.stringify({ ok: false, error: 'Use executeAsync for this tool' }),
   executeAsync: async (_args, ws, cfg, signal) => {

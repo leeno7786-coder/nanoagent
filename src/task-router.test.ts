@@ -173,7 +173,26 @@ describe('routeTask', () => {
     const scaffold = routeTask('add a feature').scaffold;
     expect(scaffold).toContain('Read before you write');
     expect(scaffold).toContain('NNNN|');
-    expect(scaffold).toMatch(/test \/ typecheck \/ lint/);
+    expect(scaffold).toMatch(/typecheck\/lint/);
+  });
+
+  it('makes the coding scaffold write a regression test and run the whole suite', () => {
+    // Regression discipline: a new test alone must not count as verification —
+    // the pre-existing suite is what catches regressions in already-written code.
+    const scaffold = routeTask('add a feature').scaffold;
+    expect(scaffold).toMatch(/regression test/i);
+    expect(scaffold).toMatch(/FULL existing test suite/i);
+    expect(scaffold).toMatch(/not only your new test/i);
+    // run_tests is stripped from ≤8B tool sets — the scaffold must name the
+    // small-model fallback or small models call a tool they don't have.
+    expect(scaffold).toMatch(/execute_command/);
+  });
+
+  it('makes the debug scaffold add a regression test and run the whole suite', () => {
+    const scaffold = routeTask('the tests are failing').scaffold;
+    expect(scaffold).toMatch(/regression test/i);
+    expect(scaffold).toMatch(/FULL test suite/i);
+    expect(scaffold).toMatch(/regression test you added/);
   });
 
   it('tells the debug scaffold to find root cause before editing', () => {

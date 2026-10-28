@@ -28,6 +28,19 @@ describe('tool-batching prompt lines', () => {
     );
   });
 
+  it('requires a regression test and a full-suite run in both base prompts', () => {
+    // Regression discipline lives in the base prompt (every turn) and the
+    // task-router scaffolds — not scattered, not optional.
+    const small = buildSmallModelPrompt(ctx);
+    expect(small).toMatch(/Regression Test/);
+    expect(small).toMatch(/FULL test suite/);
+    expect(small).toMatch(/existing tests included/);
+
+    const large = buildLargeModelPrompt(ctx);
+    expect(large).toMatch(/regression test for new logic/);
+    expect(large).toMatch(/FULL existing test suite/);
+  });
+
   it('leaves review-task guidance to the task router, not the base prompt', () => {
     // Review scaffolding (git_status/git_diff scope, report ordering) is
     // per-turn and injected by src/task-router.ts. Keeping it in the base

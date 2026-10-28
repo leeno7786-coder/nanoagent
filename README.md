@@ -38,6 +38,7 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 - **OpenTUI dashboard** — streaming chat, tool diffs, todos, skills overlay, connect overlay, six themes, and a Ctrl+P command palette
 - **Message queue** — type while the agent runs; messages enqueue (up to 20), drain automatically when idle, edit with ↑, persist across sessions; `/queue` to list, remove, or clear
 - **Ask-user questions** — the `question` tool is a first-class clarifying picker: when the request is ambiguous (stack, features, approach), the agent calls it and a TUI overlay collects the answer. It is not an error path and is not tied to consecutive tool rounds.
+- **Regression discipline** — coding/debug turns make the agent write a covering regression test for new logic in the project's existing test layout, then run the project's FULL existing test suite after every edit — green new tests alone never count as verified
 - **Permissions** — `read_only` / `ask` / `allow_edits` / `always_allow`, plus Shift+Tab to cycle in the TUI
 - **Remote sub-agents** - `explore_subagent` workers against a pool you configure in `/settings` → Sub-agents (endpoint + model + parallel lanes); no model is assumed for you
 - **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`); only the canonical global config is trusted by default
@@ -521,6 +522,11 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.25 — Regression-test discipline
+
+- **New logic gets a regression test.** The `coding` and `debug` task scaffolds and both base prompts now require a covering test for new/changed logic, written in the project's existing test framework and file layout — for a bug fix, one that fails without the fix and passes with it.
+- **Verification runs the whole existing suite.** After every code edit the agent runs the project's FULL test suite, not just the test it added: pre-written tests are the regression net, and a green new test alone is never reported as verified. The `run_tests` tool description says exactly that, with the `execute_command` fallback named for ≤8B models that don't receive the tool.
 
 ### 2.7.24 — Local speed: history pruning, cache-stable skills, fail-fast retries
 

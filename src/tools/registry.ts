@@ -77,7 +77,7 @@ export const SMALL_TOOL_DESCRIPTIONS: Record<string, string> = {
   map_project_tree: 'Project structure tree.',
   batch_read_files: 'Read multiple files at once.',
   typecheck: 'Run tsc --noEmit.',
-  run_tests: 'Run project test suite.',
+  run_tests: 'Run ALL project tests — required after code edits.',
   run_command: 'Run a build/lint/format script.',
   install_dependencies: 'Install project dependencies.',
 };
