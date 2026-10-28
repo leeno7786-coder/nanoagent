@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'bun:test';
-import { buildSmallModelPrompt, buildLargeModelPrompt, appendPromptExtras } from './prompt.js';
+import {
+  buildSmallModelPrompt,
+  buildLargeModelPrompt,
+  appendPromptExtras,
+  SKILL_CATALOG_LIMIT,
+} from './prompt.js';
 
 const ctx = { workspace: '/tmp/ws' };
 
@@ -62,5 +67,27 @@ describe('tool-batching prompt lines', () => {
     const extras = appendPromptExtras('Base prompt', ctx);
     expect(extras).toMatch(/call the question tool/i);
     expect(extras).toMatch(/Do not dump numbered options in chat/i);
+  });
+
+  it('caps the skills catalog so the leading prompt cannot be dominated by it', () => {
+    // The shipped skill set is 170+ entries; enumerating them all added
+    // ~5k tokens to EVERY request's cached prefix.
+    const skillInfos = Array.from({ length: 172 }, (_, i) => ({
+      name: `skill-${String(i).padStart(3, '0')}`,
+      desc: `description ${i}`,
+    }));
+    const prompt = appendPromptExtras('Base prompt', ctx, false);
+    expect(prompt).not.toContain('## Skills Catalog');
+
+    const withSkills = appendPromptExtras('Base prompt', { ...ctx, skillInfos }, false);
+    expect(withSkills).toContain('## Skills Catalog');
+    expect(withSkills).toContain(`- /skill:skill-000 `);
+    expect(withSkills).toContain(
+      `- /skill:skill-${String(SKILL_CATALOG_LIMIT - 1).padStart(3, '0')} `
+    );
+    // Everything past the cap is summarized, not enumerated.
+    expect(withSkills).not.toContain(`- /skill:skill-${SKILL_CATALOG_LIMIT} `);
+    expect(withSkills).toContain(`${172 - SKILL_CATALOG_LIMIT} more`);
+    expect(withSkills).toContain('/skills');
   });
 });

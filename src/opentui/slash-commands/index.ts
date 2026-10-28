@@ -282,7 +282,7 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
     }
     case 'new': {
       const systemMessages = agent.messages.filter(
-        (m) => m.id === 'system-base' || m.id === 'system-todos'
+        (m) => m.id === 'system-base' || m.id === 'system-todos' || m.id === 'system-skills'
       );
       agent.messages = systemMessages;
       agent.contextManager.clear();
@@ -409,13 +409,15 @@ export async function handleSlashCommand(text: string, ctx: SlashCommandContext)
         }
         return;
       }
+      const ctx = agent.contextManager;
       const unloaded =
-        agent.skillManager.unload(unloadName, agent.messages, agent.isSmallModel, undefined) ||
+        agent.skillManager.unload(unloadName, agent.messages, agent.isSmallModel, undefined, ctx) ||
         agent.skillManager.unload(
           `skill:${unloadName}`,
           agent.messages,
           agent.isSmallModel,
-          undefined
+          undefined,
+          ctx
         );
       pushAssistant(
         agent,

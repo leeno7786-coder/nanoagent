@@ -142,7 +142,7 @@ export async function runWorkerTool(
     // closing quote and merge the following lines of a read_file listing.
     const sanitized = wctx.security.sanitizeToolOutput(out, wctx.cfg.apiKey ?? undefined);
     let outForModel = sanitized;
-    const budget = resolveToolResultTokenBudget(wctx.cfg);
+    const budget = resolveToolResultTokenBudget(wctx.cfg, tc.name);
     if (budget > 0) {
       outForModel = capToolResultForLlm(outForModel, {
         maxTokens: budget,

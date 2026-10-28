@@ -7,6 +7,7 @@ import type { Config, Message } from '../types.js';
 import { rnd, now } from '../agent-utils.js';
 import { logError } from '../log.js';
 import { createToolRepeatState, DUPLICATE_TOOL_NUDGE } from './tool-repeat.js';
+import { pruneOversizedHistory } from './prune.js';
 import { routeTask } from '../task-router.js';
 import {
   capToolArgumentsForLlm,
@@ -108,7 +109,8 @@ export async function agentRun(
       userText,
       agent.messages,
       agent._smallModel,
-      agent.onUpdate
+      agent.onUpdate,
+      agent.contextManager
     );
     if (autoLoaded.length > 0) {
       const names = autoLoaded.map((s) => s.name).join(', ');
@@ -154,7 +156,10 @@ export async function agentRun(
     const prefixLength = isLoad ? '/skill-load '.length : '/skill:'.length;
     const skillName = trimmed.substring(prefixLength).trim().split(/\s+/)[0];
     const skill = SkillManager.getByName(skillName);
-    if (skill && sm.load(skill, agent.messages, agent._smallModel, agent.onUpdate)) {
+    if (
+      skill &&
+      sm.load(skill, agent.messages, agent._smallModel, agent.onUpdate, agent.contextManager)
+    ) {
       agent.addUserMessage(userText);
       agent.addUserMessage(
         `[System Notice: The skill "${skill.name}" has just been activated. Please review its context, introduce yourself according to this skill's persona or capabilities, summarize what you can do, and proceed to work or ask the user for clarifying questions.]`
@@ -176,8 +181,14 @@ export async function agentRun(
   if (trimmed.startsWith('/unload ')) {
     const name = trimmed.replace('/unload ', '').trim().split(/\s+/)[0];
     const unloaded =
-      sm.unload(name, agent.messages, agent._smallModel, agent.onUpdate) ||
-      sm.unload(`skill:${name}`, agent.messages, agent._smallModel, agent.onUpdate);
+      sm.unload(name, agent.messages, agent._smallModel, agent.onUpdate, agent.contextManager) ||
+      sm.unload(
+        `skill:${name}`,
+        agent.messages,
+        agent._smallModel,
+        agent.onUpdate,
+        agent.contextManager
+      );
     agent.addAssistantMessage(
       unloaded ? `Skill "${name}" unloaded.` : `Skill "${name}" not found in active skills.`
     );
@@ -489,12 +500,10 @@ export async function agentRun(
       agent.messages.push(assistantMsg);
 
       try {
-        const activeSkills = new Set(
-          agent.skillManager
-            .getAllWithStatus()
-            .filter((s) => s.active)
-            .map((s) => s.name)
-        );
+        // Grow-only session tool-skill set — in-memory, unlike the previous
+        // getAllWithStatus() scan which hit the skills directory (readdir +
+        // stat per skill) on every model round.
+        const activeSkills = agent.skillManager.toolSkillNames();
         const stream = streamChat(
           agent.client,
           agent.cfg,
@@ -626,23 +635,29 @@ export async function agentRun(
             );
           }
 
-          const parsedFromStream = parseXmlToolCalls(assistantMsg.content || '');
-          if (!hasToolCalls && parsedFromStream.toolCalls.length > 0) {
-            hasToolCalls = true;
-            assistantMsg.content = parsedFromStream.content;
-            toolCallBuffers = parsedFromStream.toolCalls.map((tc, idx) => ({
-              id: `call_${idx}_${Math.random().toString(36).slice(2, 10)}`,
-              name: tc.name,
-              arguments: (() => {
-                const budget = resolveToolCallArgumentTokenBudget(agent.cfg);
-                return budget > 0
-                  ? capToolArgumentsForLlm(tc.name, tc.arguments, {
-                      maxTokens: budget,
-                      modelId: agent.cfg.model,
-                    })
-                  : tc.arguments;
-              })(),
-            }));
+          // Only look for XML-shaped tool calls while none are known yet, and
+          // only when the text actually contains the tag the regex requires.
+          // This used to run the DOTALL regex over the accumulated content on
+          // EVERY stream chunk — O(n²) over a long reply.
+          if (!hasToolCalls && /tool_call/i.test(assistantMsg.content || '')) {
+            const parsedFromStream = parseXmlToolCalls(assistantMsg.content || '');
+            if (parsedFromStream.toolCalls.length > 0) {
+              hasToolCalls = true;
+              assistantMsg.content = parsedFromStream.content;
+              toolCallBuffers = parsedFromStream.toolCalls.map((tc, idx) => ({
+                id: `call_${idx}_${Math.random().toString(36).slice(2, 10)}`,
+                name: tc.name,
+                arguments: (() => {
+                  const budget = resolveToolCallArgumentTokenBudget(agent.cfg);
+                  return budget > 0
+                    ? capToolArgumentsForLlm(tc.name, tc.arguments, {
+                        maxTokens: budget,
+                        modelId: agent.cfg.model,
+                      })
+                    : tc.arguments;
+                })(),
+              }));
+            }
           }
 
           agent.emitUpdateThrottled();
@@ -904,12 +919,7 @@ export async function agentRun(
       let response: Awaited<ReturnType<typeof chat>>;
 
       try {
-        const activeSkills = new Set(
-          agent.skillManager
-            .getAllWithStatus()
-            .filter((s) => s.active)
-            .map((s) => s.name)
-        );
+        const activeSkills = agent.skillManager.toolSkillNames();
         response = await chat(
           agent.client,
           agent.cfg,
@@ -1229,6 +1239,10 @@ export async function agentRun(
       // No tool calls: the turn is ending on a visible reply.
       duplicateBlocksSinceProgress = 0;
     }
+
+    // Reclaim superseded tool payloads before the next round's prefill; the
+    // call self-gates on message cadence and payload size.
+    pruneOversizedHistory(agent);
 
     agent.setState('thinking');
     agent.onUpdate?.();

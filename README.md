@@ -265,9 +265,16 @@ nanogent doctor --json
 
 Catalog defaults when unset: OpenRouter 20 RPM / 2 in-flight, Groq 30/2, Cerebras 30/2, Hugging Face 15/1. `0` is unlimited. File/env always win over catalog. `rateLimitMs` is an optional extra pause between agent iterations (default 0; do not use it for cloud 429s). `QWEN_MAX_RPM` is an alias for `QWEN_MAX_REQUESTS_PER_MINUTE`.
 
-Optional TPM (`maxTokensPerMinute` / `QWEN_MAX_TOKENS_PER_MINUTE`, alias `QWEN_MAX_TPM`) is off unless you set it — there is no catalog TPM default. Cloud tool results are capped at 8000 tokens by default after secrets sanitize (`maxToolResultTokens` / `QWEN_MAX_TOOL_RESULT_TOKENS`; `0` = off; local stays uncapped unless you set a value). Session `$` estimates use OpenRouter catalog prices when available, or `promptPricePerMillion` / `completionPricePerMillion` (`QWEN_PROMPT_PRICE_PER_MILLION`, `QWEN_COMPLETION_PRICE_PER_MILLION`). Prices are never invented; `/usage` and the status bar show tokens only when rates are unknown.
+Optional TPM (`maxTokensPerMinute` / `QWEN_MAX_TOKENS_PER_MINUTE`, alias `QWEN_MAX_TPM`) is off unless you set it — there is no catalog TPM default. Tool results are capped at 8000 tokens by default after secrets sanitize, on cloud **and** local (`maxToolResultTokens` / `QWEN_MAX_TOOL_RESULT_TOKENS`; `0` = off), except verbatim file payloads — `read_file`, `batch_read_files`, `git_diff` — which stay whole so exact-match edits and diff reviews keep working. Session `$` estimates use OpenRouter catalog prices when available, or `promptPricePerMillion` / `completionPricePerMillion` (`QWEN_PROMPT_PRICE_PER_MILLION`, `QWEN_COMPLETION_PRICE_PER_MILLION`). Prices are never invented; `/usage` and the status bar show tokens only when rates are unknown.
 
-Context windows come from the live runtime when the catalog reports them: LM Studio loaded instance, OpenRouter `context_length`, or a cached GET `/models` on other OpenAI-compatible clouds (`context_length` / `max_model_len` / `max_context_length`). Missing fields stay on the existing heuristic — NanoAgent never invents a smaller window. Catalog capability flags (`supportsTools`, `supportsThinking`, `supportsPromptCache`) are opt-in only when the provider is explicit; unknown keeps today's request shape (`enable_thinking` for `qwen*` / `bonsai*`, tools always sent). Cloud endpoints that advertise prompt cache get a stable `prompt_cache_key` (workspace + model). Opt out with `\"promptCache\": false` or `QWEN_PROMPT_CACHE=0`. Local providers skip cache hints. `/config show` and `nanogent doctor --json` include the resolved context source and known flags when set.
+Context windows come from the live runtime when the catalog reports them: LM Studio loaded instance, OpenRouter `context_length`, or a cached GET `/models` on other OpenAI-compatible clouds (`context_length` / `max_model_len` / `max_context_length`). Missing fields stay on the existing heuristic — NanoAgent never invents a smaller window. Catalog capability flags (`supportsTools`, `supportsThinking`, `supportsPromptCache`) are opt-in only when the provider is explicit; unknown keeps today's request shape (`enable_thinking` for `qwen*` / `bonsai*`, tools always sent). Prompt-cache extras are sent when the catalog is explicit about cache params, or always for OpenRouter / api.openai.com endpoints (OpenRouter uses `prompt_cache_key` as the sticky-routing key that keeps a conversation on the provider holding the warm cache). Opt out with `\"promptCache\": false` or `QWEN_PROMPT_CACHE=0`. Local providers skip cache hints — llama.cpp reuses the KV prefix automatically. `/config show` and `nanogent doctor --json` include the resolved context source and known flags when set.
+
+### Prompt caching & prefill
+
+- **Stable prefix** — the leading system prompt is static for the whole session. Dynamic todo state is *not* merged into it; it is sent as a trailing `[todo-status]` user message instead (omitted when no todos are pending), because Qwen/Bonsai Jinja templates reject a system message anywhere but index 0. Before this, every `manage_todos` call rewrote message 0 and forced a full re-prefill of the entire history on cloud *and* local endpoints.
+- **Cache key & breakpoint** — `prompt_cache_key` (stable per workspace + model) is sent when the catalog is explicit about cache params, or for OpenRouter / api.openai.com. OpenRouter also gets one trailing `cache_control: { type: "ephemeral" }` breakpoint for families that need an explicit marker (`anthropic/`, `google/`, `vertexai/`, `qwen/`, `alibaba/`), advanced each request. Local endpoints send neither — llama.cpp reuses the KV prefix instead.
+- **Local prefill budget** — local tool results are capped at 8000 tokens by default (`maxToolResultTokens`, `0` = off) so small-model KV stays small, except `read_file` / `batch_read_files` / `git_diff`, which stay verbatim for exact-match edits and full-diff reviews. Tool *arguments* are never capped locally.
+- **Observable hit rate** — `/usage` reports `cached_tokens` and `last_turn_cached_tokens` from the provider usage payload (`prompt_tokens_details.cached_tokens` on llama.cpp/OpenAI-style, `input_tokens_details` on Gemini-style, `cache_read_input_tokens` on Anthropic-style). `0` there means every request re-prefills the full prompt.
 
 ### Context accounting and compaction
 
@@ -275,7 +282,11 @@ The TUI context indicator shows the **live prompt fill**, not the cumulative ses
 
 Automatic compaction triggers only when **live prompt fill reaches 80% of the model's loaded context window** (LM Studio instance context, OpenRouter `context_length`, or the catalog heuristic — one gauge, not session Σ). The leftover ~20% is spent on a **summary inference** (no tools): the model writes a dense handoff of the conversation, history is wiped to the system prompt + original task + that summary, and the next turn continues from the clean window. `/compact` runs the same path on demand. The status bar's context value is the source of truth.
 
+Before compaction ever fires, **long sessions prune superseded tool payloads**: once old read/diff/write payloads exceed a fraction of the window, copies that a later read or write already replaced collapse to a one-line marker (earlier `git_diff` results drop in favor of the latest, superseded `write_file` contents collapse keeping the path). Only the newest copy of every file stays in context, so exact-match edits keep working — and a re-read of an elided file is allowed, not blocked as a duplicate. Fewer tokens in mid-history means a smaller prefill on every subsequent request and later compaction.
+
 **Failover** is explicit only — NanoAgent never invents a cloud backup. After LLM retries are exhausted, a 429 / 502 / 503 / 504, timeout, or connection error retries the same turn on the next `fallbacks[]` entry (or `QWEN_FALLBACK_MODEL` + optional `QWEN_FALLBACK_BASE_URL` / `QWEN_FALLBACK_PROVIDER` when the file omits `fallbacks`). File wins over env; invalid env is logged and ignored. Auth failures (401/403), bad requests (400), and user abort do not fail over. Each fallback is tried once per main-agent turn, and once per `explore_subagent` worker run. The live session or that worker's in-memory client switches — not `$NANOAGENT_ROOT/config/nanogent.json`, and not the shared pool default for other workers. API keys are resolved per fallback provider — the primary key is never sent to a different provider.
+
+**Retries fail fast where retrying is pointless.** A 400 is never retried on any endpoint — the same request would come back 400 forever, so the real error surfaces immediately instead of after seconds of silence. On local endpoints (LM Studio / llama.cpp / Ollama), a connection-refused or connect-timeout means the runtime isn't up: NanoAgent reports it immediately rather than retrying into the same wall. A transient connection reset (server restarting, model reloading) still retries, and a local 429/503 "model still loading" waits only ~1.5s instead of the cloud backoff.
 
 **Profiles** are named snapshots in `profiles`. `/profile` lists them; `/profile cloud` applies `cloud` to the live session (rebuilds the LLM client). Persist with `/profile cloud --global`. Headless: `nanogent run --profile local --prompt "status"`. Do not hardcode a paid model id; put your OpenRouter/DashScope model in the `cloud` snapshot.
 
@@ -299,6 +310,8 @@ In the TUI:
 
 `/config`, `/settings`, and `/effort` write `$NANOAGENT_ROOT/config/nanogent.json` immediately.
 
+Thinking-effort on local runtimes: with Qwen3.5-style chat templates (llama.cpp / LM Studio), only `none` (thinking off) vs any other level (thinking on) reliably changes behavior — most local templates ignore the `low`/`medium`/`high` distinction. When effort is `none`, NanoAgent sends both `reasoning_effort: "none"` and the portable `chat_template_kwargs: { "enable_thinking": false }`, because some LM Studio builds ignore `reasoning_effort` alone and the template defaults to thinking **on** when the switch is absent. A hard thinking budget (`reasoningBudget`) additionally requires llama.cpp ≥ b9982.
+
 ---
 
 ## Skills
@@ -313,6 +326,8 @@ Toggling:
 - `enabled: false` in the skill's frontmatter or `config/skill-config.json` keeps it dormant without deleting it
 
 Triggers in the frontmatter or `Use when: ...` clauses in the description auto-load skills on matching user prompts.
+
+Skill placement is cache-friendly: skills active when the session starts (enabled or config-pinned) live inside the static system prompt, where the provider's prefix cache holds them; skills loaded mid-session (triggers, `/skill <name>`) are appended as a trailing context turn. Loading or unloading a skill never rewrites the cached conversation prefix. The skill catalog in the system prompt is capped at 40 entries — `/skills` always lists everything.
 
 ---
 
@@ -373,7 +388,7 @@ Workspaces used with earlier versions may still have `.nanoagent/snapshots/` (in
 | `/effort`                                       | Show or set thinking effort (`none`–`extra-high`; writes global config when set)          |
 | `/profile`                                      | List or apply a named model snapshot (`--global` to persist)                              |
 | `/connect`                                      | Pick runtime, API key, and model                                                          |
-| `/usage`                                        | Session input/output tokens and estimated USD (when prices are known)                     |
+| `/usage`                                        | Session input/output tokens, cached prefix hits, and estimated USD (when prices known)   |
 | `/doctor`                                       | Health check                                                                              |
 | `/models`                                       | Local/remote models and context                                                           |
 | `/todo` `/todos`                                | Todo sidebar (F4) / list                                                                  |
@@ -506,6 +521,14 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.24 — Local speed: history pruning, cache-stable skills, fail-fast retries
+
+- **Superseded tool results are pruned mid-history.** Once old payloads pass a fraction of the context window, reads that a later read or write already replaced (plus stale diffs and superseded `write_file` contents) collapse to a one-line marker — the newest copy of every file always stays in context, so exact-match edits keep working, and re-reading an elided file is allowed instead of blocked as a duplicate. Smaller prefill on every request, later compaction.
+- **Skill loads never re-prefill the conversation.** Skills active at session start live inside the static system prompt (prefix-cached); mid-session loads (`/skill`, triggers) append as a trailing context turn. The prompt's skill catalog is capped at 40, and tool-schema building no longer rescans the skills directory every round.
+- **Retries fail fast where retrying is pointless.** A 400 is never retried on any endpoint; on local runtimes, connection-refused / connect-timeout report immediately instead of retrying into the same wall (a transient connection reset still retries), and a local "model still loading" 429/503 waits ~1.5s instead of the cloud backoff.
+- **`/effort none` actually turns thinking off on LM Studio.** Thinking-off requests now also send the portable `chat_template_kwargs: { "enable_thinking": false }` — Qwen3.5-style templates default to thinking ON when the switch is absent, and some LM Studio builds ignore `reasoning_effort` alone.
+- **Lower per-turn CPU.** The streaming XML tool-call parser stops re-scanning accumulated text every chunk, token counting early-aborts once a result is provably over budget, the tool-schema cache compares identities instead of re-stringifying ~100KB per round, compaction bounding no longer re-encodes history per dropped message, and the TUI's session autosave runs on the fs threadpool so multi-MB saves can't block rendering.
 
 ### 2.7.23 — Five bugs that corrupted files on every edit
 

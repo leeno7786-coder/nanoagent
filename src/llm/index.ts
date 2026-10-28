@@ -56,5 +56,6 @@ export {
   buildChatCompletionsParams,
   shouldSendThinkingExtra,
   shouldSendPromptCacheKey,
+  shouldSendCacheControl,
   promptCacheKeyFor,
 } from './request.js';

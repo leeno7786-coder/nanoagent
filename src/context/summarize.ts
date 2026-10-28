@@ -23,7 +23,22 @@ function estimateHistoryTokens(history: ChatMessage[], modelId: string): number 
   return countTokens(JSON.stringify(history), modelId);
 }
 
-/** Keep the compaction request itself inside the provider context window. */
+/** Per-message JSON.stringify token count. */
+function estimateMessageTokens(message: ChatMessage, modelId: string): number {
+  return countTokens(JSON.stringify(message), modelId);
+}
+
+/**
+ * Keep the compaction request itself inside the provider context window.
+ *
+ * Drops oldest groups until the remainder fits. Each message is tokenized
+ * exactly ONCE and the drop loop subtracts those counts — the previous loop
+ * re-stringified and re-encoded the whole remaining history on every shift
+ * (O(n²) BPE passes over a ~100k-token history right when the context is at
+ * its fullest and compaction latency matters most). Per-message totals add a
+ * couple tokens of JSON framing versus one bulk stringify, so the bound stays
+ * conservative: we keep slightly less, never more.
+ */
 export function boundCompactionHistory(
   history: ChatMessage[],
   cfg: Config,
@@ -60,16 +75,25 @@ export function boundCompactionHistory(
     }
   }
 
-  const keptGroups = [...groups];
+  // Tokenize each message once; JSON array framing (commas/brackets) is ~2
+  // tokens per message on top of the per-message counts.
+  const JSON_FRAMING_TOKENS_PER_MESSAGE = 2;
+  const groupCosts = groups.map(
+    (group) =>
+      group.reduce((sum, m) => sum + estimateMessageTokens(m, cfg.model), 0) +
+      group.length * JSON_FRAMING_TOKENS_PER_MESSAGE
+  );
+
   const prefix = [...system, ...(firstUser ? [firstUser] : [])];
-  while (
-    keptGroups.length > 0 &&
-    estimateHistoryTokens([...prefix, ...keptGroups.flat(), prompt], cfg.model) > inputBudget
-  ) {
-    keptGroups.shift();
+  let keptCost = groupCosts.reduce((sum, c) => sum + c, 0);
+  const prefixCost = estimateHistoryTokens([...prefix, prompt], cfg.model);
+  let drop = 0;
+  while (drop < groups.length && prefixCost + keptCost > inputBudget) {
+    keptCost -= groupCosts[drop]!;
+    drop++;
   }
 
-  return [...prefix, ...keptGroups.flat()];
+  return [...prefix, ...groups.slice(drop).flat()];
 }
 
 export async function llmCompactSummary(opts: {

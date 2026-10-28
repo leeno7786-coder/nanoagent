@@ -12,6 +12,15 @@ export interface PromptContext {
 }
 
 /**
+ * How many skills the system-prompt catalog lists. The shipped skill set is
+ * large (170+ entries ≈ 20k chars ≈ 5k tokens); enumerating it all would
+ * dominate the leading prompt on every request — most of it advisory. The
+ * header keeps the load instructions, `/skills` lists everything, and active
+ * skill prompts are emitted separately as a tail turn.
+ */
+export const SKILL_CATALOG_LIMIT = 40;
+
+/**
  * System prompt for local 8B-and-smaller models.
  * Tool schemas are sent separately — this focuses on workflow, not parameter docs.
  * Tuned for a chat-style agentic harness: every turn must produce visible output
@@ -87,7 +96,11 @@ export function appendPromptExtras(base: string, ctx: PromptContext, _smallModel
     system += `\nGit branch: ${ctx.branch}`;
   }
   if (ctx.skillInfos?.length) {
-    system += `\n\n## Skills Catalog\nSkills auto-load when relevant keywords appear in prompt. Type /skill:name to load manually.\n${ctx.skillInfos.map((s) => `- /skill:${s.name} — ${s.desc}`).join('\n')}`;
+    const shown = ctx.skillInfos.slice(0, SKILL_CATALOG_LIMIT);
+    const remaining = ctx.skillInfos.length - shown.length;
+    const moreNote =
+      remaining > 0 ? `\n…and ${remaining} more — the user can run /skills to list them.` : '';
+    system += `\n\n## Skills Catalog\nSkills auto-load when relevant keywords appear in prompt. Type /skill:name to load manually.\n${shown.map((s) => `- /skill:${s.name} — ${s.desc}`).join('\n')}${moreNote}`;
   } else if (ctx.skillNames?.length) {
     system += `\n\n## Skills Catalog\nSkills auto-load when relevant keywords appear in prompt. Type /skill:name to load manually.\nAvailable: ${ctx.skillNames.join(', ')}`;
   }

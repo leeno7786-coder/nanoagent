@@ -10,9 +10,27 @@ import {
 } from './tool-result-budget.js';
 
 describe('resolveToolResultTokenBudget', () => {
-  it('defaults to 8000 on remote and 0 on local when unset', () => {
+  it('defaults to 8000 on remote and on local when unset', () => {
     expect(resolveToolResultTokenBudget({ baseURL: 'https://openrouter.ai/api/v1' })).toBe(8000);
-    expect(resolveToolResultTokenBudget({ baseURL: 'http://127.0.0.1:1234/v1' })).toBe(0);
+    // Local used to be uncapped; a 2000-line read or a shell dump then
+    // dominated the next turn's prefill. It is capped now like the cloud.
+    expect(resolveToolResultTokenBudget({ baseURL: 'http://127.0.0.1:1234/v1' })).toBe(8000);
+  });
+
+  it('keeps verbatim file payloads uncapped locally so exact-match edits work', () => {
+    const local = { baseURL: 'http://127.0.0.1:1234/v1' };
+    expect(resolveToolResultTokenBudget(local, 'read_file')).toBe(0);
+    expect(resolveToolResultTokenBudget(local, 'batch_read_files')).toBe(0);
+    expect(resolveToolResultTokenBudget(local, 'git_diff')).toBe(0);
+    // Everything else on a local endpoint is capped.
+    expect(resolveToolResultTokenBudget(local, 'execute_command')).toBe(8000);
+    expect(resolveToolResultTokenBudget(local, 'grep_search')).toBe(8000);
+    expect(resolveToolResultTokenBudget(local, 'map_project_tree')).toBe(8000);
+  });
+
+  it('does not apply the local file-payload exception on cloud endpoints', () => {
+    const cloud = { baseURL: 'https://openrouter.ai/api/v1' };
+    expect(resolveToolResultTokenBudget(cloud, 'read_file')).toBe(8000);
   });
 
   it('honors an explicit override including 0 = off', () => {
@@ -28,6 +46,13 @@ describe('resolveToolResultTokenBudget', () => {
         maxToolResultTokens: 4000,
       })
     ).toBe(4000);
+    // An explicit 0 turns the local cap off wholesale, file payloads included.
+    expect(
+      resolveToolResultTokenBudget(
+        { baseURL: 'http://127.0.0.1:1234/v1', maxToolResultTokens: 0 },
+        'execute_command'
+      )
+    ).toBe(0);
   });
 });
 

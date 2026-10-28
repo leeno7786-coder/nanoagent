@@ -6,6 +6,8 @@
 export interface UsageTokens {
   input_tokens: number;
   output_tokens: number;
+  /** Prompt tokens served from the provider prefix cache (when reported). */
+  cached_tokens?: number;
 }
 
 export interface TokenPrices {
@@ -85,9 +87,16 @@ export function formatUsageReport(opts: {
     `output_tokens: ${outTok}`,
     `total_tokens: ${inTok + outTok}`,
   ];
+  const cachedTotal = Math.max(0, Math.floor(opts.total.cached_tokens ?? 0));
+  if (cachedTotal > 0) {
+    const share = inTok > 0 ? Math.round((cachedTotal / inTok) * 100) : 0;
+    lines.push(`cached_tokens: ${cachedTotal} (${share}% of input — prefix cache hits)`);
+  }
   if (opts.last) {
     lines.push(`last_turn_input_tokens: ${Math.max(0, Math.floor(opts.last.input_tokens))}`);
     lines.push(`last_turn_output_tokens: ${Math.max(0, Math.floor(opts.last.output_tokens))}`);
+    const lastCached = Math.max(0, Math.floor(opts.last.cached_tokens ?? 0));
+    if (lastCached > 0) lines.push(`last_turn_cached_tokens: ${lastCached}`);
   }
   if (opts.pricesKnown && opts.totalCostUsd !== undefined) {
     lines.push(`estimated_usd: ${fmtUsd(opts.totalCostUsd)}`);

@@ -74,13 +74,62 @@ export function shouldSendReasoningEffort(
 }
 
 /**
- * Prompt-cache extras only when the catalog is explicit true, the endpoint
- * is not local, and the user has not opted out.
+ * Endpoints where `prompt_cache_key` is a documented request field even when
+ * the catalog does not advertise it: OpenRouter uses it as the sticky-routing
+ * key that keeps follow-up requests on the provider holding the warm cache,
+ * OpenAI uses it for cache routing on models before GPT-5.6.
+ */
+function cacheKeyEndpoint(baseURL: string): boolean {
+  const url = baseURL.toLowerCase();
+  return url.includes('openrouter.ai') || url.includes('api.openai.com');
+}
+
+/**
+ * Prompt-cache extras only when the endpoint is not local, the user has not
+ * opted out, and either the catalog is explicit true or the endpoint uses the
+ * key for cache/sticky routing.
  */
 export function shouldSendPromptCacheKey(cfg: Config): boolean {
   if (cfg.promptCache === false) return false;
   if (isLocalProvider(cfg.baseURL)) return false;
-  return cfg.supportsPromptCache === true;
+  if (cfg.supportsPromptCache === true) return true;
+  return cacheKeyEndpoint(cfg.baseURL);
+}
+
+/**
+ * Families whose upstream needs an EXPLICIT `cache_control` breakpoint to
+ * cache at all (Anthropic, Alibaba/Qwen, Google) — OpenAI-style providers
+ * cache implicitly and must not receive the marker. Gate on the OpenRouter
+ * endpoint too: this is OpenRouter's Chat Completions syntax, and a direct
+ * provider's own API takes a different shape.
+ */
+const EXPLICIT_CACHE_MODEL_PREFIXES = ['anthropic/', 'google/', 'vertexai/', 'qwen/', 'alibaba/'];
+
+export function shouldSendCacheControl(
+  cfg: Pick<Config, 'baseURL' | 'model' | 'promptCache'>
+): boolean {
+  if (cfg.promptCache === false) return false;
+  if (!cfg.baseURL.toLowerCase().includes('openrouter.ai')) return false;
+  const model = (cfg.model || '').toLowerCase();
+  return EXPLICIT_CACHE_MODEL_PREFIXES.some((prefix) => model.startsWith(prefix));
+}
+
+/**
+ * Put ONE `cache_control` breakpoint on the last cacheable message. The whole
+ * prefix before it becomes the cached candidate and the marker advances on
+ * every request, so each turn pays a cache write for the new tail and a
+ * discounted read for everything already there. Tool rows are skipped —
+ * providers map them to tool_result blocks, where the marker is not reliably
+ * forwarded.
+ */
+function applyTrailingCacheBreakpoint(messages: Array<Record<string, unknown>>): void {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]!;
+    const content = message.content;
+    if (message.role === 'tool' || typeof content !== 'string' || !content) continue;
+    message.content = [{ type: 'text', text: content, cache_control: { type: 'ephemeral' } }];
+    return;
+  }
 }
 
 /** Stable per workspace + model. Not a secret. Override with cfg.promptCacheKey. */
@@ -147,10 +196,19 @@ export function buildChatCompletionsParams(
         cfg.reasoningBudget ??
         (cfg.smallModelMode ? DEFAULT_LOCAL_REASONING_BUDGET : undefined);
       if (budget !== undefined) params.reasoning_budget_tokens = budget;
-    } else if (options?.enableThinking === false) {
-      // Explicitly forced off (reasoning-only loop retry): 'none' closes the
-      // thinking block immediately on both llama.cpp and LM Studio.
+    } else {
+      // Thinking must be OFF on this request (effort none, reasoningBudget 0,
+      // catalog says no thinking, or the reasoning-loop force-off).
+      // reasoning_effort 'none' is what llama.cpp documents, but LM Studio and
+      // older builds ignore fields they don't recognize — and Qwen3.5/Bonsai
+      // chat templates read enable_thinking, which defaults to TRUE when
+      // absent, so /effort none used to be a silent no-op locally.
+      // chat_template_kwargs is the documented llama-server switch both
+      // runtimes pass to the template. Templates that never reference
+      // enable_thinking ignore the kwarg; runtimes that ignore
+      // reasoning_effort still get the template switch.
       params.reasoning_effort = 'none';
+      params.chat_template_kwargs = { enable_thinking: false };
     }
   }
   // Force-thinking-off escalation: when the caller passes
@@ -176,6 +234,9 @@ export function buildChatCompletionsParams(
   }
   if (shouldSendPromptCacheKey(cfg)) {
     params.prompt_cache_key = promptCacheKeyFor(cfg);
+  }
+  if (shouldSendCacheControl(cfg)) {
+    applyTrailingCacheBreakpoint(params.messages as Array<Record<string, unknown>>);
   }
   return params;
 }

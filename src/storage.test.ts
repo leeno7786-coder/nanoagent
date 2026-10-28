@@ -40,3 +40,33 @@ describe('VersionedStore.write', () => {
     expect(store.read()?.a).toBe(2);
   });
 });
+
+describe('VersionedStore.writeAsync', () => {
+  it('writes data that can be read back', async () => {
+    const { store } = tempStore();
+    expect(await store.writeAsync({ hello: 'async' })).toBe(true);
+    const read = store.read();
+    expect(read?.hello).toBe('async');
+    expect(typeof read?._savedAt).toBe('number');
+  });
+
+  it('writes atomically and rotates backups like the sync path', async () => {
+    const { dir, store } = tempStore();
+    await store.writeAsync({ a: 1 });
+    await store.writeAsync({ a: 2 });
+    await store.writeAsync({ a: 3 });
+    const leftovers = readdirSync(dir).filter((f) => f.endsWith('.tmp'));
+    expect(leftovers).toEqual([]);
+    expect(store.read()?.a).toBe(3);
+    const backups = readdirSync(join(dir, '.backups'));
+    expect(backups.length).toBeGreaterThan(0);
+  });
+
+  it('interleaves safely with sync writes (same file)', async () => {
+    const { store } = tempStore();
+    store.write({ a: 'sync' });
+    await store.writeAsync({ a: 'async' });
+    store.write({ a: 'sync2' });
+    expect(store.read()?.a).toBe('sync2');
+  });
+});

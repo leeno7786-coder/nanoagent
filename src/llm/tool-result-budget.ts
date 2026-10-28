@@ -1,8 +1,18 @@
 import type { Config } from '../types.js';
-import { countTokens, isLocalProvider } from './utils.js';
+import { countTokens, countTokensAtMost, isLocalProvider } from './utils.js';
 
 const DEFAULT_CLOUD_TOOL_RESULT_TOKENS = 8000;
 const DEFAULT_CLOUD_TOOL_ARGUMENT_TOKENS = 4000;
+const DEFAULT_LOCAL_TOOL_RESULT_TOKENS = 8000;
+
+/**
+ * Local default: results of these tools stay verbatim. Their output is the
+ * payload the model edits against (old_text and line ranges must match
+ * byte-for-byte), so truncating them breaks edit_file / edit_file_lines.
+ * Everything else on a local endpoint (shell output, grep dumps, trees) is
+ * capped — uncapped tool output is the dominant term in next-turn prefill.
+ */
+const UNCAPPED_LOCAL_RESULT_TOOLS = new Set(['read_file', 'batch_read_files', 'git_diff']);
 
 const PAYLOAD_KEYS = [
   'content',
@@ -21,14 +31,21 @@ export interface ToolResultBudgetOpts {
   modelId?: string;
 }
 
-/** 0 = off. Unset → 8000 on remote/cloud, 0 on local. */
+/** 0 = off. Unset → 8000 on remote/cloud, and 8000 on local too EXCEPT for
+ * verbatim file payloads (read_file / batch_read_files / git_diff), which stay
+ * uncapped so exact-match edits and full-diff reviews keep working locally.
+ * `toolName` is what enables that local exception — uncapped tool output is
+ * the dominant term in next-turn prefill, so everything else is capped. */
 export function resolveToolResultTokenBudget(
-  cfg: Pick<Config, 'maxToolResultTokens' | 'baseURL'>
+  cfg: Pick<Config, 'maxToolResultTokens' | 'baseURL'>,
+  toolName?: string
 ): number {
   if (cfg.maxToolResultTokens !== undefined) {
     return cfg.maxToolResultTokens > 0 ? Math.floor(cfg.maxToolResultTokens) : 0;
   }
-  return isLocalProvider(cfg.baseURL) ? 0 : DEFAULT_CLOUD_TOOL_RESULT_TOKENS;
+  if (!isLocalProvider(cfg.baseURL)) return DEFAULT_CLOUD_TOOL_RESULT_TOKENS;
+  if (toolName && UNCAPPED_LOCAL_RESULT_TOOLS.has(toolName)) return 0;
+  return DEFAULT_LOCAL_TOOL_RESULT_TOKENS;
 }
 
 /** 0 = off. Unset → 4000 on remote/cloud, 0 on local. */
@@ -77,7 +94,9 @@ export function truncationMarker(keptTokens: number, totalTokens: number): strin
 
 function sliceToTokenBudget(text: string, budget: number, modelId?: string): string {
   if (budget <= 0 || text.length === 0) return '';
-  if (countTokens(text, modelId) <= budget) return text;
+  // Early-abort count: oversized payloads (the common case for this helper)
+  // stop after ~budget tokens of text instead of encoding the whole dump.
+  if (countTokensAtMost(text, budget, modelId) !== null) return text;
   let cut = Math.min(text.length, Math.max(1, budget * 4));
   let tokens = countTokens(text.slice(0, cut), modelId);
   let guard = 0;
@@ -131,7 +150,7 @@ function truncateJsonObject(
     const mid = Math.floor((lo + hi) / 2);
     clone[key] = (obj[key] as string).slice(0, mid);
     const encoded = JSON.stringify(clone);
-    if (countTokens(encoded, modelId) <= maxTokens) {
+    if (countTokensAtMost(encoded, maxTokens, modelId) !== null) {
       best = encoded;
       lo = mid + 1;
     } else {
@@ -145,7 +164,7 @@ function truncateJsonObject(
     modelId
   );
   const fallback = JSON.stringify(clone);
-  if (countTokens(fallback, modelId) <= maxTokens) return fallback;
+  if (countTokensAtMost(fallback, maxTokens, modelId) !== null) return fallback;
   return undefined;
 }
 
@@ -171,8 +190,12 @@ function truncatePlainText(
 export function capToolResultForLlm(content: string, opts: ToolResultBudgetOpts): string {
   const maxTokens = opts.maxTokens;
   if (maxTokens <= 0 || !content) return content;
-  const total = countTokens(content, opts.modelId);
-  if (total <= maxTokens) return content;
+  // Early-abort: for an oversized dump (the case that motivated the cap) this
+  // stops after ~maxTokens worth of text instead of BPE-encoding all of it.
+  // When it does overflow, the exact count is only needed for the "~Nk"
+  // marker, where a byte-length estimate is plenty.
+  if (countTokensAtMost(content, maxTokens, opts.modelId) !== null) return content;
+  const total = Math.ceil(Buffer.byteLength(content, 'utf8') / 4);
 
   const trimmed = content.trim();
   if (trimmed.startsWith('{')) {

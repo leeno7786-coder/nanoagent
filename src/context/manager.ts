@@ -447,7 +447,12 @@ export class ContextManager {
     let sawUser = false;
     for (const m of this.messages) {
       if (m.id.startsWith('notice-')) continue;
-      if (m.id === 'system-base' || m.id === 'system-todos' || m.id === 'system-compaction') {
+      if (
+        m.id === 'system-base' ||
+        m.id === 'system-todos' ||
+        m.id === 'system-skills' ||
+        m.id === 'system-compaction'
+      ) {
         continue;
       }
       if (m.role === 'user' && !sawUser) {
@@ -498,7 +503,7 @@ export class ContextManager {
       this.messages[firstHistoryIndex]!.role === 'system'
     ) {
       const msg = this.messages[firstHistoryIndex]!;
-      if (msg.id === 'system-base' || msg.id === 'system-todos') {
+      if (msg.id === 'system-base' || msg.id === 'system-todos' || msg.id === 'system-skills') {
         keptSystem.push(msg);
       }
       firstHistoryIndex++;

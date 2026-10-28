@@ -8,6 +8,7 @@ import {
   renameSync,
   copyFileSync,
 } from 'fs';
+import { copyFile, rename, rm, writeFile } from 'fs/promises';
 import { join, dirname, basename } from 'path';
 import { logError } from './log.js';
 
@@ -58,6 +59,32 @@ export class VersionedStore<T extends object> {
       const tmpPath = `${this.filePath}.tmp`;
       writeFileSync(tmpPath, JSON.stringify(envelope, null, 2), 'utf-8');
       renameSync(tmpPath, this.filePath);
+      return true;
+    } catch (err) {
+      logError('Storage write failed:', this.filePath, err);
+      return false;
+    }
+  }
+
+  /**
+   * Async twin of {@link write}: same atomic temp-file + rename and the same
+   * backup rotation, but the disk I/O runs on the fs threadpool instead of
+   * blocking the caller's event loop. Used by the TUI autosave so a multi-MB
+   * session write doesn't freeze the terminal. (JSON.stringify still runs on
+   * the caller — it's CPU, not I/O.)
+   */
+  async writeAsync(data: T): Promise<boolean> {
+    this.ensureDirs();
+    const envelope = {
+      ...data,
+      _version: this.currentVersion,
+      _savedAt: Date.now(),
+    } as T & VersionedEnvelope;
+    try {
+      await this.rotateBackupsAsync();
+      const tmpPath = `${this.filePath}.tmp`;
+      await writeFile(tmpPath, JSON.stringify(envelope, null, 2), 'utf-8');
+      await rename(tmpPath, this.filePath);
       return true;
     } catch (err) {
       logError('Storage write failed:', this.filePath, err);
@@ -135,6 +162,33 @@ export class VersionedStore<T extends object> {
       if (oldest) {
         try {
           rmSync(oldest);
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+  }
+
+  /** Async twin of {@link rotateBackups}; the dir listing stays sync (≤ a few entries). */
+  private async rotateBackupsAsync(): Promise<void> {
+    const ts = Date.now();
+    const base = basename(this.filePath);
+    const backup = join(this.backupDir, `${base}.${ts}.bak`);
+
+    if (existsSync(this.filePath)) {
+      try {
+        await copyFile(this.filePath, backup);
+      } catch {
+        /* best effort */
+      }
+    }
+
+    const allBackups = this.listBackups();
+    while (allBackups.length > this.backupCount) {
+      const oldest = allBackups.shift();
+      if (oldest) {
+        try {
+          await rm(oldest);
         } catch {
           /* best effort */
         }

@@ -157,6 +157,39 @@ export function countTokens(text: string, modelId?: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * Count tokens but stop early: returns the count when it is within `budget`,
+ * or null as soon as the running total exceeds it. Hot paths (tool-result
+ * capping) only need the fit/no-fit decision — encoding a multi-MB shell dump
+ * in full just to learn it doesn't fit was the dominant CPU cost of the cap.
+ *
+ * Counting in 16k-char chunks makes this a slight OVERcount versus encoding
+ * the whole string at once (a merge can't cross a chunk edge); that is safe
+ * both ways here: "fits" is still exact for anything comfortably under
+ * budget, and "over" only triggers truncation that was going to happen.
+ */
+export function countTokensAtMost(text: string, budget: number, modelId?: string): number | null {
+  if (text.length === 0) return 0;
+  const estimate = () => Math.ceil(text.length / 4);
+  const enc = getTKEncoder(modelId);
+  if (!enc) {
+    const est = estimate();
+    return est <= budget ? est : null;
+  }
+  const CHUNK = 16 * 1024;
+  let total = 0;
+  for (let i = 0; i < text.length; i += CHUNK) {
+    try {
+      total += enc.encode(text.slice(i, i + CHUNK)).length;
+    } catch {
+      const est = estimate();
+      return est <= budget ? est : null;
+    }
+    if (total > budget) return null;
+  }
+  return total;
+}
+
 export function extractDeltaText(delta: unknown): {
   content: string;
   reasoningContent: string;
@@ -376,19 +409,29 @@ function getMaxOutputTokens(modelId: string, configuredMax?: number): number {
  * Normalize provider usage blocks to { input_tokens, output_tokens }.
  * Accepts OpenAI-style prompt_tokens/completion_tokens and the newer
  * input_tokens/output_tokens aliases (some LM Studio / proxy builds).
+ * `cached_tokens` (optional) counts prompt tokens served from the provider's
+ * prefix cache — it is what makes cache hits observable: 0 means every
+ * request re-prefilled the whole prompt.
  */
 export function normalizeUsage(
   usage: unknown
-): { input_tokens: number; output_tokens: number } | undefined {
+): { input_tokens: number; output_tokens: number; cached_tokens?: number } | undefined {
   if (!usage || typeof usage !== 'object') return undefined;
   const u = usage as Record<string, unknown>;
   const input = Number(u.prompt_tokens ?? u.input_tokens ?? 0);
   const output = Number(u.completion_tokens ?? u.output_tokens ?? 0);
   if (!Number.isFinite(input) || !Number.isFinite(output)) return undefined;
   if (!(input > 0) && !(output > 0)) return undefined;
+  const details = (u.prompt_tokens_details ?? u.input_tokens_details) as
+    Record<string, unknown> | undefined;
+  const cached = Math.max(
+    0,
+    Math.floor(Number(details?.cached_tokens ?? u.cache_read_input_tokens ?? 0)) || 0
+  );
   return {
     input_tokens: Math.max(0, Math.floor(input)),
     output_tokens: Math.max(0, Math.floor(output)),
+    ...(cached > 0 ? { cached_tokens: cached } : {}),
   };
 }
 

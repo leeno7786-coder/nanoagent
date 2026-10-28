@@ -65,9 +65,9 @@ export class AgentCore {
     subAgentProgress?: SubAgentProgressEvent;
   };
   /** Usage from the most recent assistant response. */
-  public lastUsage?: { input_tokens: number; output_tokens: number };
+  public lastUsage?: { input_tokens: number; output_tokens: number; cached_tokens?: number };
   /** Total accumulated usage across the session. */
-  public totalUsage: { input_tokens: number; output_tokens: number } = {
+  public totalUsage: { input_tokens: number; output_tokens: number; cached_tokens?: number } = {
     input_tokens: 0,
     output_tokens: 0,
   };
@@ -77,10 +77,16 @@ export class AgentCore {
   public totalCostUsd = 0;
 
   /** Accumulate API usage and optional $ estimate. */
-  public recordUsage(usage: { input_tokens: number; output_tokens: number }): void {
+  public recordUsage(usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cached_tokens?: number;
+  }): void {
     this.lastUsage = usage;
     this.totalUsage.input_tokens += usage.input_tokens;
     this.totalUsage.output_tokens += usage.output_tokens;
+    this.totalUsage.cached_tokens =
+      (this.totalUsage.cached_tokens ?? 0) + (usage.cached_tokens ?? 0);
     const cost = estimateUsageCostUsd(usage, this.cfg);
     if (cost !== undefined) {
       this.lastCostUsd = cost;
@@ -94,7 +100,17 @@ export class AgentCore {
   /** Timestamp of the last throttled UI update emission. */
   private lastUpdateEmit = 0;
   /** Cached OpenAI tool schemas (rebuilt only when the tool/skill set changes). */
-  private toolSchemaCache?: { key: string; tools: ReturnType<typeof toOpenAI> };
+  private toolSchemaCache?: {
+    tools: ReturnType<typeof toOpenAI>;
+    /** Identity snapshot of the tool set the cache was built from. */
+    snapshot: { tool: object; name: string; description: string; parameters: object | undefined }[];
+    skillsKey: string;
+    model: string;
+    baseURL: string;
+    small: boolean;
+    smallModelMode: boolean | undefined;
+    subAgents: boolean | undefined;
+  };
 
   /**
    * Throttled onUpdate emission for hot paths (streaming). Emits at most
@@ -110,30 +126,58 @@ export class AgentCore {
     }
   }
 
-  /** Build (and cache) the OpenAI tool schemas for the current tool/skill set. */
+  /**
+   * Build (and cache) the OpenAI tool schemas for the current tool/skill set.
+   * The cache check is pointer/string compares over the current tool list —
+   * getAllTools returns the same Tool objects round-to-round, so this is ~O(n)
+   * with no allocation. The previous key JSON.stringify'd every schema
+   * (~50–100KB) on EVERY model round just to prove nothing changed. A tool set
+   * rebuilt with identical names/descriptions/parameter objects still hits;
+   * an MCP reconnect with the same cardinality but new objects misses, which
+   * is exactly the invalidation the stringified key existed for.
+   */
   /** @internal Accessed by agent/run.ts. */
   public buildToolSchemas(activeSkills: Set<string>): ReturnType<typeof toOpenAI> {
     const all = getAllTools(this);
-    // Include tool names (not just count) so MCP reconnects with same cardinality
-    // but different schemas still invalidate the cache.
-    const key = JSON.stringify({
-      tools: all.map((t) => ({
+    const cache = this.toolSchemaCache;
+    const skillsKey = [...activeSkills].sort().join(',');
+    if (
+      cache &&
+      cache.skillsKey === skillsKey &&
+      cache.model === this.cfg.model &&
+      cache.baseURL === this.cfg.baseURL &&
+      cache.small === this._smallModel &&
+      cache.smallModelMode === this.cfg.smallModelMode &&
+      cache.subAgents === this.cfg.subAgentEnabled &&
+      cache.snapshot.length === all.length &&
+      cache.snapshot.every(
+        (s, i) =>
+          s.tool === (all[i] as object) &&
+          s.name === all[i]!.name &&
+          s.description === all[i]!.description &&
+          s.parameters === all[i]!.parameters
+      )
+    ) {
+      return cache.tools;
+    }
+    // H5: tool-set change changes schema overhead — reset the high-water.
+    this.contextManager.resetOverhead();
+    const tools = toOpenAI(all, this.cfg, activeSkills);
+    this.toolSchemaCache = {
+      tools,
+      snapshot: all.map((t) => ({
+        tool: t as unknown as object,
         name: t.name,
-        description: t.description,
-        parameters: t.parameters,
+        description: t.description ?? '',
+        parameters: t.parameters as object | undefined,
       })),
-      skills: [...activeSkills].sort(),
+      skillsKey,
       model: this.cfg.model,
       baseURL: this.cfg.baseURL,
       small: this._smallModel,
       smallModelMode: this.cfg.smallModelMode,
       subAgents: this.cfg.subAgentEnabled,
-    });
-    if (this.toolSchemaCache?.key === key) return this.toolSchemaCache.tools;
-    // H5: tool-set change changes schema overhead — reset the high-water.
-    this.contextManager.resetOverhead();
-    const tools = toOpenAI(all, this.cfg, activeSkills);
-    this.toolSchemaCache = { key, tools };
+    };
     return tools;
   }
 

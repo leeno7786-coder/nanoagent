@@ -70,7 +70,7 @@ export interface ChatResponse {
     }>;
     reasoning_content?: string;
   };
-  usage?: { input_tokens: number; output_tokens: number };
+  usage?: { input_tokens: number; output_tokens: number; cached_tokens?: number };
   finishReason?: string;
 }
 

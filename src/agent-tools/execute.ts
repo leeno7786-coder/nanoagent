@@ -96,7 +96,7 @@ export async function executeToolSequential(
               ok: false,
               error: 'Permission request failed; tool execution was denied',
             });
-            addToolMessage(agent, output, tc.id);
+            addToolMessage(agent, output, tc.id, tc.name);
             agent.currentTool = undefined;
             return;
           }
@@ -106,7 +106,7 @@ export async function executeToolSequential(
               ok: false,
               error: `Permission denied by user for ${perm.command ? `command "${perm.command}"` : `tool "${tc.name}"`}`,
             });
-            addToolMessage(agent, output, tc.id);
+            addToolMessage(agent, output, tc.id, tc.name);
             agent.currentTool = undefined;
             return;
           } else if (userDecision === 'always_allow') {
@@ -118,7 +118,7 @@ export async function executeToolSequential(
             ok: false,
             error: `Permission confirmation required for ${perm.command ? `command "${perm.command}"` : `tool "${tc.name}"`}`,
           });
-          addToolMessage(agent, output, tc.id);
+          addToolMessage(agent, output, tc.id, tc.name);
           agent.currentTool = undefined;
           return;
         }
@@ -127,7 +127,7 @@ export async function executeToolSequential(
           ok: false,
           error: `Permission denied by policy (${perm.reason || 'read_only mode'})`,
         });
-        addToolMessage(agent, output, tc.id);
+        addToolMessage(agent, output, tc.id, tc.name);
         agent.currentTool = undefined;
         return;
       }
@@ -140,7 +140,7 @@ export async function executeToolSequential(
           ok: false,
           error: 'Sub-agent dispatch denied by user',
         });
-        addToolMessage(agent, output, tc.id);
+        addToolMessage(agent, output, tc.id, tc.name);
         agent.currentTool = undefined;
         return;
       }
@@ -149,7 +149,7 @@ export async function executeToolSequential(
     const repeat = evaluateToolRepeat(agent.toolRepeat, tc.name, args);
     if (repeat.blocked) {
       output = JSON.stringify({ ok: false, error: repeat.error });
-      addToolMessage(agent, output, tc.id);
+      addToolMessage(agent, output, tc.id, tc.name);
       agent.onToolResult?.({
         toolCallId: tc.id,
         name: tc.name,
@@ -166,7 +166,7 @@ export async function executeToolSequential(
       wasCached = true;
       const duration = cached.duration;
 
-      addToolMessage(agent, output, tc.id);
+      addToolMessage(agent, output, tc.id, tc.name);
       await handleSpecialToolResults(agent, tc.name, output, tc.id);
 
       const finalOutput = output;
@@ -239,7 +239,7 @@ export async function executeToolSequential(
   // Route through addToolMessage so the ContextManager token cache stays in
   // sync — a raw push bypasses compaction accounting and leaves dangling
   // tool_calls after compaction.
-  addToolMessage(agent, output, tc.id);
+  addToolMessage(agent, output, tc.id, tc.name);
 
   await handleSpecialToolResults(agent, tc.name, output, tc.id);
 
@@ -527,9 +527,9 @@ export async function executeToolsParallel(
   results.sort((a, b) => a.index - b.index);
 
   for (const result of results) {
-    addToolMessage(agent, result.output, result.id);
-
     const tc = parallelTools.find((t) => t.id === result.id);
+    addToolMessage(agent, result.output, result.id, tc?.name);
+
     if (tc) {
       await handleSpecialToolResults(agent, tc.name, result.output, tc.id);
     }

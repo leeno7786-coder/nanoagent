@@ -26,8 +26,13 @@ export function isRecoveryNotice(m: Message): boolean {
   return m.id.startsWith('notice-recovery-');
 }
 
-/** System ids that are merged into the single leading system prompt. */
-const KEPT_SYSTEM_IDS = new Set(['system-base', 'system-todos', 'system-compaction']);
+/** System ids that survive filtering (base/compaction merge; todos/skills are tail-emitted). */
+const KEPT_SYSTEM_IDS = new Set([
+  'system-base',
+  'system-todos',
+  'system-skills',
+  'system-compaction',
+]);
 
 /** Refresh the cached system prompt from the in-memory system-base message. */
 export function refreshSystemPrompt(agent: AgentCore) {
@@ -113,6 +118,10 @@ function toChatMessage(m: Message, agent: AgentCore): ChatMessage {
 export function toChatMessages(agent: AgentCore, includeTrailingAssistant = false): ChatMessage[] {
   // Restore system-base before todo sync so todos land after the main prompt.
   ensureSystemBase(agent);
+  // Keep the skill message in step (and migrate legacy in-place skill sections
+  // out of system-base). Like the todo sync below this runs per request; it is
+  // a no-op when neither the active skills nor the base prompt changed.
+  agent.skillManager.syncSkillMessages(agent.messages, agent._smallModel, agent.contextManager);
   refreshSystemPrompt(agent);
   // Ensure todo message is fresh before sending to LLM
   syncTodoMessage(agent);
@@ -138,13 +147,30 @@ export function toChatMessages(agent: AgentCore, includeTrailingAssistant = fals
   // Qwen3.5/3.6 / Bonsai Jinja chat templates raise:
   //   "System message must be at the beginning."
   // if ANY system message is not at index 0 — including a second consecutive
-  // system message (system-base + system-todos). Merge all kept system
+  // system message (system-base + system-compaction). Merge the kept system
   // content into a single leading system message before sending.
+  // system-todos is deliberately NOT part of that merge — see below.
   const systemParts: string[] = [];
   const rest: Message[] = [];
+  let todoStatus: string | undefined;
+  let skillContext: string | undefined;
   for (const m of messagesToSend) {
     if (m.role === 'system') {
-      if (m.content.trim()) systemParts.push(m.content);
+      if (!m.content.trim()) continue;
+      // Dynamic todo/skill state must never join the leading system prompt.
+      // Message 0 is the cached prefix for OpenAI/OpenRouter and the KV prefix
+      // llama.cpp reuses, so a manage_todos call or skill load/unload would
+      // otherwise mutate it and force a full re-prefill of the entire history
+      // on every change. Both are emitted as tail turns instead.
+      if (m.id === 'system-todos') {
+        todoStatus = m.content;
+        continue;
+      }
+      if (m.id === 'system-skills') {
+        if (m.content.trim()) skillContext = m.content;
+        continue;
+      }
+      systemParts.push(m.content);
     } else {
       rest.push(m);
     }
@@ -178,6 +204,22 @@ export function toChatMessages(agent: AgentCore, includeTrailingAssistant = fals
     ) {
       normalized.pop();
     }
+  }
+
+  // Todo and skill state are emitted as the LAST messages instead: only the
+  // tail re-runs, so the stable prefix (tools + system + history) stays
+  // byte-identical between requests and the provider cache / llama.cpp KV
+  // reuse still hits. They go out as user turns because Qwen/Bonsai Jinja
+  // rejects a system message anywhere but index 0. Both are skipped when
+  // empty — no pending todos and no active skills cost nothing.
+  if (skillContext) {
+    normalized.push({
+      role: 'user',
+      content: `[skill-context] Active skill instructions — follow them for the current task:\n\n${skillContext}`,
+    });
+  }
+  if (todoStatus && agent.todos.some((t) => !t.done)) {
+    normalized.push({ role: 'user', content: `[todo-status] ${todoStatus}` });
   }
 
   return normalized;
@@ -279,9 +321,16 @@ export function addScaffoldMessage(agent: AgentCore, content: string): void {
 
 /**
  * Add a tool message to the conversation.
+ * `toolName` selects the local per-tool result budget (verbatim file payloads
+ * stay uncapped; everything else is capped so it does not dominate prefill).
  */
-export function addToolMessage(agent: AgentCore, content: string, toolCallId?: string): void {
-  const budget = resolveToolResultTokenBudget(agent.cfg);
+export function addToolMessage(
+  agent: AgentCore,
+  content: string,
+  toolCallId?: string,
+  toolName?: string
+): void {
+  const budget = resolveToolResultTokenBudget(agent.cfg, toolName);
   const capped =
     budget > 0
       ? capToolResultForLlm(content, { maxTokens: budget, modelId: agent.cfg.model })

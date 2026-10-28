@@ -41,7 +41,7 @@ export const DUPLICATE_TOOL_NUDGE =
   'Stop repeating tools you already ran (git_status, git_diff, list_dir, or the same read). ' +
   'Use those results. For review/explore tasks, write your findings now as chat text — stop calling tools.';
 
-function normalizePathish(p: string): string {
+export function normalizePathish(p: string): string {
   return p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '') || '.';
 }
 

@@ -10,6 +10,7 @@ import {
 import { randomBytes } from 'crypto';
 import { join, resolve } from 'path';
 import type { Todo, Session, Message, Config } from './types.js';
+import { logError } from './log.js';
 import { VersionedStore } from './storage.js';
 import {
   SESSIONS_DIR,
@@ -23,6 +24,8 @@ const SESSION_VERSION = 1;
 let activeSessionWorkspace: string | undefined;
 /** Hash (or renamed id) of the conversation currently being written. */
 let liveSessionId: string | undefined;
+/** createdAt of the live session file, read once so async autosave skips a per-save readFileSync. */
+let liveSessionCreatedAt: number | undefined;
 
 function normWorkspace(s: string): string {
   const fwd = resolve(s).replace(/\\/g, '/');
@@ -41,7 +44,10 @@ export function setActiveSessionWorkspace(workspace: string | undefined): void {
     (activeSessionWorkspace !== undefined &&
       nextWorkspace !== undefined &&
       normWorkspace(activeSessionWorkspace) !== normWorkspace(nextWorkspace));
-  if (changed) liveSessionId = undefined;
+  if (changed) {
+    liveSessionId = undefined;
+    liveSessionCreatedAt = undefined;
+  }
   activeSessionWorkspace = nextWorkspace;
   if (activeSessionWorkspace) {
     migrateGlobalSessions(activeSessionWorkspace);
@@ -198,6 +204,7 @@ export function allocateSessionHash(): string {
 
 /** Pin (or clear) the conversation hash used by auto-save and /save. */
 export function setLiveSessionId(id: string | undefined): void {
+  liveSessionCreatedAt = undefined;
   if (!id) {
     liveSessionId = undefined;
     return;
@@ -311,6 +318,55 @@ export function autoSaveSession(
   return id;
 }
 
+/** Serializes async autosaves so overlapping fires can't interleave temp-file writes. */
+let autosaveChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Async twin of {@link autoSaveSession} for the TUI: same semantics and
+ * session shape, but backup rotation and the disk write run on the fs
+ * threadpool so a multi-MB session save doesn't block rendering. Saves are
+ * serialized on a promise chain — a slow save delays the next one instead of
+ * racing it. The first save per session pays one sync read for createdAt;
+ * it's cached after that.
+ */
+export function autoSaveSessionAsync(
+  messages: Message[],
+  todos: Todo[],
+  workspace: string,
+  cfg?: Config,
+  messageQueue?: string[]
+): Promise<string> {
+  const run = async (): Promise<string> => {
+    ensureDir();
+    const id = ensureLiveSessionId();
+    const createdAt = liveSessionCreatedAt ?? loadSession(id)?.createdAt ?? Date.now();
+    liveSessionCreatedAt = createdAt;
+    const session: Session = {
+      id,
+      messages,
+      todos: todos.filter((t) => !t.done),
+      createdAt,
+      updatedAt: Date.now(),
+      model: cfg?.model,
+      baseURL: cfg?.baseURL,
+      provider: cfg?.provider,
+      config: cfg ? buildConfigSnapshot(cfg) : { workspace },
+      messageQueue: messageQueue && messageQueue.length > 0 ? messageQueue : undefined,
+    };
+    await sessionStore(id).writeAsync(session);
+    return id;
+  };
+  // Chain onto the previous save; the catch keeps an unexpected throw (not an
+  // I/O error — writeAsync swallows those) from surfacing as an unhandled
+  // rejection, since TUI callers fire-and-forget this promise.
+  const next = autosaveChain.then(run, run).catch((err: unknown) => {
+    logError('Async autosave failed:', err);
+    return '';
+  });
+  autosaveChain = next;
+  return next;
+}
+
 export function loadSession(id: string): Session | null {
   ensureDir();
   const safeId = sanitizeSessionId(id);
@@ -346,6 +402,7 @@ export function deleteSession(id: string): void {
   if (!safeId) return;
   if (liveSessionId && safeId.toLowerCase() === liveSessionId.toLowerCase()) {
     liveSessionId = undefined;
+    liveSessionCreatedAt = undefined;
   }
   const path = join(sessionDir(), `${safeId}.json`);
   if (existsSync(path)) {

@@ -99,6 +99,8 @@ function makeAgent(ws: string): AgentStub {
       activeSkills: new Map<string, unknown>(),
       load: mock(() => true),
       unload: mock(() => true),
+      seed: mock(() => {}),
+      toolSkillNames: () => new Set<string>(),
       onPromptSync: (content: string) => {
         // Match the real SkillManager behaviour: stash the rendered
         // prompt for the context-manager to re-seed on demand.

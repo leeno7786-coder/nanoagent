@@ -2,7 +2,7 @@
  * Tests for awaitEndpointRateLimit / leaky RPM / in-flight / adaptive 429.
  */
 
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import {
   markEndpointRateLimited,
   awaitEndpointRateLimit,
@@ -10,6 +10,7 @@ import {
   releaseEndpointTurn,
   awaitRateLimitToken,
   noteEndpointRateLimited,
+  LOCAL_RATE_LIMIT_COOLDOWN_MS,
   noteEndpointSuccess,
   noteEndpointPromptTokens,
   estimatePromptTokensForRequest,
@@ -231,17 +232,62 @@ describe('shouldRetry', () => {
     expect(shouldRetry(400, 1, err)).toBe(false);
   });
 
-  it('retries other 400s on early attempts', () => {
-    expect(shouldRetry(400, 1, { message: 'Bad request' })).toBe(true);
+  it('never retries other 400s — a request-shape error is deterministic', () => {
+    expect(shouldRetry(400, 1, { message: 'Bad request' })).toBe(false);
+    expect(shouldRetry(400, 0, { message: 'Bad request' })).toBe(false);
   });
 
-  it('retries recognized status-0 timeout and connection failures', () => {
+  it('retries recognized status-0 timeout and connection failures on remote endpoints', () => {
     expect(shouldRetry(0, 1, { code: 'ETIMEDOUT' })).toBe(true);
     expect(shouldRetry(0, 1, { message: 'connect ECONNREFUSED 127.0.0.1:1234' })).toBe(true);
+    // Remote base URL still counts as remote.
+    expect(shouldRetry(0, 1, { code: 'ETIMEDOUT' }, 'https://openrouter.ai/api/v1')).toBe(true);
+  });
+
+  it('never retries endpoint-down errors on local endpoints, but keeps transient resets', () => {
+    // LM Studio down = deterministic; retrying just adds seconds of silence
+    // before the same ECONNREFUSED.
+    expect(shouldRetry(0, 1, { code: 'ECONNREFUSED' }, 'http://127.0.0.1:1234/v1')).toBe(false);
+    expect(shouldRetry(0, 1, { code: 'ETIMEDOUT' }, 'http://localhost:1234/v1')).toBe(false);
+    expect(
+      shouldRetry(
+        0,
+        1,
+        { message: 'connect ECONNREFUSED 127.0.0.1:1234' },
+        'http://127.0.0.1:1234/v1'
+      )
+    ).toBe(false);
+    // A transient reset (server restarting, model reload) still retries — the
+    // next attempt reconnects.
+    expect(shouldRetry(0, 1, { code: 'ECONNRESET' }, 'http://127.0.0.1:1234/v1')).toBe(true);
+    // ...and a local 503 (model still loading) still retries — after the short
+    // local cooldown.
+    expect(shouldRetry(503, 1, {}, 'http://127.0.0.1:1234/v1')).toBe(true);
   });
 
   it('does not retry arbitrary or explicitly non-retriable status-0 errors', () => {
     expect(shouldRetry(0, 1, { message: 'invalid request payload' })).toBe(false);
     expect(shouldRetry(0, 1, { message: 'context_length_exceeded' })).toBe(false);
+  });
+});
+
+describe('local rate-limit cooldown', () => {
+  // Bun runs test files in one process — module-level cooldown state leaks
+  // across files (other suites awaitEndpointTurn on these same URLs).
+  afterEach(() => {
+    resetEndpointLimiterState('http://127.0.0.1:1234/v1');
+    resetEndpointLimiterState('https://openrouter.ai/api/v1');
+  });
+
+  it('caps the shared cooldown on local endpoints', () => {
+    const localUrl = 'http://127.0.0.1:1234/v1';
+    const applied = noteEndpointRateLimited(localUrl, 60000);
+    expect(applied).toBe(LOCAL_RATE_LIMIT_COOLDOWN_MS);
+    expect(applied).toBeLessThan(2000);
+  });
+
+  it('keeps the full backoff on remote endpoints', () => {
+    const applied = noteEndpointRateLimited('https://openrouter.ai/api/v1', 30000);
+    expect(applied).toBe(30000);
   });
 });

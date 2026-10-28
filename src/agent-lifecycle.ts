@@ -385,7 +385,7 @@ export function rebuildSystemPrompt(
 
   for (const [name, skill] of skills) {
     if (skill.enabled === true || agent.cfg.systemPrompt?.includes(`skill:${name}`)) {
-      agent.skillManager.activeSkills.set(name, skill as never);
+      agent.skillManager.seed(name, skill as never);
     }
   }
 

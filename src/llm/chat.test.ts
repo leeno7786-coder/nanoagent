@@ -156,13 +156,14 @@ describe('chat tool-call normalization', () => {
 
 describe('chat transport retries', () => {
   it('retries a recognized status-0 timeout and then succeeds', async () => {
+    // Remote endpoint: recognized transport failures are worth resending.
     const retries: number[] = [];
     const result = await chat(
       clientFrom([
         { throw: { status: 0, code: 'ETIMEDOUT', message: 'request timed out' } },
         { choices: [{ message: { role: 'assistant', content: 'recovered' } }] },
       ]),
-      cfg({ retryCount: 1 }),
+      cfg({ retryCount: 1, baseURL: 'https://api.example.com/v1' }),
       [{ role: 'user', content: 'hi' }],
       undefined,
       undefined,
@@ -171,6 +172,26 @@ describe('chat transport retries', () => {
 
     expect(result.message.content).toBe('recovered');
     expect(retries).toEqual([0]);
+  });
+
+  it('does not retry a local endpoint-down timeout (LM Studio not running)', async () => {
+    let calls = 0;
+    const client = {
+      chat: {
+        completions: {
+          create: async () => {
+            calls++;
+            throw { status: 0, code: 'ETIMEDOUT', message: 'connect ETIMEDOUT 127.0.0.1:1234' };
+          },
+        },
+      },
+    } as unknown as OpenAI;
+
+    await expect(
+      chat(client, cfg({ retryCount: 3 }), [{ role: 'user', content: 'hi' }])
+    ).rejects.toThrow();
+    // Fail fast: no seconds of silence before the same deterministic error.
+    expect(calls).toBe(1);
   });
 
   it('does not retry an unrecognized status-0 error', async () => {

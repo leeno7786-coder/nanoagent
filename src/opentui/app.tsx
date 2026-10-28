@@ -11,6 +11,7 @@ import {
   deleteSession,
   renameSession,
   autoSaveSession,
+  autoSaveSessionAsync,
   buildConfigSnapshot,
   ensureLiveSessionId,
   setLiveSessionId,
@@ -397,7 +398,8 @@ export function App({
     const agent = agentRef.current;
     if (!agent || agent.messages.length <= 2) return;
     const timer = setTimeout(() => {
-      autoSaveSession(
+      // Async: the multi-MB stringify + disk write must not block rendering.
+      void autoSaveSessionAsync(
         agent.messages,
         agent.todos,
         agent.cfg.workspace,

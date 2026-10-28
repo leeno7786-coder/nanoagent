@@ -49,8 +49,8 @@ interface AppState {
   toolResults: ToolResult[];
   elapsedMs: number;
   currentTool: { name: string; args: string } | undefined;
-  lastUsage: { input_tokens: number; output_tokens: number } | undefined;
-  totalUsage: { input_tokens: number; output_tokens: number };
+  lastUsage: { input_tokens: number; output_tokens: number; cached_tokens?: number } | undefined;
+  totalUsage: { input_tokens: number; output_tokens: number; cached_tokens?: number };
   totalCostUsd: number;
   lastCostUsd?: number;
   /** Live context-window fill from ContextManager (drives auto-compact). */

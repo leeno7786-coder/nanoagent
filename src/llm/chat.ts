@@ -181,7 +181,7 @@ export async function chat(
       const isRateLimit = errStatus === 429 || errStatus === 503 || errStatus === 529;
       const maxAttempts = baseMaxRetries + 1;
 
-      if (!shouldRetry(errStatus, attempt, err) || attempt >= maxAttempts) {
+      if (!shouldRetry(errStatus, attempt, err, cfg.baseURL) || attempt >= maxAttempts) {
         throw new ApiError(errorMessage(errStatus, attempt, err, maxAttempts), errStatus, {
           ...providerErrorDetails(err),
           cause: err,

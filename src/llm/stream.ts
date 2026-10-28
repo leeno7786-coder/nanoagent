@@ -40,7 +40,11 @@ export async function* streamChat(
   tools?: unknown[],
   signal?: AbortSignal,
   options?: ChatRequestOptions
-): AsyncGenerator<StreamChunk, { usage?: { input_tokens: number; output_tokens: number } }, void> {
+): AsyncGenerator<
+  StreamChunk,
+  { usage?: { input_tokens: number; output_tokens: number; cached_tokens?: number } },
+  void
+> {
   const baseMaxRetries = Math.max(0, cfg.retryCount ?? 3);
   let lastError: Error | undefined;
   let attempt = 1;
@@ -259,7 +263,7 @@ export async function* streamChat(
       const maxAttempts = baseMaxRetries + 1;
       const details = providerErrorDetails(err);
 
-      if (!shouldRetry(errStatus, attempt, err) || attempt >= maxAttempts) {
+      if (!shouldRetry(errStatus, attempt, err, cfg.baseURL) || attempt >= maxAttempts) {
         throw new ApiError(errorMessage(errStatus, attempt, err, maxAttempts), errStatus, {
           ...details,
           cause: err,

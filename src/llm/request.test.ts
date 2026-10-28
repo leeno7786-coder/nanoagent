@@ -48,9 +48,15 @@ describe('shouldSendPromptCacheKey', () => {
     ).toBe(false);
   });
 
-  it('sends only when the catalog is explicit true on a cloud endpoint', () => {
-    expect(shouldSendPromptCacheKey(cfg({ supportsPromptCache: true }))).toBe(true);
-    expect(shouldSendPromptCacheKey(cfg({}))).toBe(false);
+  it('sends only when the catalog is explicit true on a non-OpenRouter cloud endpoint', () => {
+    const other = 'https://api.deepseek.com/v1';
+    expect(shouldSendPromptCacheKey(cfg({ supportsPromptCache: true, baseURL: other }))).toBe(true);
+    expect(shouldSendPromptCacheKey(cfg({ baseURL: other }))).toBe(false);
+  });
+
+  it('sends on OpenRouter even when the catalog is unknown (sticky routing key)', () => {
+    expect(shouldSendPromptCacheKey(cfg({}))).toBe(true);
+    expect(shouldSendPromptCacheKey(cfg({ model: 'anthropic/claude-sonnet-4.6' }))).toBe(true);
   });
 
   it('honors promptCache / QWEN_PROMPT_CACHE opt-out', () => {
@@ -104,9 +110,64 @@ describe('buildChatCompletionsParams', () => {
     expect(body.prompt_cache_key).toBeUndefined();
   });
 
-  it('does not add prompt_cache_key when cache support is unknown', () => {
-    const body = buildChatCompletionsParams(cfg({ model: 'gpt-4o' }), messages);
+  it('does not add prompt_cache_key on a cloud endpoint that does not use it', () => {
+    const body = buildChatCompletionsParams(
+      cfg({ model: 'gpt-4o', baseURL: 'https://api.deepseek.com/v1' }),
+      messages
+    );
     expect(body.prompt_cache_key).toBeUndefined();
+  });
+
+  it('marks the last cacheable message with cache_control for Anthropic on OpenRouter', () => {
+    const body = buildChatCompletionsParams(cfg({ model: 'anthropic/claude-sonnet-4.6' }), [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: '', tool_calls: [] },
+      { role: 'tool', content: '{"ok":true}', tool_call_id: 'c1' },
+      { role: 'user', content: 'go' },
+    ]);
+    const rows = body.messages as Array<Record<string, unknown>>;
+    // Tool rows are skipped — providers map them to tool_result blocks where
+    // the marker is not reliably forwarded — so the breakpoint lands on the
+    // last message before it.
+    expect(rows[3]!.content).toBe('{"ok":true}');
+    expect(rows[4]!.content).toEqual([
+      { type: 'text', text: 'go', cache_control: { type: 'ephemeral' } },
+    ]);
+    expect(rows[0]!.content).toBe('sys');
+  });
+
+  it('leaves implicit-caching providers alone (no cache_control on OpenAI/DeepSeek)', () => {
+    expect(buildChatCompletionsParams(cfg({ model: 'openai/gpt-5.2' }), messages).messages).toEqual(
+      [{ role: 'user', content: 'hi' }]
+    );
+    expect(
+      buildChatCompletionsParams(cfg({ model: 'deepseek/deepseek-v3.2' }), messages).messages
+    ).toEqual([{ role: 'user', content: 'hi' }]);
+    // Not an OpenRouter endpoint, and local endpoints never send cache extras.
+    expect(
+      buildChatCompletionsParams(
+        cfg({ model: 'anthropic/claude-sonnet-4.6', baseURL: 'https://api.anthropic.com/v1' }),
+        messages
+      ).messages
+    ).toEqual([{ role: 'user', content: 'hi' }]);
+    expect(
+      buildChatCompletionsParams(
+        cfg({
+          model: 'anthropic/claude-sonnet-4.6',
+          baseURL: 'http://127.0.0.1:1234/v1',
+        }),
+        messages
+      ).messages
+    ).toEqual([{ role: 'user', content: 'hi' }]);
+  });
+
+  it('honors the promptCache opt-out for cache_control too', () => {
+    const body = buildChatCompletionsParams(
+      cfg({ model: 'anthropic/claude-sonnet-4.6', promptCache: false }),
+      messages
+    );
+    expect(body.messages).toEqual([{ role: 'user', content: 'hi' }]);
   });
 
   it('keeps enable_thinking for qwen when capabilities are unknown', () => {
@@ -307,6 +368,24 @@ describe('buildChatCompletionsParams local reasoning', () => {
     );
     expect(body.enable_thinking).toBeUndefined();
     expect(body.reasoning_budget_tokens).toBeUndefined();
+    // reasoning_effort 'none' alone is a silent no-op on Qwen3.5 templates
+    // under LM Studio — the template reads enable_thinking, so the portable
+    // switch has to ride along.
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+  });
+
+  it('sends the portable thinking-off switch when local effort is none', () => {
+    const body = buildChatCompletionsParams(
+      cfg({
+        model: 'qwen3.5-4b',
+        baseURL: 'http://127.0.0.1:1234/v1',
+        effort: 'none',
+      }),
+      messages
+    );
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body.reasoning_effort).toBe('none');
   });
 
   it('lets a per-call options.reasoningBudgetTokens override win over cfg', () => {
@@ -336,6 +415,7 @@ describe('buildChatCompletionsParams local reasoning', () => {
     );
     expect(body.enable_thinking).toBeUndefined();
     expect(body.reasoning_effort).toBe('none');
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
   });
 
   it('does not send the budget on cloud endpoints', () => {

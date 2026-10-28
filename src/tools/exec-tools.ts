@@ -552,7 +552,7 @@ async function withShellHistory(
 export const executeCommandTool: Tool = {
   name: 'execute_command',
   description:
-    'Run a shell command in the workspace. Automatically supports extended timeouts (up to 600s) for downloads (curl, wget, git clone) and package installs (pip, uv, npm, bun). The command is awa[...]',
+    'Run a shell command in the workspace. Automatically supports extended timeouts (up to 600s) for downloads (curl, wget, git clone) and package installs (pip, uv, npm, bun). The command runs to completion and its output is returned to you.',
   parameters: {
     type: 'object',
     properties: {

@@ -563,14 +563,26 @@ function drainAndAdapt(baseURL: string): void {
   applyRpmToBucket(bucket, bucket.configuredRpm, next);
 }
 
-/** Cooldown + drain the RPM bucket + adaptive slowdown (remote only). */
-export function noteEndpointRateLimited(baseURL?: string, delayMs?: number, err?: unknown): void {
-  markEndpointRateLimited(baseURL, delayMs);
-  if (!baseURL || isLocalProvider(baseURL)) return;
+/** Local runtimes have no quota — cap the cooldown so a "not ready yet"
+ *  429/503 (model still loading) parks everything for ~1.5s, not the cloud
+ *  backoff of up to 60s. Main agent and every sub-agent dispatch share the
+ *  same endpoint cooldown. */
+export const LOCAL_RATE_LIMIT_COOLDOWN_MS = 1500;
+
+/** Cooldown + drain the RPM bucket + adaptive slowdown (remote only).
+ *  Returns the cooldown that was applied (capped on local endpoints). */
+export function noteEndpointRateLimited(baseURL?: string, delayMs?: number, err?: unknown): number {
+  const applied =
+    baseURL && isLocalProvider(baseURL) && delayMs && delayMs > LOCAL_RATE_LIMIT_COOLDOWN_MS
+      ? LOCAL_RATE_LIMIT_COOLDOWN_MS
+      : delayMs;
+  markEndpointRateLimited(baseURL, applied);
+  if (!baseURL || isLocalProvider(baseURL)) return applied ?? 0;
   drainAndAdapt(baseURL);
   if (err && rateLimitMentionsTokens(err)) {
     drainAndAdaptTpm(baseURL);
   }
+  return applied ?? 0;
 }
 
 export function getRateLimitDebug(baseURL?: string):
@@ -699,13 +711,49 @@ function isRecognizedTransportError(err?: unknown): boolean {
   );
 }
 
-function shouldRetry(status?: number, attempt?: number, err?: unknown): boolean {
+/**
+ * Local runtime is definitely not listening: refused or connect-level timeout
+ * on loopback is deterministic (LM Studio / llama.cpp not running). Checked
+ * on the error and its `cause` (undici wraps the real error there).
+ */
+function isLocalEndpointDown(err?: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const seen: Record<string, unknown>[] = [err as Record<string, unknown>];
+  const cause = (err as Record<string, unknown>).cause;
+  if (cause && typeof cause === 'object') seen.push(cause as Record<string, unknown>);
+  for (const e of seen) {
+    const code = String(e.code ?? e.errno ?? '').toUpperCase();
+    if (/^(?:ECONNREFUSED|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT)$/.test(code)) return true;
+    const msg = String(e.message ?? '').toLowerCase();
+    if (msg.includes('connection refused') || msg.includes('econnrefused')) return true;
+  }
+  return false;
+}
+
+/**
+ * Decide whether a failed request is worth resending.
+ *
+ * `baseURL` lets local endpoints fail fast on "runtime is down" errors
+ * (refused / connect-timeout): retrying just adds seconds of silence before
+ * the exact same error. A transient reset (server restarting, model reload)
+ * stays retryable locally — the next attempt reconnects. Cloud endpoints keep
+ * the full recognized-transport retry.
+ */
+function shouldRetry(status?: number, attempt?: number, err?: unknown, baseURL?: string): boolean {
   if (!isRetriable(err)) return false;
   if (status === undefined) return true;
-  if (status === 0) return isRecognizedTransportError(err);
+  const local = !!baseURL && isLocalProvider(baseURL);
+  if (status === 0) {
+    if (!local) return isRecognizedTransportError(err);
+    // Still require a recognized transport error; additionally skip the
+    // deterministic "runtime is down" cases.
+    return isRecognizedTransportError(err) && !isLocalEndpointDown(err);
+  }
   if (status === 429) return true;
   if (status === 502 || status === 503 || status === 504 || status === 529) return true;
-  if (status === 400 && attempt !== undefined && attempt < 3) return true;
+  // A 400 is a request-shape error: the same payload comes back 400 forever,
+  // so retrying only delays the real error message (3–7s on every endpoint).
+  if (status === 400) return false;
   if (status >= 500) return true;
   if (status === 422 && attempt !== undefined && attempt < 2) return true;
   return false;

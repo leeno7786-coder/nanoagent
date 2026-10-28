@@ -338,7 +338,7 @@ describe('AgentCore run loop (behavioral)', () => {
     }
   }, 20000);
 
-  it('sends the todo system message (with ids) to the LLM', async () => {
+  it('sends the todo state (with ids) to the LLM as a trailing status message', async () => {
     const agent = newAgent();
     await agent.init();
     agent.addTodo('write the tests');
@@ -352,9 +352,17 @@ describe('AgentCore run loop (behavioral)', () => {
     // Qwen Jinja: exactly one system message, and it must be first.
     expect(sysMsgs.length).toBe(1);
     expect(payload[0]?.role).toBe('system');
-    expect(sysMsgs[0]!.content).toContain('Current todo (1 of 1)');
-    expect(sysMsgs[0]!.content).toContain('write the tests');
-    expect(sysMsgs[0]!.content).toContain('id=');
+    // The todo state must NOT live in that system message: message 0 is the
+    // cached prompt prefix (OpenAI cache, llama.cpp KV reuse), so every
+    // manage_todos call would invalidate it and force a full re-prefill.
+    expect(sysMsgs[0]!.content).not.toContain('Current todo');
+    // It rides as the LAST message instead, so only the tail re-computes.
+    const last = payload[payload.length - 1]!;
+    expect(last.role).toBe('user');
+    expect(last.content).toContain('[todo-status]');
+    expect(last.content).toContain('Current todo (1 of 1)');
+    expect(last.content).toContain('write the tests');
+    expect(last.content).toContain('id=');
   });
 
   it('exposes only the current todo until the previous one is completed', async () => {
@@ -371,10 +379,48 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(payload.filter((m) => m.role === 'system')).toHaveLength(1);
     // No system role after the first message
     expect(payload.slice(1).every((m) => m.role !== 'system')).toBe(true);
-    expect(payload[0]!.content).toContain('fix jinja');
-    expect(payload[0]!.content).toContain('1 of 2');
+    const last = payload[payload.length - 1]!;
+    expect(last.content).toContain('fix jinja');
+    expect(last.content).toContain('1 of 2');
     // The queued todo is NOT revealed until the current one is completed.
-    expect(payload[0]!.content).not.toContain('keep going');
+    expect(payload.some((m) => m.content.includes('keep going'))).toBe(false);
+  });
+
+  it('keeps the cached prompt prefix stable across turns and todo changes', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    scripted.push([
+      {
+        content: 'checking',
+        toolCalls: [{ id: 'c1', name: 'list_dir', arguments: '{"path":"."}' }],
+      },
+    ]);
+    scripted.push([{ content: 'done' }]);
+    await agent.run('list the files');
+
+    const first = sentMessages[0] as Array<{ role: string; content: string }>;
+    const second = sentMessages[1] as Array<{ role: string; content: string }>;
+    // Turn N+1 extends turn N: every message already prefilled stays
+    // byte-identical. That is the whole contract provider prompt caches and
+    // llama.cpp's KV reuse need in order to hit — break it and every turn
+    // re-prefills the entire history.
+    expect(second.slice(0, first.length)).toEqual(first);
+    expect(first.some((m) => m.content.includes('Current todo'))).toBe(false);
+
+    // Todo churn must leave message 0 (the cached prefix) untouched: the
+    // state moves to the trailing status line instead.
+    agent.addTodo('step one');
+    scripted.push([{ content: 'again' }]);
+    await agent.run('next');
+
+    const third = sentMessages[2] as Array<{ role: string; content: string }>;
+    expect(third[0]).toEqual(first[0]);
+    expect(third[0]!.content).not.toContain('step one');
+    const last = third[third.length - 1]!;
+    expect(last.role).toBe('user');
+    expect(last.content).toContain('[todo-status]');
+    expect(last.content).toContain('step one');
   });
 
   it('drops a completely empty streamed response from history', async () => {
@@ -543,9 +589,13 @@ describe('AgentCore run loop (behavioral)', () => {
     expect(agent.messages[0]?.id).toBe('system-base');
   });
 
-  it('cached system prompt includes skill content after load', async () => {
+  it('keeps skill prompts out of the cached prefix and emits them as a tail turn', async () => {
     const agent = newAgent();
     await agent.init();
+
+    const before = agent.toChatMessages();
+    const prefixBefore = before[0]!.content;
+    expect(prefixBefore.length).toBeGreaterThan(0);
 
     const loaded = agent.skillManager.load(
       {
@@ -558,15 +608,62 @@ describe('AgentCore run loop (behavioral)', () => {
       false
     );
     expect(loaded).toBe(true);
-    expect(agent.messages.find((m) => m.id === 'system-base')?.content).toContain(
+
+    // The skill must not land in system-base — rewriting the cached prefix on
+    // every skill load/unload forces a full re-prefill of the whole history.
+    expect(agent.messages.find((m) => m.id === 'system-base')?.content).not.toContain(
       'SKILL-PROMPT-UNIQUE-MARKER'
     );
 
+    const payload = agent.toChatMessages();
+    // Prefix byte-identical across the skill load…
+    expect(payload[0]?.content).toBe(prefixBefore);
+    expect(payload[0]?.content).not.toContain('SKILL-PROMPT-UNIQUE-MARKER');
+    // …and the skill prompt rides as the trailing user turn instead.
+    const tail = payload[payload.length - 1]!;
+    expect(tail.role).toBe('user');
+    expect(tail.content).toContain('[skill-context]');
+    expect(tail.content).toContain('SKILL-PROMPT-UNIQUE-MARKER');
+
+    // system-base restored from the cached prompt (after a compaction drop)
+    // also stays clean — the tail carries the skill.
     agent.messages = agent.messages.filter((m) => m.id !== 'system-base');
+    const restored = agent.toChatMessages();
+    expect(restored[0]?.role).toBe('system');
+    expect(restored[0]?.content).not.toContain('SKILL-PROMPT-UNIQUE-MARKER');
+    expect(
+      restored.some((m) => m.role === 'user' && m.content.includes('SKILL-PROMPT-UNIQUE-MARKER'))
+    ).toBe(true);
+  });
+
+  it('omits the skill tail turn when no skills are active', async () => {
+    const agent = newAgent();
+    await agent.init();
 
     const payload = agent.toChatMessages();
-    expect(payload[0]?.role).toBe('system');
-    expect(payload[0]?.content).toContain('SKILL-PROMPT-UNIQUE-MARKER');
+    expect(payload.some((m) => m.role === 'user' && m.content.includes('[skill-context]'))).toBe(
+      false
+    );
+  });
+
+  it('strips legacy in-place skill sections from a restored system prompt', async () => {
+    const agent = newAgent();
+    await agent.init();
+
+    // Sessions saved before the split stored active skill prompts inside
+    // system-base. The first payload after restore must migrate them out.
+    const base = agent.messages.find((m) => m.id === 'system-base')!;
+    base.content += '\n\n## Active skill: legacy\nLEGACY-SKILL-MARKER';
+
+    const payload = agent.toChatMessages();
+    expect(payload[0]?.content).not.toContain('LEGACY-SKILL-MARKER');
+    expect(agent.messages.find((m) => m.id === 'system-base')?.content).not.toContain(
+      'LEGACY-SKILL-MARKER'
+    );
+    // No active skills in the fresh manager → no skill tail either.
+    expect(payload.some((m) => m.role === 'user' && m.content.includes('[skill-context]'))).toBe(
+      false
+    );
   });
 
   it('does not feed overflow-retry notices back to the model as assistant turns', async () => {
