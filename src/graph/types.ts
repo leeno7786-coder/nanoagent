@@ -113,8 +113,12 @@ export interface GraphBuildOptions {
   includeDependencies?: boolean;
   includeCode?: boolean;
   maxFileSize?: number;
+  /** Hard cap on indexed files — a safety valve for huge workspaces. */
+  maxFiles?: number;
   excludedPaths?: string[];
   includedPaths?: string[];
+  /** Honor .gitignore files during the walk (default true). */
+  respectGitignore?: boolean;
 }
 
 export type NodeType = GraphNode['type'];

@@ -43,7 +43,7 @@ Please file issues at [github.com/leeno7786-coder/nanoagent/issues](https://gith
 - **Remote sub-agents** - `explore_subagent` workers against a pool you configure in `/settings` → Sub-agents (endpoint + model + parallel lanes); no model is assumed for you
 - **MCP** — local stdio or remote HTTP servers (`/mcp`, `/mcp-add`, `/mcp-remove`); only the canonical global config is trusted by default
 - **Skills** — bundled + user skills under `NANOAGENT_ROOT/skills/`, auto-load on triggers, `/skills` overlay (F8)
-- **Memory graph** — `/graph build|stats|report` for codebase structure
+- **Memory graph** — `/graph build|stats|report` for codebase structure, noise-filtered by design: the project's own `.gitignore` (root and nested) plus built-in defaults (venv, `__pycache__`, `site-packages`, `node_modules`, build output, lockfiles, binaries/images) are excluded, JSON/YAML/markdown concept nodes are capped per file, and the graph lives in `.nanoagent/graph/` — not a visible top-level directory
 - **Security defaults** — command checks, workspace path sandboxing, secret redaction (see [SECURITY.md](SECURITY.md))
 - **Headless CLI** — `run`, `doctor`, `models`, `todo` for scripts and CI
 
@@ -522,6 +522,13 @@ NANOAGENT_ROOT/
 ---
 
 ## Changelog
+
+### 2.7.26 — Noise-free memory graph
+
+- **The graph walk honors `.gitignore`.** Root and nested `.gitignore` files are parsed (negation, anchoring, dir-only, `**` globs, last-match-wins), so the project's own declaration of "not source" is what the graph indexes. A Python `venv/`'s site-packages no longer floods the graph with thousands of third-party nodes.
+- **Built-in defaults grew to cover classic noise**: `venv`, `.venv`, `__pycache__`, `*.pyc`, `site-packages`, `.pytest_cache`/`.mypy_cache`/`.ruff_cache`/`.tox`, `target`, `vendor`, `.gradle`, IDE dirs, `package-lock.json`, `pnpm-lock.yaml`, `*.min.js`/`*.map`/`*.tsbuildinfo`, and more.
+- **Unknown extensions are no longer nodes and are never read** (images, binaries, plain text); known non-parsed languages (Python, Go, Rust, …) get a file node without their content being read; extensionless structural files (Makefile, Dockerfile, go.mod) are recognized. JSON keys, YAML keys and markdown headers are capped at 30 concept nodes per file, and the whole walk is capped at `maxFiles` (default 20,000).
+- **The graph lives in `.nanoagent/graph/`** — harness state that projects already gitignore — instead of a visible top-level `.qwen-graph/` directory. Existing graphs load from the legacy location and migrate on their next save.
 
 ### 2.7.25 — Regression-test discipline
 

@@ -22,24 +22,72 @@ import {
   GraphCommunity,
   GodNode,
 } from './types.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  rmSync,
+} from 'node:fs';
 import { join, relative } from 'node:path';
+import type { Dirent } from 'node:fs';
 import * as ts from 'typescript';
 import { logError, logInfo, logWarn } from '../log.js';
 import { validateSearchPattern } from '../tools/shared.js';
+import {
+  DEFAULT_GRAPH_EXCLUDES,
+  SPECIAL_FILE_NAMES,
+  compileIgnoreGlob,
+  parseIgnoreFile,
+  isIgnored,
+  type IgnoreRule,
+} from './ignore.js';
 
 const GRAPH_VERSION = '1.0.0';
-const GRAPH_DIRECTORY = '.qwen-graph';
+/** Graph state lives with the rest of the harness state so it inherits the
+ *  project's `.nanoagent/` gitignore/hidden protections instead of adding a
+ *  visible top-level directory to the user's project. */
+const GRAPH_DIRECTORY = join('.nanoagent', 'graph');
+/** Pre-2.7.26 location — read as a fallback, removed after the first save. */
+const LEGACY_GRAPH_DIRECTORY = '.qwen-graph';
 const GRAPH_FILE = 'memory-graph.json';
 const HASH_FILE = 'graph-hash.json';
+/** Safety valve: a huge workspace must not turn one graph query into a
+ *  50k-file walk (the walk also runs on every isUpToDate() check). */
+const DEFAULT_MAX_FILES = 20000;
+/** Cap on concept nodes extracted per file (JSON keys, YAML keys, markdown
+ *  headers) — a 400-header doc or a CI yaml must not flood the graph. */
+const MAX_CONCEPTS_PER_FILE = 30;
+/** Languages whose content actually gets parsed. Everything else (py, go, rs,
+ *  css, html, …) gets a file node only and its content is never read. */
+const PARSED_LANGUAGES = new Set(['typescript', 'javascript', 'json', 'markdown', 'yaml']);
 
 const SENSITIVE_FILE_RE =
   /^(?:\.env(?:\..*)?|.*(?:secret|credential).*)(?:\..*)?$|.*\.(?:pem|key|p12|pfx|crt|cer)$/i;
 const SENSITIVE_CONFIG_KEY_RE =
   /(api[_-]?key|token|secret|password|credential|authorization|private)/i;
 
+/** A file admitted by the walk, carrying the stat data every caller needs
+ *  (so nothing re-stats during build or staleness checks). */
+interface IndexedFile {
+  path: string;
+  size: number;
+  mtime: number;
+}
+
 function isSensitiveFileName(name: string): boolean {
   return SENSITIVE_FILE_RE.test(name);
+}
+
+/** includedPaths matching: exact name, path segment, or `*.ext` glob. */
+function matchesPathList(relPath: string, name: string, list: string[]): boolean {
+  return list.some((p) =>
+    p.startsWith('*.')
+      ? name.endsWith(p.slice(1))
+      : name === p || relPath === p || relPath.includes(`/${p}/`) || relPath.endsWith(`/${p}`)
+  );
 }
 
 function safeConfigValue(key: string, value: unknown): string {
@@ -66,6 +114,10 @@ export class MemoryGraph {
   private workspace: string;
   private graphDir: string;
   private options: GraphBuildOptions;
+  /** Compiled default + caller-supplied exclusion globs (any depth). */
+  private excludeRules: IgnoreRule[] = [];
+  /** Set when the walk stopped at `maxFiles` (build logs it). */
+  private walkTruncated = false;
   /** Per-file import map: fileId -> (localName -> module specifier + exported name). */
   private fileImports: Map<string, Map<string, { module: string; exported: string }>> = new Map();
   /** Call sites whose callee wasn't found in the same file (resolved post-build). */
@@ -81,29 +133,24 @@ export class MemoryGraph {
     this.graphDir = join(workspace, GRAPH_DIRECTORY);
     this.version = GRAPH_VERSION;
     this.lastUpdated = Date.now();
+    const excludedPaths = [...DEFAULT_GRAPH_EXCLUDES, ...(options.excludedPaths ?? [])];
     this.options = {
       includeDependencies: true,
       includeCode: false,
       maxFileSize: 1024 * 1024, // 1MB
-      excludedPaths: [
-        'node_modules',
-        'dist',
-        'build',
-        '.git',
-        '.nanoagent',
-        '.qwen-graph',
-        '.next',
-        '.turbo',
-        '.cache',
-        'coverage',
-        '*.lock',
-        '*.log',
-      ],
+      maxFiles: DEFAULT_MAX_FILES,
+      respectGitignore: true,
       // NOTE: no default includedPaths — index the whole workspace (minus
-      // excludedPaths) unless the caller explicitly scopes it. A default of
-      // ['src','tests','lib'] silently skipped code in other directories.
+      // exclusions + .gitignore) unless the caller explicitly scopes it.
+      // A default of ['src','tests','lib'] silently skipped code in other
+      // directories.
       ...options,
+      // Caller entries ADD to the defaults; they never drop them.
+      excludedPaths,
     };
+    this.excludeRules = excludedPaths
+      .map((glob) => compileIgnoreGlob(glob))
+      .filter((r): r is IgnoreRule => r !== null);
 
     this.nodes = new Map();
     this.edges = new Map();
@@ -119,17 +166,22 @@ export class MemoryGraph {
    * Check if a graph already exists for this workspace
    */
   static exists(workspace: string): boolean {
-    const graphDir = join(workspace, GRAPH_DIRECTORY);
-    const graphFile = join(graphDir, GRAPH_FILE);
-    return existsSync(graphFile);
+    const graphFile = join(workspace, GRAPH_DIRECTORY, GRAPH_FILE);
+    const legacyFile = join(workspace, LEGACY_GRAPH_DIRECTORY, GRAPH_FILE);
+    return existsSync(graphFile) || existsSync(legacyFile);
   }
 
   /**
    * Load an existing graph from disk
    */
   static async load(workspace: string): Promise<MemoryGraph | null> {
-    const graphDir = join(workspace, GRAPH_DIRECTORY);
-    const graphFile = join(graphDir, GRAPH_FILE);
+    // Prefer the current location; fall back to the pre-2.7.26 `.qwen-graph/`
+    // so existing graphs keep working until their next save migrates them.
+    let graphFile = join(workspace, GRAPH_DIRECTORY, GRAPH_FILE);
+    if (!existsSync(graphFile)) {
+      const legacyFile = join(workspace, LEGACY_GRAPH_DIRECTORY, GRAPH_FILE);
+      if (existsSync(legacyFile)) graphFile = legacyFile;
+    }
 
     if (!existsSync(graphFile)) {
       return null;
@@ -227,12 +279,8 @@ export class MemoryGraph {
     const files = this.findFiles(this.workspace);
 
     for (const file of files) {
-      try {
-        const st = statSync(file);
-        hashes[relative(this.workspace, file)] = `${st.mtimeMs}:${st.size}`;
-      } catch {
-        // Skip files that can't be stat'd
-      }
+      // mtime+size already came from the walk — no second stat per file.
+      hashes[relative(this.workspace, file.path)] = `${file.mtime}:${file.size}`;
     }
 
     return hashes;
@@ -240,79 +288,82 @@ export class MemoryGraph {
 
   /**
    * Find all files to index.
-   * Uses OS-agnostic path comparison (normalizes backslashes to forward slashes).
+   *
+   * Exclusion layers, later wins (git semantics): built-in defaults + caller
+   * `excludedPaths`, then `.gitignore` files (root and nested — the project
+   * already declares what is not source). Unknown extensions are skipped
+   * entirely: binaries/images/fonts are noise, not nodes. Results are capped
+   * at `maxFiles` and the walk never follows symlinks.
    */
-  private findFiles(directory: string): string[] {
-    const files: string[] = [];
+  private findFiles(
+    directory: string,
+    parentRules: readonly IgnoreRule[] = [],
+    sink?: IndexedFile[]
+  ): IndexedFile[] {
+    const files = sink ?? [];
+    const maxFiles = this.options.maxFiles ?? DEFAULT_MAX_FILES;
 
-    try {
-      for (const item of readdirSync(directory, { withFileTypes: true })) {
-        // Do not follow symlinks: graph indexing must stay inside the project.
-        if (item.isSymbolicLink()) continue;
-        const fullPath = join(directory, item.name);
-        // Normalize to forward slashes for consistent matching on Windows and Unix
-        const normPath = fullPath.replace(/\\/g, '/');
-
-        let stat: ReturnType<typeof statSync>;
+    // Nested .gitignore: patterns are relative to the file's own directory.
+    let rules = parentRules;
+    if (this.options.respectGitignore !== false) {
+      const gitignorePath = join(directory, '.gitignore');
+      if (existsSync(gitignorePath)) {
         try {
-          stat = statSync(fullPath);
+          const base = relative(this.workspace, directory).replace(/\\/g, '/');
+          const local = parseIgnoreFile(readFileSync(gitignorePath, 'utf-8'), base);
+          if (local.length) rules = [...parentRules, ...local];
         } catch {
-          continue; // Skip unreadable entries
-        }
-
-        if (stat.isDirectory()) {
-          // Skip excluded directories (match name exactly or as a path segment)
-          if (
-            this.options.excludedPaths?.some(
-              (p) =>
-                item.name === p ||
-                normPath.includes(`/${p}/`) ||
-                normPath.endsWith(`/${p}`) ||
-                (p.startsWith('*.') && item.name.endsWith(p.slice(1)))
-            )
-          ) {
-            continue;
-          }
-
-          if (!this.options.includedPaths) {
-            // No include filter — recurse into everything not excluded
-            files.push(...this.findFiles(fullPath));
-          } else {
-            // Only recurse if this directory is (or is under) an included path
-            if (
-              this.options.includedPaths.some(
-                (p) =>
-                  item.name === p ||
-                  normPath.includes(`/${p}/`) ||
-                  normPath.endsWith(`/${p}`) ||
-                  (p.startsWith('*.') && item.name.endsWith(p.slice(1)))
-              )
-            ) {
-              files.push(...this.findFiles(fullPath));
-            }
-          }
-        } else if (stat.isFile()) {
-          // Skip excluded files
-          if (
-            isSensitiveFileName(item.name) ||
-            this.options.excludedPaths?.some(
-              (p) =>
-                item.name === p ||
-                item.name.endsWith(p) ||
-                (p.startsWith('*.') && item.name.endsWith(p.slice(1)))
-            )
-          ) {
-            continue;
-          }
-
-          // Check file size
-          if (stat.size <= (this.options.maxFileSize || Infinity)) {
-            files.push(fullPath);
-          }
+          // Unreadable .gitignore — keep walking with the outer rules.
         }
       }
+    }
+
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
     } catch {
-      // Skip directories that can't be read
+      return files; // Unreadable directory
+    }
+
+    for (const item of entries) {
+      if (files.length >= maxFiles) {
+        this.walkTruncated = true;
+        break;
+      }
+      // Do not follow symlinks: graph indexing must stay inside the project.
+      if (item.isSymbolicLink()) continue;
+      const fullPath = join(directory, item.name);
+      // Workspace-relative, forward slashes — same matching on Windows/Unix.
+      const relPath = relative(this.workspace, fullPath).replace(/\\/g, '/');
+
+      let stat: ReturnType<typeof statSync>;
+      try {
+        stat = statSync(fullPath);
+      } catch {
+        continue; // Skip unreadable entries
+      }
+
+      if (stat.isDirectory()) {
+        if (isIgnored(this.excludeRules, relPath, true)) continue;
+        if (isIgnored(rules, relPath, true)) continue;
+        // Optional include scoping: only directories are gated; a file that
+        // is already reached is always indexed (unchanged semantics).
+        if (
+          this.options.includedPaths?.length &&
+          !matchesPathList(relPath, item.name, this.options.includedPaths)
+        ) {
+          continue;
+        }
+        this.findFiles(fullPath, rules, files);
+      } else if (stat.isFile()) {
+        if (isSensitiveFileName(item.name)) continue;
+        if (isIgnored(this.excludeRules, relPath, false)) continue;
+        if (isIgnored(rules, relPath, false)) continue;
+        // Unknown extension = binary/image/other noise — no node, no read.
+        if (this.getLanguage(fullPath) === 'unknown') continue;
+        if (stat.size > (this.options.maxFileSize || Infinity)) continue;
+        files.push({ path: fullPath, size: stat.size, mtime: stat.mtimeMs });
+      }
     }
 
     return files;
@@ -337,14 +388,20 @@ export class MemoryGraph {
     };
 
     // Find and process all files
+    this.walkTruncated = false;
     const files = this.findFiles(this.workspace);
     logInfo(`Found ${files.length} files to index`);
+    if (this.walkTruncated) {
+      logWarn(
+        `Graph walk stopped at the ${this.options.maxFiles}-file cap — narrow the workspace or raise maxFiles`
+      );
+    }
 
     for (const file of files) {
       try {
         await this.processFile(file);
       } catch (err: unknown) {
-        logWarn(`Error processing file ${file}:`, (err as { message?: string }).message);
+        logWarn(`Error processing file ${file.path}:`, (err as { message?: string }).message);
       }
     }
 
@@ -362,12 +419,13 @@ export class MemoryGraph {
   }
 
   /**
-   * Process a single file and extract nodes/edges
+   * Process a single file and extract nodes/edges.
+   * Stat data comes from the walk; content is read ONLY for languages that
+   * are actually parsed — a 900KB python file gets a file node and no read.
    */
-  private async processFile(filePath: string): Promise<void> {
-    const relativePath = relative(this.workspace, filePath);
-    const content = readFileSync(filePath, 'utf-8');
-    const language = this.getLanguage(filePath);
+  private async processFile(file: IndexedFile): Promise<void> {
+    const relativePath = relative(this.workspace, file.path);
+    const language = this.getLanguage(file.path);
 
     // Create file node
     const fileNode: GraphNode = {
@@ -377,41 +435,56 @@ export class MemoryGraph {
       path: relativePath,
       language,
       metadata: {
-        size: statSync(filePath).size,
-        mtime: statSync(filePath).mtimeMs,
+        size: file.size,
+        mtime: file.mtime,
       },
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
     this.addNode(fileNode);
 
+    if (!PARSED_LANGUAGES.has(language)) {
+      return; // File node only — nothing parses this language.
+    }
+
+    let content: string;
+    try {
+      content = readFileSync(file.path, 'utf-8');
+    } catch {
+      return; // Unreadable content — keep the file node.
+    }
+
     // Extract nodes based on language
     switch (language) {
       case 'typescript':
       case 'javascript':
-        this.processTypeScriptFile(filePath, content, fileNode);
+        this.processTypeScriptFile(file.path, content, fileNode);
         break;
       case 'json':
-        this.processJsonFile(filePath, content, fileNode);
+        this.processJsonFile(file.path, content, fileNode);
         break;
       case 'markdown':
-        this.processMarkdownFile(filePath, content, fileNode);
+        this.processMarkdownFile(file.path, content, fileNode);
         break;
       case 'yaml':
-      case 'yml':
-        this.processYamlFile(filePath, content, fileNode);
+        this.processYamlFile(file.path, content, fileNode);
         break;
       default:
-        // For other files, just create the file node
         break;
     }
   }
 
   /**
-   * Get language from file extension
+   * Get language from file basename/extension.
+   * Extensionless structural files (Makefile, Dockerfile, go.mod) are
+   * recognized so the "skip unknown extensions" filter doesn't lose them.
    */
   private getLanguage(filePath: string): string {
-    const ext = filePath.split('.').pop()?.toLowerCase();
+    const basename = filePath.split(/[\\/]/).pop() || '';
+    if (SPECIAL_FILE_NAMES.has(basename.toLowerCase())) return 'config';
+    const ext = basename.includes('.')
+      ? basename.slice(basename.lastIndexOf('.') + 1).toLowerCase()
+      : '';
     const languageMap: Record<string, string> = {
       ts: 'typescript',
       tsx: 'typescript',
@@ -421,6 +494,7 @@ export class MemoryGraph {
       md: 'markdown',
       yaml: 'yaml',
       yml: 'yaml',
+      toml: 'toml',
       html: 'html',
       css: 'css',
       scss: 'scss',
@@ -432,7 +506,7 @@ export class MemoryGraph {
       php: 'php',
       rb: 'ruby',
     };
-    return languageMap[ext || ''] || 'unknown';
+    return languageMap[ext] || 'unknown';
   }
 
   /**
@@ -1043,7 +1117,12 @@ export class MemoryGraph {
       const data = JSON.parse(content);
 
       if (data && typeof data === 'object') {
+        let extracted = 0;
         for (const [key, value] of Object.entries(data)) {
+          // Cap per file — a huge generated-style JSON must not flood the
+          // graph with one concept node per key.
+          if (extracted >= MAX_CONCEPTS_PER_FILE) break;
+          extracted++;
           const node: GraphNode = {
             id: `config:${fileNode.id}:${key}`,
             type: 'concept',
@@ -1078,14 +1157,18 @@ export class MemoryGraph {
    */
   private processMarkdownFile(filePath: string, content: string, fileNode: GraphNode): void {
     const lines = content.split('\n');
+    let extracted = 0;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineNum = i + 1;
 
-      // Extract headers (concepts)
+      // Extract headers (concepts) — capped per file so a 400-header doc
+      // cannot drown the graph in concept nodes.
       const headerMatch = line.match(/^(#+)\s+(.+)/);
       if (headerMatch) {
+        if (extracted >= MAX_CONCEPTS_PER_FILE) break;
+        extracted++;
         const level = headerMatch[1].length;
         const title = headerMatch[2];
 
@@ -1122,6 +1205,7 @@ export class MemoryGraph {
   private processYamlFile(filePath: string, content: string, fileNode: GraphNode): void {
     // Simple YAML parsing - in production, use a proper YAML parser
     const lines = content.split('\n');
+    let extracted = 0;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -1130,6 +1214,10 @@ export class MemoryGraph {
       if (line && !line.startsWith('#')) {
         const match = line.match(/^(\w+):\s*(.+)/);
         if (match) {
+          // Cap per file — CI/workflow yamls are hundreds of `key: value`
+          // lines that would otherwise all become concept nodes.
+          if (extracted >= MAX_CONCEPTS_PER_FILE) break;
+          extracted++;
           const key = match[1];
           const value = match[2];
 
@@ -1254,6 +1342,19 @@ export class MemoryGraph {
     // Save file hashes
     const hashes = await this.computeFileHashes();
     writeFileSync(join(this.graphDir, HASH_FILE), JSON.stringify(hashes, null, 2));
+
+    // Migration cleanup: the legacy `.qwen-graph/` directory is generated
+    // cache in the user's project — remove it once the graph lives under
+    // `.nanoagent/` (which projects already gitignore).
+    const legacyDir = join(this.workspace, LEGACY_GRAPH_DIRECTORY);
+    if (legacyDir !== this.graphDir && existsSync(legacyDir)) {
+      try {
+        rmSync(legacyDir, { recursive: true, force: true });
+        logInfo(`Removed legacy graph directory ${legacyDir}`);
+      } catch (err) {
+        logWarn(`Could not remove legacy graph directory ${legacyDir}:`, err);
+      }
+    }
 
     logInfo(`Memory graph saved to ${this.graphDir}`);
   }

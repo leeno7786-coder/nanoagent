@@ -11,6 +11,7 @@ import {
   rmSync,
   appendFileSync,
   symlinkSync,
+  existsSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -320,6 +321,142 @@ describe('MemoryGraph', () => {
     });
   });
 
+  describe('noise filtering', () => {
+    const filePaths = (graph: MemoryGraph): string[] =>
+      graph
+        .export()
+        .nodes.filter((n) => n.type === 'file')
+        .map((n) => (n.path || '').replace(/\\/g, '/'));
+
+    it('skips virtualenv and python cache directories by default', async () => {
+      mkdirSync(join(ws, 'venv', 'lib', 'site-packages', 'requests'), { recursive: true });
+      writeFileSync(
+        join(ws, 'venv', 'lib', 'site-packages', 'requests', 'api.py'),
+        'def get(): pass\n'
+      );
+      mkdirSync(join(ws, '__pycache__'), { recursive: true });
+      writeFileSync(join(ws, '__pycache__', 'utils.cpython-311.pyc'), 'binary-ish');
+
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      const paths = filePaths(graph);
+      expect(paths.some((p) => p.includes('venv'))).toBe(false);
+      expect(paths.some((p) => p.includes('__pycache__'))).toBe(false);
+      // The project's own source is still indexed.
+      expect(paths.some((p) => p.startsWith('src/'))).toBe(true);
+    });
+
+    it('respects the project .gitignore', async () => {
+      writeFileSync(join(ws, '.gitignore'), 'generated/\nscratch.tmp.ts\n');
+      mkdirSync(join(ws, 'generated'));
+      writeFileSync(join(ws, 'generated', 'noise.ts'), 'export const noise = 1;\n');
+      writeFileSync(join(ws, 'src', 'scratch.tmp.ts'), 'export const scratch = 1;\n');
+
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      const paths = filePaths(graph);
+      expect(paths.some((p) => p.startsWith('generated/'))).toBe(false);
+      expect(paths.some((p) => p.endsWith('scratch.tmp.ts'))).toBe(false);
+      // .gitignore itself has no source extension — never a node.
+      expect(paths.some((p) => p === '.gitignore')).toBe(false);
+      expect(paths.some((p) => p === 'src/utils.ts')).toBe(true);
+    });
+
+    it('scopes nested .gitignore patterns to their own directory', async () => {
+      mkdirSync(join(ws, 'packages', 'app', 'generated'), { recursive: true });
+      writeFileSync(join(ws, 'packages', 'app', '.gitignore'), 'generated/\n');
+      writeFileSync(join(ws, 'packages', 'app', 'generated', 'noise.ts'), 'export const n = 1;\n');
+      writeFileSync(join(ws, 'packages', 'app', 'index.ts'), 'export const i = 1;\n');
+      mkdirSync(join(ws, 'generated'), { recursive: true });
+      writeFileSync(join(ws, 'generated', 'kept.ts'), 'export const k = 1;\n');
+
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      const paths = filePaths(graph);
+      expect(paths.some((p) => p === 'packages/app/generated/noise.ts')).toBe(false);
+      expect(paths.some((p) => p === 'packages/app/index.ts')).toBe(true);
+      // The root has no such rule — root generated/ stays indexed.
+      expect(paths.some((p) => p === 'generated/kept.ts')).toBe(true);
+    });
+
+    it('skips files with unknown extensions (images, binaries, plain text)', async () => {
+      writeFileSync(join(ws, 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      writeFileSync(join(ws, 'data.bin'), 'binary-ish');
+      writeFileSync(join(ws, 'notes.txt'), 'plain text');
+
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      const paths = filePaths(graph);
+      expect(paths.some((p) => p.endsWith('.png'))).toBe(false);
+      expect(paths.some((p) => p.endsWith('.bin'))).toBe(false);
+      expect(paths.some((p) => p.endsWith('.txt'))).toBe(false);
+    });
+
+    it('still indexes known non-parsed languages as file nodes', async () => {
+      writeFileSync(join(ws, 'app.py'), 'def main(): pass\n');
+      writeFileSync(join(ws, 'main.go'), 'package main\n');
+      writeFileSync(join(ws, 'Makefile'), 'all:\n\techo hi\n');
+
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      const files = graph.export().nodes.filter((n) => n.type === 'file');
+      const py = files.find((n) => (n.path || '').endsWith('app.py'));
+      expect(py?.language).toBe('python');
+      expect(files.some((n) => (n.path || '').endsWith('main.go'))).toBe(true);
+      // Extensionless structural files still get a node.
+      expect(files.some((n) => (n.path || '').endsWith('Makefile'))).toBe(true);
+    });
+
+    it('caps concept nodes per markdown and yaml file', async () => {
+      const headers = Array.from({ length: 80 }, (_, i) => `## Section ${i}`).join('\n');
+      writeFileSync(join(ws, 'docs.md'), headers);
+      const yamlLines = Array.from({ length: 80 }, (_, i) => `key_${i}: value_${i}`).join('\n');
+      writeFileSync(join(ws, 'ci.yaml'), yamlLines);
+
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      const concepts = graph.export().nodes.filter((n) => n.type === 'concept');
+      const docNodes = concepts.filter((n) => (n.path || '').endsWith('docs.md'));
+      const yamlNodes = concepts.filter((n) => (n.path || '').endsWith('ci.yaml'));
+      expect(docNodes.length).toBeGreaterThan(0);
+      expect(docNodes.length).toBeLessThanOrEqual(30);
+      expect(yamlNodes.length).toBeGreaterThan(0);
+      expect(yamlNodes.length).toBeLessThanOrEqual(30);
+    });
+
+    it('honors the maxFiles cap', async () => {
+      writeFileSync(join(ws, 'extra1.ts'), 'export const a = 1;\n');
+      writeFileSync(join(ws, 'extra2.ts'), 'export const b = 2;\n');
+
+      const graph = new MemoryGraph(ws, { maxFiles: 3 });
+      await graph.build();
+
+      expect(graph.getStats().nodesByType.file).toBe(3);
+    });
+
+    it('lets a caller exclusion ADD to the defaults instead of replacing them', async () => {
+      mkdirSync(join(ws, 'fixtures'));
+      writeFileSync(join(ws, 'fixtures', 'noise.ts'), 'export const n = 1;\n');
+
+      const graph = new MemoryGraph(ws, { excludedPaths: ['fixtures'] });
+      await graph.build();
+
+      const paths = filePaths(graph);
+      expect(paths.some((p) => p.startsWith('fixtures/'))).toBe(false);
+      // Defaults still apply even though the caller passed their own list.
+      mkdirSync(join(ws, 'node_modules', 'left-pad'), { recursive: true });
+      const graph2 = new MemoryGraph(ws, { excludedPaths: ['fixtures'] });
+      await graph2.build();
+      expect(filePaths(graph2).some((p) => p.includes('node_modules'))).toBe(false);
+    });
+  });
+
   describe('save/load', () => {
     it('reports exists() only after a build has saved the graph', async () => {
       expect(MemoryGraph.exists(ws)).toBe(false);
@@ -328,6 +465,30 @@ describe('MemoryGraph', () => {
       await graph.build();
 
       expect(MemoryGraph.exists(ws)).toBe(true);
+    });
+
+    it('falls back to a legacy .qwen-graph graph and migrates it on save', async () => {
+      const legacyDir = join(ws, '.qwen-graph');
+      mkdirSync(legacyDir);
+      writeFileSync(
+        join(legacyDir, 'memory-graph.json'),
+        JSON.stringify({ version: '1.0.0', lastUpdated: 1, nodes: [], edges: [] })
+      );
+
+      // Before any save: exists()/load() read the legacy location.
+      expect(MemoryGraph.exists(ws)).toBe(true);
+      expect(await MemoryGraph.load(ws)).not.toBeNull();
+
+      const graph = new MemoryGraph(ws);
+      await graph.build();
+
+      // Saved under .nanoagent/ (project gitignore) and the legacy generated
+      // directory is cleaned up.
+      expect(existsSync(join(ws, '.nanoagent', 'graph', 'memory-graph.json'))).toBe(true);
+      expect(existsSync(legacyDir)).toBe(false);
+      const loaded = await MemoryGraph.load(ws);
+      expect(loaded).not.toBeNull();
+      expect(loaded!.getStats().nodeCount).toBeGreaterThan(0);
     });
 
     it('round-trips nodes and edges through disk', async () => {
